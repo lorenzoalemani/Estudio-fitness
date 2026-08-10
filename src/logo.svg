@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 280" width="100%" height="100%">
+  <rect width="500" height="280" fill="#0A0A0C" rx="16"/>
+  <!-- ESTUDIO Text -->
+  <text x="250" y="105" text-anchor="middle" font-family="'Impact', 'Arial Black', sans-serif" font-size="78" font-weight="900" fill="#FFFFFF" letter-spacing="4">ESTUDIO</text>
+  <!-- FITNESS Text -->
+  <text x="250" y="225" text-anchor="middle" font-family="'Impact', 'Arial Black', sans-serif" font-size="78" font-weight="900" fill="#FFFFFF" letter-spacing="4">FITNESS</text>
+  
+  <!-- Red Barbell (Mancuerna Roja centrada) -->
+  <g transform="translate(250, 140)">
+    <!-- Main Bar -->
+    <rect x="-160" y="-8" width="320" height="16" fill="#CC0000" rx="4"/>
+    <rect x="-160" y="-5" width="320" height="10" fill="#FF2E2E" rx="2"/>
+    <!-- Outer Left Weights -->
+    <rect x="-150" y="-35" width="18" height="70" fill="#E50914" rx="4"/>
+    <rect x="-128" y="-45" width="22" height="90" fill="#FF2E2E" rx="5"/>
+    <rect x="-102" y="-55" width="26" height="110" fill="#D8000C" rx="6"/>
+    <!-- Inner Left Collar -->
+    <rect x="-72" y="-20" width="12" height="40" fill="#990000" rx="2"/>
+
+    <!-- Inner Right Collar -->
+    <rect x="60" y="-20" width="12" height="40" fill="#990000" rx="2"/>
+    <!-- Outer Right Weights -->
+    <rect x="76" y="-55" width="26" height="110" fill="#D8000C" rx="6"/>
+    <rect x="106" y="-45" width="22" height="90" fill="#FF2E2E" rx="5"/>
+    <rect x="132" y="-35" width="18" height="70" fill="#E50914" rx="4"/>
+
+    <!-- Highlights on Weights -->
+    <path d="M -124 -40 L -124 40" stroke="#FFAAAA" stroke-width="3" opacity="0.6"/>
+    <path d="M -98 -50 L -98 50" stroke="#FFAAAA" stroke-width="4" opacity="0.6"/>
+    <path d="M 80 -50 L 80 50" stroke="#FFAAAA" stroke-width="4" opacity="0.6"/>
+    <path d="M 110 -40 L 110 40" stroke="#FFAAAA" stroke-width="3" opacity="0.6"/>
+    
+    <!-- Grip Knurling -->
+    <line x1="-30" y1="-5" x2="30" y2="-5" stroke="#FFAAAA" stroke-width="1.5" opacity="0.8"/>
+    <line x1="-30" y1="5" x2="30" y2="5" stroke="#FFAAAA" stroke-width="1.5" opacity="0.8"/>
+  </g>
+</svg>
