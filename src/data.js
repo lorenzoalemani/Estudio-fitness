@@ -255,9 +255,10 @@ class GymStore {
 
     // Verificar si el DNI fue autorizado previamente por el Gimnasio
     const estaAutorizado = this.data.dnisAutorizados.some(d => d.dni === cleanDni);
+    const generatedId = (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() : ("al-" + Date.now());
 
     const nuevoAlumno = {
-      id: "al-" + Date.now(),
+      id: generatedId,
       dni: cleanDni,
       password: String(password).trim(),
       nombre: nombre.trim(),
@@ -268,6 +269,12 @@ class GymStore {
     };
 
     this.data.alumnos.push(nuevoAlumno);
+
+    // Persistir nuevo perfil en Supabase DB
+    if (window.supabaseEngine) {
+      window.supabaseEngine.registrarPerfilEnSupabase(nuevoAlumno);
+    }
+
     this.saveData();
     return nuevoAlumno;
   }

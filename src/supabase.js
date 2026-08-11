@@ -2,8 +2,8 @@
 
 // Configuración por defecto o mediante variables globales/entorno
 const SUPABASE_CONFIG = {
-  url: window.ENV_SUPABASE_URL || 'https://estudio-fitness.supabase.co',
-  anonKey: window.ENV_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.dummy_anon_key',
+  url: window.ENV_SUPABASE_URL || 'https://fsvuuysjfnjjjbfjgxjj.supabase.co',
+  anonKey: window.ENV_SUPABASE_ANON_KEY || 'sb_publishable_ofoBIjk2ynQYHhsHPh7uMQ_UXm4dZSR',
   vapidPublicKey: window.ENV_VAPID_PUBLIC_KEY || 'BEl62iUYgUivxIkv69yViEuiBIa-m9GYv50D2nE85-dummy-public-key'
 };
 
@@ -194,17 +194,66 @@ class SupabaseEngine {
   }
 
   // --- OPERACIONES DE ESCRITURA RELACIONAL EN SUPABASE DB ---
+  async registrarPerfilEnSupabase(alumno) {
+    if (!this.client) return;
+    try {
+      const cleanDni = String(alumno.dni).trim();
+      const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(alumno.id);
+      const profileId = isUUID ? alumno.id : (window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : '00000000-0000-4000-a000-' + String(Date.now()).padStart(12, '0'));
+
+      const { data, error } = await this.client.from('profiles').insert({
+        id: profileId,
+        dni: cleanDni,
+        nombre: alumno.nombre.trim(),
+        telefono: alumno.telefono ? alumno.telefono.trim() : "",
+        rol: 'alumno',
+        estado_autorizacion: alumno.estadoAutorizacion || 'pendiente'
+      }).select();
+
+      if (error) {
+        console.error("❌ Error insertando perfil en Supabase DB (profiles):", error);
+      } else {
+        console.log("✅ Perfil de alumno registrado exitosamente en Supabase DB (profiles):", data);
+        if (profileId !== alumno.id) {
+          alumno.id = profileId;
+        }
+      }
+    } catch (err) {
+      console.error("❌ Excepción al registrar perfil en Supabase DB:", err);
+    }
+  }
+
   async autorizarDniEnSupabase(dni, nombre) {
     if (!this.client) return;
     try {
       const cleanDni = String(dni).trim();
+
       // 1. Insertar o actualizar en authorized_dnis
-      await this.client.from('authorized_dnis').upsert({ dni: cleanDni, nombre: nombre.trim() }, { onConflict: 'dni' });
+      const { data: authData, error: authErr } = await this.client
+        .from('authorized_dnis')
+        .upsert({ dni: cleanDni, nombre: nombre.trim() }, { onConflict: 'dni' })
+        .select();
+
+      if (authErr) {
+        console.error("❌ Error autorizando DNI en Supabase DB (authorized_dnis):", authErr);
+      } else {
+        console.log(`✅ DNI ${cleanDni} insertado/autorizado en Supabase DB (authorized_dnis):`, authData);
+      }
+
       // 2. Actualizar profiles si ya existe perfil con ese DNI
-      await this.client.from('profiles').update({ estado_autorizacion: 'autorizado' }).eq('dni', cleanDni);
-      console.log(`✅ DNI ${cleanDni} autorizado en Supabase DB.`);
+      const { data: profData, error: profErr } = await this.client
+        .from('profiles')
+        .update({ estado_autorizacion: 'autorizado' })
+        .eq('dni', cleanDni)
+        .select();
+
+      if (profErr) {
+        console.error("❌ Error actualizando perfil a autorizado en Supabase DB (profiles):", profErr);
+      } else if (profData && profData.length > 0) {
+        console.log(`✅ Perfil de alumno con DNI ${cleanDni} actualizado a 'autorizado' en Supabase DB:`, profData);
+      }
     } catch (err) {
-      console.warn("Error autorizando DNI en Supabase DB:", err);
+      console.error("❌ Excepción en autorizarDniEnSupabase:", err);
     }
   }
 
