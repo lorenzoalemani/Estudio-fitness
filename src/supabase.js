@@ -193,35 +193,38 @@ class SupabaseEngine {
     }
   }
 
-  // --- OPERACIONES DE ESCRITURA RELACIONAL EN SUPABASE DB ---
-  async registrarPerfilEnSupabase(alumno) {
-    if (!this.client) return;
-    try {
-      const cleanDni = String(alumno.dni).trim();
-      const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(alumno.id);
-      const profileId = isUUID ? alumno.id : (window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : '00000000-0000-4000-a000-' + String(Date.now()).padStart(12, '0'));
+ // --- OPERACIONES DE ESCRITURA RELACIONAL EN SUPABASE DB ---
+async registrarPerfilEnSupabase(alumno) {
+  if (!this.client) return;
+  try {
+    const cleanDni = String(alumno.dni).trim();
+    const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(alumno.id);
+    const profileId = isUUID ? alumno.id : (window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : '00000000-0000-4000-a000-' + String(Date.now()).padStart(12, '0'));
 
-      const { error } = await this.client.from('profiles').insert({
+    const { data, error } = await this.client
+      .from('profiles')
+      .upsert({
         id: profileId,
         dni: cleanDni,
         nombre: alumno.nombre.trim(),
         telefono: alumno.telefono ? alumno.telefono.trim() : "",
         rol: 'alumno',
-        estado_autorizacion: 'pendiente'
-      });
+        estado_autorizacion: alumno.estadoAutorizacion || 'pendiente'
+      }, { onConflict: 'dni' })
+      .select();
 
-      if (error) {
-        console.error("❌ Error insertando perfil en Supabase DB (profiles):", error);
-      } else {
-        console.log("✅ Perfil de alumno registrado exitosamente en Supabase DB (profiles).");
-        if (profileId !== alumno.id) {
-          alumno.id = profileId;
-        }
+    if (error) {
+      console.error("❌ Error insertando perfil en Supabase DB (profiles):", error);
+    } else {
+      console.log("✅ Perfil de alumno registrado/actualizado exitosamente en Supabase DB (profiles):", data);
+      if (profileId !== alumno.id && data && data[0]) {
+        alumno.id = data[0].id;
       }
-    } catch (err) {
-      console.error("❌ Excepción al registrar perfil en Supabase DB:", err);
     }
+  } catch (err) {
+    console.error("❌ Excepción al registrar perfil en Supabase DB:", err);
   }
+}
 
   async autorizarDniEnSupabase(dni, nombre) {
     if (!this.client) return;
