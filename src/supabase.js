@@ -3,7 +3,7 @@
 // Configuración por defecto o mediante variables globales/entorno
 const SUPABASE_CONFIG = {
   url: window.ENV_SUPABASE_URL || 'https://fsvuuysjfnjjjbfjgxjj.supabase.co',
-  anonKey: window.ENV_SUPABASE_ANON_KEY || 'sb_publishable_ofoBIjk2ynQYHhsHPh7uMQ_UXm4dZSR',
+  anonKey: window.ENV_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZzdnV1eXNqZm5qampiZmpneGpqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYzNzE4NjIsImV4cCI6MjEwMTk0Nzg2Mn0.0kqWhbrsdEvJyKmPM4jH4AGO441n4eXpYjBtAxICvAE',
   vapidPublicKey: window.ENV_VAPID_PUBLIC_KEY || 'BEl62iUYgUivxIkv69yViEuiBIa-m9GYv50D2nE85-dummy-public-key'
 };
 
