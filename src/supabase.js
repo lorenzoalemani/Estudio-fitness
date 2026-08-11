@@ -201,19 +201,19 @@ class SupabaseEngine {
       const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(alumno.id);
       const profileId = isUUID ? alumno.id : (window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : '00000000-0000-4000-a000-' + String(Date.now()).padStart(12, '0'));
 
-      const { data, error } = await this.client.from('profiles').insert({
+      const { error } = await this.client.from('profiles').insert({
         id: profileId,
         dni: cleanDni,
         nombre: alumno.nombre.trim(),
         telefono: alumno.telefono ? alumno.telefono.trim() : "",
         rol: 'alumno',
-        estado_autorizacion: alumno.estadoAutorizacion || 'pendiente'
-      }).select();
+        estado_autorizacion: 'pendiente'
+      });
 
       if (error) {
         console.error("❌ Error insertando perfil en Supabase DB (profiles):", error);
       } else {
-        console.log("✅ Perfil de alumno registrado exitosamente en Supabase DB (profiles):", data);
+        console.log("✅ Perfil de alumno registrado exitosamente en Supabase DB (profiles).");
         if (profileId !== alumno.id) {
           alumno.id = profileId;
         }
