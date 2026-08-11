@@ -1,4 +1,4 @@
-const CACHE_NAME = 'estudio-fitness-v4';
+const CACHE_NAME = 'estudio-fitness-v5';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
@@ -9,6 +9,8 @@ const ASSETS_TO_CACHE = [
   './src/logo.svg',
   './icons/icon-192x192.svg',
   './icons/icon-512x512.svg',
+  './icons/apple-touch-icon.svg',
+  './icons/favicon.svg',
   './manifest.json'
 ];
 

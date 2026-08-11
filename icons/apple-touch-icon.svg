@@ -1,14 +1,4 @@
-const fs = require('fs');
-const path = require('path');
-
-// Asegurar carpeta icons
-const iconsDir = path.join(__dirname, 'icons');
-if (!fs.existsSync(iconsDir)) {
-  fs.mkdirSync(iconsDir, { recursive: true });
-}
-
-// Guardar versión SVG limpia en icons adaptada al formato cuadrado para PWA
-const svgContent = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500" width="500" height="500">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500" width="500" height="500">
   <rect width="500" height="500" fill="#0A0A0C" rx="80"/>
   <rect width="492" height="492" x="4" y="4" fill="none" stroke="#FF2E2E" stroke-width="4" rx="76" opacity="0.4"/>
   
@@ -47,12 +37,4 @@ const svgContent = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500
     <line x1="-30" y1="-5" x2="30" y2="-5" stroke="#FFAAAA" stroke-width="1.5" opacity="0.8"/>
     <line x1="-30" y1="5" x2="30" y2="5" stroke="#FFAAAA" stroke-width="1.5" opacity="0.8"/>
   </g>
-</svg>`;
-
-fs.writeFileSync(path.join(iconsDir, 'icon-512x512.svg'), svgContent);
-fs.writeFileSync(path.join(iconsDir, 'icon-192x192.svg'), svgContent);
-fs.writeFileSync(path.join(iconsDir, 'apple-touch-icon.svg'), svgContent);
-fs.writeFileSync(path.join(iconsDir, 'favicon.svg'), svgContent);
-
-console.log("✅ Iconos SVG PWA creados en icons/");
-
+</svg>

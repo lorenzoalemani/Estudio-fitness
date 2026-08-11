@@ -1,11 +1,11 @@
 {
-  "name": "Estudio Fitness - Entrenamiento Personalizado",
-  "short_name": "EstudioFitness",
+  "name": "Estudio Fitness",
+  "short_name": "Estudio Fitness",
   "description": "Aplicación de seguimiento y gestión de entrenamientos para alumnos y profesores de Estudio Fitness",
   "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#0a0a0c",
-  "theme_color": "#ff2e2e",
+  "theme_color": "#070709",
   "orientation": "portrait",
   "icons": [
     {
@@ -21,8 +21,8 @@
       "purpose": "any maskable"
     },
     {
-      "src": "./src/logo.svg",
-      "sizes": "192x192 512x512",
+      "src": "./icons/apple-touch-icon.svg",
+      "sizes": "180x180",
       "type": "image/svg+xml",
       "purpose": "any"
     }

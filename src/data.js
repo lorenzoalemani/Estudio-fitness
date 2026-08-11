@@ -236,6 +236,16 @@ class GymStore {
     return this.data.alumnos.find(a => a.id === id) || null;
   }
 
+  getRutinasAlumno(alumnoId) {
+    return this.data.rutinas
+      .filter(r => r.alumnoId === alumnoId)
+      .sort((a, b) => (b.estado === 'activa' ? 1 : 0) - (a.estado === 'activa' ? 1 : 0));
+  }
+
+  getRutinaPorId(rutinaId) {
+    return this.data.rutinas.find(r => r.id === rutinaId) || null;
+  }
+
   getRutinaActiva(alumnoId) {
     const alumno = this.getAlumnoPorId(alumnoId);
     if (!alumno || alumno.estadoAutorizacion !== 'autorizado' || !alumno.rutinaActivaId) return null;

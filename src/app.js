@@ -12,7 +12,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const appState = {
     usuarioActual: null, // null | { rol: 'profesor'|'alumno', data: object }
-    tabCliente: 'rutina', // 'rutina' | 'entrenar' | 'historial'
+    tabCliente: 'rutina', // 'rutina' | 'historial'
+    rutinaSeleccionadaId: null, // ID de rutina seleccionada por el alumno
+    diaSeleccionadoId: null, // ID de día seleccionado por el alumno
     diaActivoEntrenamiento: null, // null | diaObject
     filtroProfesor: 'todos',
     busquedaProfesor: '',
@@ -220,7 +222,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // --- DASHBOARD ALUMNO (ENTRENAMIENTO POR SERIES) ---
+  // --- DASHBOARD ALUMNO (NUEVA NAVEGACIÓN MOBILE-FIRST POR TARJETAS) ---
   function renderClientDashboard() {
     const alumno = appState.usuarioActual.data;
 
@@ -243,8 +245,7 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    const rutinaActiva = store.getRutinaActiva(alumno.id);
-    const historialRutinas = store.getHistorialRutinas(alumno.id);
+    const rutinas = store.getRutinasAlumno(alumno.id);
     const historialEntrenamientos = store.getHistorialEntrenamientosReales(alumno.id);
 
     appContainer.innerHTML = `
@@ -252,12 +253,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
       <main class="client-dashboard">
         <div class="tabs-container" style="max-width:500px; margin:0 auto 20px">
-          <button class="tab-btn ${appState.tabCliente === 'rutina' ? 'active' : ''}" id="tabRutina">🏋️ Mi Rutina</button>
+          <button class="tab-btn ${appState.tabCliente === 'rutina' ? 'active' : ''}" id="tabRutina">🏋️ Mis Rutinas (${rutinas.length})</button>
           <button class="tab-btn ${appState.tabCliente === 'historial' ? 'active' : ''}" id="tabHistorial">📜 Historial Real (${historialEntrenamientos.length})</button>
         </div>
 
         ${appState.tabCliente === 'rutina' ? (
-          appState.diaActivoEntrenamiento ? renderWorkoutSession(rutinaActiva) : renderRutinaOverview(rutinaActiva)
+          appState.diaActivoEntrenamiento ? renderWorkoutSession() : (
+            appState.diaSeleccionadoId ? renderDayDetailView(alumno) : (
+              appState.rutinaSeleccionadaId ? renderRoutineDaysView(alumno) : renderRoutinesListView(alumno)
+            )
+          )
         ) : ''}
 
         ${appState.tabCliente === 'historial' ? renderHistorialRealAlumno(historialEntrenamientos) : ''}
@@ -266,14 +271,53 @@ document.addEventListener('DOMContentLoaded', () => {
 
     bindHeaderEvents();
 
-    document.getElementById('tabRutina')?.addEventListener('click', () => { appState.tabCliente = 'rutina'; appState.diaActivoEntrenamiento = null; renderApp(); });
-    document.getElementById('tabHistorial')?.addEventListener('click', () => { appState.tabCliente = 'historial'; renderApp(); });
+    document.getElementById('tabRutina')?.addEventListener('click', () => {
+      appState.tabCliente = 'rutina';
+      appState.diaActivoEntrenamiento = null;
+      renderApp();
+    });
 
-    // Eventos de iniciar entrenamiento por día
-    document.querySelectorAll('.btn-comenzar-dia').forEach(btn => {
+    document.getElementById('tabHistorial')?.addEventListener('click', () => {
+      appState.tabCliente = 'historial';
+      renderApp();
+    });
+
+    // Eventos de navegación por tarjetas de rutina
+    document.querySelectorAll('.routine-select-card').forEach(card => {
+      card.addEventListener('click', () => {
+        appState.rutinaSeleccionadaId = card.dataset.rutinaId;
+        appState.diaSeleccionadoId = null;
+        renderApp();
+      });
+    });
+
+    // Evento volver a Mis Rutinas desde lista de días
+    document.getElementById('btnBackToRoutines')?.addEventListener('click', () => {
+      appState.rutinaSeleccionadaId = null;
+      appState.diaSeleccionadoId = null;
+      renderApp();
+    });
+
+    // Eventos de navegación por tarjetas de día
+    document.querySelectorAll('.day-select-card').forEach(card => {
+      card.addEventListener('click', () => {
+        appState.diaSeleccionadoId = card.dataset.diaId;
+        renderApp();
+      });
+    });
+
+    // Evento volver a Días desde detalle de día
+    document.getElementById('btnBackToDays')?.addEventListener('click', () => {
+      appState.diaSeleccionadoId = null;
+      renderApp();
+    });
+
+    // Eventos de iniciar entrenamiento
+    document.querySelectorAll('.btn-comenzar-entrenamiento').forEach(btn => {
       btn.addEventListener('click', (e) => {
         const diaId = e.currentTarget.dataset.diaId;
-        const diaObj = rutinaActiva.dias.find(d => d.id === diaId);
+        const rutina = store.getRutinaPorId(appState.rutinaSeleccionadaId);
+        const diaObj = rutina ? rutina.dias.find(d => d.id === diaId) : null;
         if (diaObj) {
           appState.diaActivoEntrenamiento = diaObj;
           initWorkoutDraft(diaObj);
@@ -285,75 +329,150 @@ document.addEventListener('DOMContentLoaded', () => {
     bindAccordionEvents();
   }
 
-  function renderRutinaOverview(rutina) {
-    if (!rutina) {
+  function renderRoutinesListView(alumno) {
+    const rutinas = store.getRutinasAlumno(alumno.id);
+    if (!rutinas || rutinas.length === 0) {
       return `
-        <div class="routine-banner" style="text-align:center; justify-content:center; flex-direction:column">
-          <h2>🏋️ Sin Rutina Activa</h2>
-          <p style="color:var(--text-gray)">Tu profesor te asignará una nueva rutina en breve.</p>
+        <div class="routine-banner" style="text-align:center; justify-content:center; flex-direction:column; padding:30px 20px">
+          <div style="font-size:2.5rem; margin-bottom:10px">🏋️</div>
+          <h2 style="font-size:1.3rem; font-weight:900">Sin Rutinas Asignadas</h2>
+          <p style="color:var(--text-gray); font-size:0.9rem; margin-top:6px">Tu profesor te asignará una nueva rutina personalizada en breve.</p>
         </div>
       `;
     }
 
-    const diasRestantes = store.calcularDiasRestantes(rutina.fechaVencimiento);
-    const isVencimientoCercano = diasRestantes <= 1;
+    return `
+      <div style="margin-bottom:16px">
+        <h2 style="font-size:1.4rem; font-weight:900; letter-spacing:0.5px">Mis Rutinas</h2>
+        <p style="font-size:0.85rem; color:var(--text-gray)">Seleccioná una rutina para ver tus días de entrenamiento</p>
+      </div>
+
+      ${rutinas.map(r => {
+        const semanas = Math.max(1, Math.ceil((r.duracionDias || 30) / 7));
+        const esActiva = r.estado === 'activa';
+        const diasRestantes = store.calcularDiasRestantes(r.fechaVencimiento);
+
+        return `
+          <div class="routine-select-card" data-rutina-id="${r.id}">
+            <div class="routine-card-header">
+              <span class="badge ${esActiva ? (diasRestantes <= 1 ? 'badge-warning' : 'badge-active') : 'badge-role'}">
+                ● ${esActiva ? (diasRestantes <= 1 ? `ACTIVA (${diasRestantes}d restantes)` : 'ACTIVA') : 'INACTIVA'}
+              </span>
+              <span class="badge badge-info">${semanas} ${semanas === 1 ? 'semana' : 'semanas'}</span>
+            </div>
+
+            <div>
+              <h3 class="routine-card-title">${r.titulo}</h3>
+              <p class="routine-card-subtitle">Profesor: <strong>${r.profesorCreadorNombre || 'Estudio Fitness'}</strong></p>
+            </div>
+
+            <div style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid var(--border-color); padding-top:10px; margin-top:4px">
+              <div class="routine-card-days-count">
+                🔥 ${r.dias ? r.dias.length : 0} Días de Entrenamiento
+              </div>
+              <div style="font-weight:800; font-size:0.88rem; color:var(--red-primary); display:flex; align-items:center; gap:4px">
+                Tocar para ver días ➔
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('')}
+    `;
+  }
+
+  function renderRoutineDaysView(alumno) {
+    const rutina = store.getRutinaPorId(appState.rutinaSeleccionadaId);
+    if (!rutina) {
+      appState.rutinaSeleccionadaId = null;
+      return renderRoutinesListView(alumno);
+    }
+
+    const semanas = Math.max(1, Math.ceil((rutina.duracionDias || 30) / 7));
+    const esActiva = rutina.estado === 'activa';
 
     return `
-      <div class="routine-banner">
-        <div>
-          <span class="badge ${isVencimientoCercano ? 'badge-warning' : 'badge-active'}">
-            ● RUTINA ACTUAL ACTIVA
-          </span>
-          <h2 style="font-size:1.4rem; font-weight:900; margin-top:6px">${rutina.titulo}</h2>
-          <p style="font-size:0.86rem; color:var(--text-gray)">
-            Profesor: <strong>${rutina.profesorCreadorNombre || 'Estudio Fitness'}</strong> | Vence: ${rutina.fechaVencimiento}
-          </p>
-        </div>
+      <button class="nav-breadcrumb-btn" id="btnBackToRoutines">⬅️ Volver a Mis Rutinas</button>
 
+      <div class="routine-banner" style="margin-bottom:20px">
         <div>
-          <span class="badge ${isVencimientoCercano ? 'badge-warning' : 'badge-active'}" style="font-size:0.95rem; padding:8px 14px">
-            ⏳ ${diasRestantes >= 0 ? `${diasRestantes} Días Restantes` : 'Vencida'}
+          <span class="badge ${esActiva ? 'badge-active' : 'badge-role'}">
+            ● ${esActiva ? 'RUTINA ACTIVA' : 'RUTINA HISTÓRICA'}
           </span>
+          <h2 style="font-size:1.35rem; font-weight:900; margin-top:6px">${rutina.titulo}</h2>
+          <p style="font-size:0.85rem; color:var(--text-gray); margin-top:4px">
+            Profesor: <strong>${rutina.profesorCreadorNombre || 'Estudio Fitness'}</strong> | Duración: ${semanas} ${semanas === 1 ? 'semana' : 'semanas'}
+          </p>
         </div>
       </div>
 
-      <h3 style="margin-bottom:14px; font-weight:900; text-transform:uppercase; letter-spacing:0.5px">Días de Entrenamiento</h3>
+      <div style="margin-bottom:14px">
+        <h3 style="font-size:1.1rem; font-weight:900; text-transform:uppercase; letter-spacing:0.5px">Días de Entrenamiento</h3>
+        <p style="font-size:0.82rem; color:var(--text-gray)">Tocá un día para ver sus ejercicios</p>
+      </div>
 
-      ${rutina.dias.map(dia => `
-        <div class="routine-day-card">
-          <div class="routine-day-header" style="justify-content:space-between">
-            <div style="display:flex; align-items:center; gap:8px">
-              <span>🔥</span> ${dia.nombre}
+      ${rutina.dias.map((dia, idx) => `
+        <div class="day-select-card" data-dia-id="${dia.id}">
+          <div class="day-card-info">
+            <div class="day-card-number">Día ${dia.diaNumero || (idx + 1)}</div>
+            <div class="day-card-name">${dia.nombre}</div>
+            <div style="font-size:0.8rem; color:var(--text-gray); margin-top:4px">
+              💪 ${dia.ejercicios ? dia.ejercicios.length : 0} ejercicios programados
             </div>
-            <button class="btn btn-primary btn-sm btn-comenzar-dia" data-dia-id="${dia.id}">
-              ▶ COMENZAR ${dia.nombre.split(':')[0] || 'DÍA'}
-            </button>
           </div>
+          <div class="day-card-arrow">➔</div>
+        </div>
+      `).join('')}
+    `;
+  }
 
-          <div style="padding:14px">
-            ${dia.ejercicios.map(ej => `
-              <div class="exercise-card">
-                <div class="exercise-header">
-                  <div class="exercise-title">${ej.nombre}</div>
-                </div>
+  function renderDayDetailView(alumno) {
+    const rutina = store.getRutinaPorId(appState.rutinaSeleccionadaId);
+    if (!rutina) {
+      appState.rutinaSeleccionadaId = null;
+      appState.diaSeleccionadoId = null;
+      return renderRoutinesListView(alumno);
+    }
 
-                <div class="target-box">
-                  <div class="target-title">Objetivo Indicado por el Profesor:</div>
-                  <div class="target-stats">
-                    ${ej.seriesTarget} series · ${ej.repeticionesTarget} reps · ${ej.pesoSugerido}
-                  </div>
-                </div>
+    const dia = rutina.dias.find(d => d.id === appState.diaSeleccionadoId);
+    if (!dia) {
+      appState.diaSeleccionadoId = null;
+      return renderRoutineDaysView(alumno);
+    }
 
-                ${ej.notaProfesor ? `
-                  <div class="trainer-note-box">
-                    👨‍🏫 <strong>${ej.profesorNotaAutor || 'Profesor'}:</strong> ${ej.notaProfesor}
-                  </div>
-                ` : ''}
+    return `
+      <button class="nav-breadcrumb-btn" id="btnBackToDays">⬅️ Volver a Días de la Rutina</button>
+
+      <div style="margin-bottom:20px; background:var(--bg-card); border:1px solid var(--border-color); border-radius:var(--radius-md); padding:18px">
+        <span class="badge badge-warning" style="margin-bottom:6px">DÍA ${dia.diaNumero || 1} DE ENTRENAMIENTO</span>
+        <h2 style="font-size:1.4rem; font-weight:900; color:#fff">${dia.nombre}</h2>
+        <div style="font-size:0.85rem; color:var(--text-gray); margin-top:4px">Rutina: ${rutina.titulo}</div>
+      </div>
+
+      <h3 style="font-size:1.05rem; font-weight:900; text-transform:uppercase; margin-bottom:14px; color:var(--text-white)">
+        📋 Ejercicios e Indicaciones del Profesor
+      </h3>
+
+      ${dia.ejercicios.map(ej => `
+        <div class="exercise-block">
+          <div style="font-size:1.15rem; font-weight:900; color:#fff; margin-bottom:8px">${ej.nombre}</div>
+
+          <div class="target-box">
+            <div class="target-title">🎯 Objetivo Indicado por el Profesor:</div>
+            <div class="target-stats">
+              ${ej.seriesTarget} series × ${ej.repeticionesTarget} reps · ${ej.pesoSugerido}
+            </div>
+            ${ej.notaProfesor ? `
+              <div style="font-size:0.85rem; color:#fca5a5; margin-top:6px; border-top:1px dashed rgba(255,255,255,0.1); padding-top:6px">
+                👨‍🏫 <strong>${ej.profesorNotaAutor || 'Profesor'}:</strong> "${ej.notaProfesor}"
               </div>
-            `).join('')}
+            ` : ''}
           </div>
         </div>
       `).join('')}
+
+      <button class="btn btn-primary btn-comenzar-entrenamiento" data-dia-id="${dia.id}" style="width:100%; padding:18px; font-size:1.15rem; font-weight:900; margin-top:10px; box-shadow: 0 0 35px rgba(255, 46, 46, 0.45)">
+        ▶ EMPEZAR ENTRENAMIENTO
+      </button>
     `;
   }
 

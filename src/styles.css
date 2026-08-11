@@ -204,6 +204,98 @@ body {
   border-radius: var(--radius-md); padding: 16px; margin-bottom: 14px;
 }
 
+/* NUEVA NAVEGACIÓN MOBILE-FIRST POR TARJETAS GRANDES */
+.client-dashboard, .trainer-dashboard {
+  width: 100%; max-width: 650px; margin: 0 auto;
+  padding: 16px; box-sizing: border-box;
+}
+
+.nav-breadcrumb-btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  color: var(--text-gray); font-size: 0.92rem; font-weight: 800;
+  background: rgba(255, 255, 255, 0.06); border: 1px solid var(--border-color);
+  padding: 8px 14px; border-radius: 20px; cursor: pointer;
+  margin-bottom: 16px; transition: all var(--transition-fast);
+}
+
+.nav-breadcrumb-btn:active {
+  background: rgba(255, 255, 255, 0.15); color: #fff;
+}
+
+.routine-select-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 20px; margin-bottom: 16px;
+  cursor: pointer; display: flex; flex-direction: column; gap: 12px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+  transition: transform var(--transition-fast), border-color var(--transition-fast);
+}
+
+.routine-select-card:active {
+  transform: scale(0.98);
+  border-color: var(--border-highlight);
+}
+
+.routine-card-header {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+}
+
+.routine-card-title {
+  font-size: 1.35rem; font-weight: 900; color: #fff; line-height: 1.25;
+}
+
+.routine-card-subtitle {
+  font-size: 0.88rem; color: var(--text-gray);
+}
+
+.routine-card-days-count {
+  font-size: 0.85rem; font-weight: 800; color: var(--red-primary);
+  display: flex; align-items: center; gap: 6px;
+}
+
+.day-select-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 18px 20px; margin-bottom: 12px;
+  cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  transition: transform var(--transition-fast), border-color var(--transition-fast);
+}
+
+.day-select-card:active {
+  transform: scale(0.98);
+  border-color: var(--red-primary);
+}
+
+.day-card-info {
+  display: flex; flex-direction: column; gap: 4px;
+}
+
+.day-card-number {
+  font-size: 0.78rem; font-weight: 800; text-transform: uppercase; color: var(--red-primary); letter-spacing: 0.5px;
+}
+
+.day-card-name {
+  font-size: 1.1rem; font-weight: 900; color: #fff;
+}
+
+.day-card-arrow {
+  font-size: 1.2rem; color: var(--text-gray); font-weight: 900;
+}
+
+/* REGLAS MOBILE-FIRST PREVENCION SCROLL HORIZONTAL */
+@media (max-width: 600px) {
+  #app { padding-bottom: 24px; }
+  .app-header { padding: 10px 14px; }
+  .brand-title { font-size: 1.1rem; }
+  .brand-logo { height: 34px; }
+  .login-container { width: 94%; padding: 24px 16px; margin: 16px auto; }
+  .sets-table-header, .set-row { grid-template-columns: 70px 1fr 1fr; gap: 6px; }
+  .set-input { padding: 8px 4px; font-size: 0.95rem; }
+}
+
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(12px); }
   to { opacity: 1; transform: translateY(0); }
