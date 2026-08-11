@@ -142,10 +142,76 @@ class GymStore {
     window.dispatchEvent(new CustomEvent('gym_store_updated'));
   }
 
+  async syncWithSupabase() {
+    if (!window.supabaseEngine) return;
+    try {
+      const freshData = await window.supabaseEngine.fetchFullStateFromSupabase();
+      if (freshData) {
+        let huboCambios = false;
+
+        if (freshData.dnisAutorizados && freshData.dnisAutorizados.length > 0) {
+          this.data.dnisAutorizados = freshData.dnisAutorizados;
+          huboCambios = true;
+        }
+
+        if (freshData.alumnos && freshData.alumnos.length > 0) {
+          freshData.alumnos.forEach(sbAlumno => {
+            const loc = this.data.alumnos.find(a => a.dni === sbAlumno.dni || a.id === sbAlumno.id);
+            if (loc) {
+              loc.estadoAutorizacion = sbAlumno.estadoAutorizacion || loc.estadoAutorizacion;
+              loc.nombre = sbAlumno.nombre || loc.nombre;
+              loc.telefono = sbAlumno.telefono || loc.telefono;
+              if (sbAlumno.rutinaActivaId) loc.rutinaActivaId = sbAlumno.rutinaActivaId;
+            } else {
+              this.data.alumnos.push(sbAlumno);
+            }
+          });
+          huboCambios = true;
+        }
+
+        if (freshData.rutinas && freshData.rutinas.length > 0) {
+          freshData.rutinas.forEach(sbRutina => {
+            const idx = this.data.rutinas.findIndex(r => r.id === sbRutina.id);
+            if (idx >= 0) {
+              this.data.rutinas[idx] = sbRutina;
+            } else {
+              this.data.rutinas.push(sbRutina);
+            }
+          });
+          huboCambios = true;
+        }
+
+        if (freshData.workoutLogs && freshData.workoutLogs.length > 0) {
+          freshData.workoutLogs.forEach(sbLog => {
+            const idx = this.data.workoutLogs.findIndex(w => w.id === sbLog.id);
+            if (idx >= 0) {
+              this.data.workoutLogs[idx] = sbLog;
+            } else {
+              this.data.workoutLogs.unshift(sbLog);
+            }
+          });
+          huboCambios = true;
+        }
+
+        if (freshData.notificaciones && freshData.notificaciones.length > 0) {
+          this.data.notificaciones = freshData.notificaciones;
+          huboCambios = true;
+        }
+
+        if (huboCambios) {
+          console.log("🟢 Sincronizado exitosamente con Supabase DB (Fuente de Verdad).");
+          this.saveData();
+        }
+      }
+    } catch (err) {
+      console.warn("⚠️ Error en syncWithSupabase:", err);
+    }
+  }
+
   listenSupabaseRealtime() {
-    window.addEventListener('supabase_realtime_change', (e) => {
-      console.log("⚡ Actualización Supabase recibida:", e.detail);
-      this.saveData();
+    window.addEventListener('supabase_realtime_change', async (e) => {
+      console.log("⚡ Actualización Supabase recibida en tiempo real:", e.detail);
+      await this.syncWithSupabase();
     });
 
     window.addEventListener('storage', (e) => {
@@ -156,12 +222,17 @@ class GymStore {
         } catch (err) {}
       }
     });
+
+    setTimeout(() => this.syncWithSupabase(), 400);
   }
 
   // --- AUTENTICACIÓN Y AUTORIZACIÓN POR DNI ---
   login(dni, password) {
     const cleanDni = String(dni).trim();
     const cleanPass = String(password).trim();
+
+    // Intentar sincronización previa
+    this.syncWithSupabase();
 
     // 1. Buscar en Profesores
     const profesor = this.data.profesores.find(p => p.dni === cleanDni && p.password === cleanPass);
@@ -204,7 +275,12 @@ class GymStore {
   autorizarOAgregarAlumnoPorProfesor({ dni, nombre, telefono }) {
     const cleanDni = String(dni).trim();
     
-    // Registrar DNI en la lista de autorizados
+    // 1. Persistir en Supabase DB (fuente de verdad)
+    if (window.supabaseEngine) {
+      window.supabaseEngine.autorizarDniEnSupabase(cleanDni, nombre);
+    }
+
+    // 2. Registrar DNI en la lista local
     if (!this.data.dnisAutorizados.some(d => d.dni === cleanDni)) {
       this.data.dnisAutorizados.push({ dni: cleanDni, nombre: nombre.trim() });
     }
@@ -304,6 +380,11 @@ class GymStore {
     this.data.rutinas.push(nuevaRutina);
     alumno.rutinaActivaId = nuevaRutina.id;
 
+    // Persistir en Supabase DB
+    if (window.supabaseEngine) {
+      window.supabaseEngine.persistirNuevaRutinaEnSupabase(nuevaRutina);
+    }
+
     // Enviar notificación Push al alumno
     this.crearNotificacion({
       destinatarioRol: "alumno",
@@ -333,6 +414,11 @@ class GymStore {
 
     if (profesorNombre) rutina.profesorCreadorNombre = profesorNombre;
 
+    // Persistir en Supabase DB
+    if (window.supabaseEngine) {
+      window.supabaseEngine.persistirEdicionRutinaEnSupabase(rutina);
+    }
+
     // Enviar notificación Push al alumno
     this.crearNotificacion({
       destinatarioRol: "alumno",
@@ -361,6 +447,10 @@ class GymStore {
     };
 
     this.data.workoutLogs.unshift(nuevoLog);
+
+    if (window.supabaseEngine) {
+      window.supabaseEngine.guardarWorkoutLogEnSupabase(nuevoLog);
+    }
 
     const alumno = this.getAlumnoPorId(alumnoId);
     if (alumno) {

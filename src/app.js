@@ -38,7 +38,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Escuchar cambios de Supabase Realtime / Local Store
   window.addEventListener('gym_store_updated', () => {
     if (appState.usuarioActual && appState.usuarioActual.rol === 'alumno') {
-      const alumnoActualizado = store.getAlumnoPorId(appState.usuarioActual.data.id);
+      const alumnoActualizado = store.getAlumnoPorId(appState.usuarioActual.data.id) || store.data.alumnos.find(a => a.dni === appState.usuarioActual.data.dni);
       if (alumnoActualizado) appState.usuarioActual.data = alumnoActualizado;
     }
 

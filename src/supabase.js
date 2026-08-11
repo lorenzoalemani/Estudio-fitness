@@ -38,10 +38,12 @@ class SupabaseEngine {
         .on('postgres_changes', { event: '*', schema: 'public', table: 'exercise_goals' }, payload => this.handleRealtimeEvent('exercise_goals', payload))
         .on('postgres_changes', { event: '*', schema: 'public', table: 'workout_logs' }, payload => this.handleRealtimeEvent('workout_logs', payload))
         .on('postgres_changes', { event: '*', schema: 'public', table: 'notifications' }, payload => this.handleRealtimeEvent('notifications', payload))
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, payload => this.handleRealtimeEvent('profiles', payload))
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'authorized_dnis' }, payload => this.handleRealtimeEvent('authorized_dnis', payload))
         .subscribe((status) => {
           if (status === 'SUBSCRIBED') {
             this.isRealtimeConnected = true;
-            console.log("🟢 Conectado a Supabase Realtime WebSocket");
+            console.log("🟢 Conectado a Supabase Realtime WebSocket (Rutinas, Días, Ejercicios, Perfiles y DNI Autorizados)");
           }
         });
     } catch (err) {
@@ -54,6 +56,280 @@ class SupabaseEngine {
     window.dispatchEvent(new CustomEvent('supabase_realtime_change', {
       detail: { table, eventType: payload.eventType, record: payload.new || payload.old }
     }));
+  }
+
+  // --- CONSULTAS SELECT Y SINCRONIZACIÓN DESDE SUPABASE DB ---
+  async fetchFullStateFromSupabase() {
+    if (!this.client) return null;
+    try {
+      const [resAuthDnis, resProfiles, resRoutines, resDays, resGoals, resLogs, resLogSets, resNotifs] = await Promise.all([
+        this.client.from('authorized_dnis').select('*'),
+        this.client.from('profiles').select('*'),
+        this.client.from('routines').select('*'),
+        this.client.from('routine_days').select('*'),
+        this.client.from('exercise_goals').select('*'),
+        this.client.from('workout_logs').select('*'),
+        this.client.from('workout_log_sets').select('*'),
+        this.client.from('notifications').select('*')
+      ]);
+
+      if (resAuthDnis.error || resProfiles.error || resRoutines.error) {
+        console.warn("ℹ️ Consulta a Supabase en proceso o restringida por RLS:", resProfiles.error || resRoutines.error);
+      }
+
+      const dnisAutorizados = (resAuthDnis.data || []).map(d => ({ dni: d.dni, nombre: d.nombre }));
+      const alumnos = (resProfiles.data || []).filter(p => p.rol === 'alumno').map(a => ({
+        id: a.id,
+        dni: a.dni,
+        password: a.password || "123",
+        nombre: a.nombre,
+        telefono: a.telefono || "",
+        estadoAutorizacion: a.estado_autorizacion,
+        fechaRegistro: a.created_at ? a.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
+        rutinaActivaId: a.rutina_activa_id || null
+      }));
+
+      const profesores = (resProfiles.data || []).filter(p => p.rol === 'profesor').map(p => ({
+        id: p.id,
+        dni: p.dni,
+        password: p.password || "123",
+        nombre: p.nombre,
+        rol: "profesor"
+      }));
+
+      // Reconstruir rutinas con sus días y ejercicios
+      const daysByRoutine = {};
+      (resDays.data || []).forEach(d => {
+        if (!daysByRoutine[d.routine_id]) daysByRoutine[d.routine_id] = [];
+        daysByRoutine[d.routine_id].push({
+          id: d.id,
+          diaNumero: d.dia_numero,
+          nombre: d.nombre,
+          ejercicios: []
+        });
+      });
+
+      const goalsByDay = {};
+      (resGoals.data || []).forEach(g => {
+        if (!goalsByDay[g.day_id]) goalsByDay[g.day_id] = [];
+        goalsByDay[g.day_id].push({
+          id: g.id,
+          orden: g.orden || 1,
+          nombre: g.nombre,
+          seriesTarget: g.series_target,
+          repeticionesTarget: g.repeticiones_target,
+          pesoSugerido: g.peso_sugerido,
+          notaProfesor: g.nota_profesor || "",
+          profesorNotaAutor: g.profesor_nota_autor || ""
+        });
+      });
+
+      // Asociar ejercicios a sus días
+      Object.values(daysByRoutine).forEach(dayList => {
+        dayList.forEach(d => {
+          d.ejercicios = (goalsByDay[d.id] || []).sort((a, b) => a.orden - b.orden);
+        });
+        dayList.sort((a, b) => a.diaNumero - b.diaNumero);
+      });
+
+      const rutinas = (resRoutines.data || []).map(r => ({
+        id: r.id,
+        alumnoId: r.alumno_id,
+        profesorCreadorNombre: r.profesor_creador_nombre || "Profesor",
+        titulo: r.titulo,
+        duracionDias: r.duracion_dias,
+        fechaInicio: r.fecha_inicio,
+        fechaVencimiento: r.fecha_vencimiento,
+        estado: r.estado,
+        dias: daysByRoutine[r.id] || []
+      }));
+
+      // Reconstruir historial de entrenamientos
+      const setsByLog = {};
+      (resLogSets.data || []).forEach(s => {
+        if (!setsByLog[s.workout_log_id]) setsByLog[s.workout_log_id] = [];
+        setsByLog[s.workout_log_id].push({
+          ejercicioNombre: s.exercise_nombre,
+          setNumero: s.set_numero,
+          repsRealizadas: s.reps_realizadas,
+          pesoUtilizado: s.peso_utilizado,
+          comentarioAlumno: s.comentario_alumno || ""
+        });
+      });
+
+      const workoutLogs = (resLogs.data || []).map(l => ({
+        id: l.id,
+        alumnoId: l.alumno_id,
+        rutinaId: l.routine_id,
+        diaId: l.dia_id || "dia-1",
+        diaNombre: l.dia_nombre,
+        fecha: l.fecha_entrenamiento,
+        estado: l.estado,
+        comentarioGeneral: l.comentario_general || "",
+        sets: setsByLog[l.id] || []
+      }));
+
+      const notificaciones = (resNotifs.data || []).map(n => ({
+        id: n.id,
+        destinatarioRol: n.destinatario_rol,
+        alumnoId: n.alumno_id,
+        mensaje: n.mensaje,
+        rutaDestino: n.ruta_destino,
+        fecha: n.created_at,
+        leido: n.leido
+      }));
+
+      return {
+        dnisAutorizados: dnisAutorizados.length > 0 ? dnisAutorizados : null,
+        alumnos: alumnos.length > 0 ? alumnos : null,
+        profesores: profesores.length > 0 ? profesores : null,
+        rutinas: rutinas.length > 0 ? rutinas : null,
+        workoutLogs: workoutLogs.length > 0 ? workoutLogs : null,
+        notificaciones: notificaciones.length > 0 ? notificaciones : null
+      };
+    } catch (e) {
+      console.warn("⚠️ Error obteniendo datos de Supabase:", e);
+      return null;
+    }
+  }
+
+  // --- OPERACIONES DE ESCRITURA RELACIONAL EN SUPABASE DB ---
+  async autorizarDniEnSupabase(dni, nombre) {
+    if (!this.client) return;
+    try {
+      const cleanDni = String(dni).trim();
+      // 1. Insertar o actualizar en authorized_dnis
+      await this.client.from('authorized_dnis').upsert({ dni: cleanDni, nombre: nombre.trim() }, { onConflict: 'dni' });
+      // 2. Actualizar profiles si ya existe perfil con ese DNI
+      await this.client.from('profiles').update({ estado_autorizacion: 'autorizado' }).eq('dni', cleanDni);
+      console.log(`✅ DNI ${cleanDni} autorizado en Supabase DB.`);
+    } catch (err) {
+      console.warn("Error autorizando DNI en Supabase DB:", err);
+    }
+  }
+
+  async persistirNuevaRutinaEnSupabase(rutina) {
+    if (!this.client) return;
+    try {
+      // 1. Insertar Rutina
+      const { data: rData, error: rErr } = await this.client.from('routines').insert({
+        id: rutina.id,
+        alumno_id: rutina.alumnoId,
+        profesor_creador_nombre: rutina.profesorCreadorNombre,
+        titulo: rutina.titulo,
+        duracion_dias: rutina.duracionDias,
+        fecha_inicio: rutina.fechaInicio,
+        fecha_vencimiento: rutina.fechaVencimiento,
+        estado: rutina.estado || 'activa'
+      }).select().single();
+
+      if (rErr) throw rErr;
+
+      // 2. Insertar Días y Ejercicios
+      for (const d of rutina.dias) {
+        const { data: dData, error: dErr } = await this.client.from('routine_days').insert({
+          id: d.id,
+          routine_id: rutina.id,
+          dia_numero: d.diaNumero,
+          nombre: d.nombre
+        }).select().single();
+
+        if (dErr) continue;
+
+        for (let idx = 0; idx < d.ejercicios.length; idx++) {
+          const e = d.ejercicios[idx];
+          await this.client.from('exercise_goals').insert({
+            id: e.id,
+            day_id: dData.id,
+            orden: idx + 1,
+            nombre: e.nombre,
+            series_target: e.seriesTarget,
+            repeticiones_target: e.repeticionesTarget,
+            peso_sugerido: e.pesoSugerido,
+            nota_profesor: e.notaProfesor,
+            profesor_nota_autor: e.profesorNotaAutor
+          });
+        }
+      }
+      console.log("✅ Nueva rutina persistida relacionalmente en Supabase DB.");
+    } catch (err) {
+      console.warn("⚠️ Error guardando rutina en Supabase DB (operando en modo local):", err);
+    }
+  }
+
+  async persistirEdicionRutinaEnSupabase(rutina) {
+    if (!this.client) return;
+    try {
+      // 1. Actualizar Rutina
+      await this.client.from('routines').update({
+        titulo: rutina.titulo,
+        duracion_dias: rutina.duracionDias,
+        fecha_vencimiento: rutina.fechaVencimiento,
+        profesor_creador_nombre: rutina.profesorCreadorNombre
+      }).eq('id', rutina.id);
+
+      // 2. Reemplazar días y ejercicios de la rutina
+      await this.client.from('routine_days').delete().eq('routine_id', rutina.id);
+
+      for (const d of rutina.dias) {
+        const { data: dData, error: dErr } = await this.client.from('routine_days').insert({
+          id: d.id,
+          routine_id: rutina.id,
+          dia_numero: d.diaNumero,
+          nombre: d.nombre
+        }).select().single();
+
+        if (dErr) continue;
+
+        for (let idx = 0; idx < d.ejercicios.length; idx++) {
+          const e = d.ejercicios[idx];
+          await this.client.from('exercise_goals').insert({
+            id: e.id,
+            day_id: dData.id,
+            orden: idx + 1,
+            nombre: e.nombre,
+            series_target: e.seriesTarget,
+            repeticiones_target: e.repeticionesTarget,
+            peso_sugerido: e.pesoSugerido,
+            nota_profesor: e.notaProfesor,
+            profesor_nota_autor: e.profesorNotaAutor
+          });
+        }
+      }
+      console.log("✅ Edición de rutina persistida relacionalmente en Supabase DB.");
+    } catch (err) {
+      console.warn("⚠️ Error actualizando rutina en Supabase DB:", err);
+    }
+  }
+
+  async guardarWorkoutLogEnSupabase(log) {
+    if (!this.client) return;
+    try {
+      const { data: lData, error: lErr } = await this.client.from('workout_logs').insert({
+        id: log.id,
+        alumno_id: log.alumnoId,
+        routine_id: log.rutinaId,
+        dia_nombre: log.diaNombre,
+        comentario_general: log.comentarioGeneral,
+        estado: log.estado || 'completado'
+      }).select().single();
+
+      if (lErr) throw lErr;
+
+      for (const s of log.sets) {
+        await this.client.from('workout_log_sets').insert({
+          workout_log_id: lData.id,
+          exercise_nombre: s.ejercicioNombre,
+          set_numero: s.setNumero,
+          reps_realizadas: s.repsRealizadas,
+          peso_utilizado: s.pesoUtilizado,
+          comentario_alumno: s.comentarioAlumno
+        });
+      }
+      console.log("✅ Entrenamiento real persistido relacionalmente en Supabase DB.");
+    } catch (err) {
+      console.warn("⚠️ Error guardando entrenamiento real en Supabase DB:", err);
+    }
   }
 
   async registerPushSubscription(userId, subscription) {
