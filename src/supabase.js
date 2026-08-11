@@ -68,6 +68,60 @@ class SupabaseEngine {
       console.error("Error guardando suscripción Push:", e);
     }
   }
+
+  async enviarPushNotificationAAlumno(alumnoId, payload) {
+    if (!this.client) return;
+    try {
+      const { data: subs, error } = await this.client
+        .from('push_subscriptions')
+        .select('subscription_json')
+        .eq('user_id', alumnoId);
+
+      if (error || !subs || subs.length === 0) {
+        console.log("ℹ️ No hay suscripciones Web Push activas registradas para el alumno:", alumnoId);
+        return;
+      }
+
+      console.log(`📡 Despachando Web Push a ${subs.length} dispositivo(s) para alumno ${alumnoId}...`);
+
+      const endpoints = [
+        '/.netlify/functions/send-push',
+        '/api/send-push'
+      ];
+      if (window.ENV_PUSH_ENDPOINT) {
+        endpoints.unshift(window.ENV_PUSH_ENDPOINT);
+      }
+
+      for (const item of subs) {
+        let sent = false;
+        for (const ep of endpoints) {
+          try {
+            const res = await fetch(ep, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                subscription: item.subscription_json,
+                payload: payload
+              })
+            });
+            if (res.ok) {
+              const resData = await res.json();
+              console.log(`✅ Web Push despachado con éxito mediante [${ep}]:`, resData);
+              sent = true;
+              break;
+            }
+          } catch (pushErr) {
+            console.warn(`⚠️ Endpoint [${ep}] no disponible:`, pushErr.message);
+          }
+        }
+        if (!sent) {
+          console.warn("⚠️ Ningún endpoint backend de Web Push estuvo accesible.");
+        }
+      }
+    } catch (err) {
+      console.error("Error al obtener suscripciones push del alumno:", err);
+    }
+  }
 }
 
 window.supabaseEngine = new SupabaseEngine();

@@ -48,7 +48,8 @@ self.addEventListener('push', (event) => {
     title: '🔥 Estudio Fitness',
     body: 'Tienes una nueva actualización en tu entrenamiento.',
     icon: './icons/icon-192x192.svg',
-    url: './'
+    url: './',
+    routineId: null
   };
 
   if (event.data) {
@@ -63,7 +64,10 @@ self.addEventListener('push', (event) => {
     body: payload.body,
     icon: payload.icon || './icons/icon-192x192.svg',
     badge: './icons/icon-192x192.svg',
-    data: { url: payload.url || './' },
+    data: {
+      url: payload.url || './',
+      routineId: payload.routineId || null
+    },
     tag: 'estudio-fitness-push'
   };
 
@@ -76,12 +80,13 @@ self.addEventListener('push', (event) => {
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const targetUrl = event.notification.data?.url || './';
+  const routineId = event.notification.data?.routineId || null;
 
   event.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
       for (const client of clientList) {
         if (client.url && 'focus' in client) {
-          client.postMessage({ type: 'NAVIGATE_ROUTE', url: targetUrl });
+          client.postMessage({ type: 'NAVIGATE_ROUTE', url: targetUrl, routineId: routineId });
           return client.focus();
         }
       }
@@ -91,3 +96,4 @@ self.addEventListener('notificationclick', (event) => {
     })
   );
 });
+

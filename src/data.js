@@ -281,16 +281,10 @@ class GymStore {
     });
   }
 
-  // --- CREAR NUEVA RUTINA (ARCHIVANDO LA ANTERIOR) ---
+  // --- CREAR NUEVA RUTINA (PERMITIENDO MÚLTIPLES RUTINAS POR ALUMNO) ---
   crearOActualizarRutina({ alumnoId, profesorNombre, titulo, duracionDias, dias }) {
     const alumno = this.getAlumnoPorId(alumnoId);
     if (!alumno) return;
-
-    // Si el alumno ya tenía una rutina activa, archivarla en el historial como completada
-    if (alumno.rutinaActivaId) {
-      const vieja = this.data.rutinas.find(r => r.id === alumno.rutinaActivaId);
-      if (vieja) vieja.estado = "completada";
-    }
 
     const hoy = new Date();
     const fechaVenc = new Date(hoy.getTime() + Number(duracionDias) * 86400000);
@@ -314,16 +308,46 @@ class GymStore {
     this.crearNotificacion({
       destinatarioRol: "alumno",
       alumnoId,
-      mensaje: `🔥 Nueva rutina: ${profesorNombre || 'Tu profesor'} te asignó "${nuevaRutina.titulo}".`,
-      rutaDestino: "rutina"
+      mensaje: `🔥 Tu profesor ${profesorNombre || ''} te asignó la rutina "${nuevaRutina.titulo}".`,
+      rutaDestino: "rutina",
+      rutinaId: nuevaRutina.id
     });
 
     this.saveData();
     return nuevaRutina;
   }
 
-  // --- GUARDADO DE SESIÓN DE ENTRENAMIENTO REAL POR SERIES ---
-  guardarEntrenamientoReal({ alumnoId, rutinaId, diaId, diaNombre, setsLog }) {
+  // --- EDITAR RUTINA EXISTENTE CONSERVANDO HISTORIAL Y MULTI-RUTINAS ---
+  editarRutinaExistente({ rutinaId, profesorNombre, titulo, duracionDias, dias }) {
+    const rutina = this.getRutinaPorId(rutinaId);
+    if (!rutina) throw new Error("La rutina a editar no fue encontrada.");
+
+    rutina.titulo = titulo || rutina.titulo;
+    rutina.duracionDias = Number(duracionDias) || rutina.duracionDias;
+    
+    // Recalcular vencimiento desde la fecha de inicio
+    const fInicio = rutina.fechaInicio ? new Date(rutina.fechaInicio) : new Date();
+    const fechaVenc = new Date(fInicio.getTime() + Number(rutina.duracionDias) * 86400000);
+    rutina.fechaVencimiento = fechaVenc.toISOString().split('T')[0];
+    rutina.dias = dias;
+
+    if (profesorNombre) rutina.profesorCreadorNombre = profesorNombre;
+
+    // Enviar notificación Push al alumno
+    this.crearNotificacion({
+      destinatarioRol: "alumno",
+      alumnoId: rutina.alumnoId,
+      mensaje: `Tu profesor ${profesorNombre || ''} actualizó tu rutina "${rutina.titulo}" 💪`,
+      rutaDestino: "rutina",
+      rutinaId: rutina.id
+    });
+
+    this.saveData();
+    return rutina;
+  }
+
+  // --- GUARDADO DE SESIÓN DE ENTRENAMIENTO REAL POR SERIES Y COMENTARIO GENERAL ---
+  guardarEntrenamientoReal({ alumnoId, rutinaId, diaId, diaNombre, setsLog, comentarioGeneral = "" }) {
     const nuevoLog = {
       id: "log-" + Date.now(),
       alumnoId,
@@ -332,6 +356,7 @@ class GymStore {
       diaNombre,
       fecha: new Date().toISOString(),
       estado: "completado",
+      comentarioGeneral: comentarioGeneral || "",
       sets: setsLog
     };
 
@@ -351,19 +376,32 @@ class GymStore {
     return nuevoLog;
   }
 
-  crearNotificacion({ destinatarioRol, alumnoId, mensaje, rutaDestino = "rutina" }) {
+  crearNotificacion({ destinatarioRol, alumnoId, mensaje, rutaDestino = "rutina", rutinaId = null }) {
     const notif = {
       id: "notif-" + Date.now() + Math.random().toString(36).substr(2, 4),
       destinatarioRol,
       alumnoId,
       mensaje,
       rutaDestino,
+      rutinaId,
       fecha: new Date().toISOString(),
       leido: false
     };
 
     this.data.notificaciones.unshift(notif);
+
+    // Enviar Web Push real si es un alumno y Supabase Engine está activo
+    if (destinatarioRol === "alumno" && alumnoId && window.supabaseEngine) {
+      window.supabaseEngine.enviarPushNotificationAAlumno(alumnoId, {
+        title: '🏋️ Estudio Fitness',
+        body: mensaje,
+        url: './index.html',
+        routineId: rutinaId
+      });
+    }
+
     this.dispararNotificacionPushNativa(mensaje);
+    this.saveData();
   }
 
   getNotificacionesPorRol(rol, alumnoId = null) {

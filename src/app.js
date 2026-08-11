@@ -5,6 +5,17 @@ document.addEventListener('DOMContentLoaded', () => {
     navigator.serviceWorker.register('./sw.js')
       .then(reg => console.log('✅ Service Worker PWA activo'))
       .catch(err => console.warn('Error SW:', err));
+
+    navigator.serviceWorker.addEventListener('message', (event) => {
+      if (event.data && event.data.type === 'NAVIGATE_ROUTE') {
+        if (event.data.routineId && appState.usuarioActual && appState.usuarioActual.rol === 'alumno') {
+          appState.tabCliente = 'rutina';
+          appState.rutinaSeleccionadaId = event.data.routineId;
+          appState.diaSeleccionadoId = null;
+          renderApp();
+        }
+      }
+    });
   }
 
   const store = window.gymStore;
@@ -479,20 +490,21 @@ document.addEventListener('DOMContentLoaded', () => {
   // MODULO DE ENTRENAMIENTO EN VIVO: REGISTRO DE SERIES (OBJETIVO VS REAL)
   function initWorkoutDraft(diaObj) {
     appState.workoutDraftSets = {};
+    appState.workoutGeneralComment = '';
     diaObj.ejercicios.forEach(ej => {
       appState.workoutDraftSets[ej.id] = {
         nombre: ej.nombre,
-        comentario: '',
         sets: Array.from({ length: ej.seriesTarget }, (_, i) => ({
           setNumero: i + 1,
           reps: ej.repeticionesTarget.includes('-') ? Number(ej.repeticionesTarget.split('-')[0]) : (Number(ej.repeticionesTarget) || 10),
-          peso: ej.pesoSugerido
+          peso: ej.pesoSugerido,
+          comentarioSet: ''
         }))
       };
     });
   }
 
-  function renderWorkoutSession(rutina) {
+  function renderWorkoutSession() {
     const dia = appState.diaActivoEntrenamiento;
     if (!dia) return '';
 
@@ -501,7 +513,7 @@ document.addEventListener('DOMContentLoaded', () => {
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px">
           <div>
             <span class="badge badge-warning">▶ EN PROGRESO</span>
-            <h2 style="font-size:1.5rem; font-weight:900; margin-top:4px">${dia.nombre}</h2>
+            <h2 style="font-size:1.4rem; font-weight:900; margin-top:4px">${dia.nombre}</h2>
           </div>
           <button class="btn btn-secondary btn-sm" id="btnCancelWorkout">Cancelar ✖</button>
         </div>
@@ -510,20 +522,21 @@ document.addEventListener('DOMContentLoaded', () => {
           const draftEj = appState.workoutDraftSets[ej.id];
           return `
             <div class="exercise-block">
-              <div class="exercise-title" style="font-size:1.2rem">${ej.nombre}</div>
+              <div class="exercise-title" style="font-size:1.15rem; font-weight:900; color:#fff">${ej.nombre}</div>
 
               <div class="target-box">
                 <div class="target-title">🎯 OBJETIVO DEL PROFESOR</div>
-                <div class="target-stats">${ej.seriesTarget} series · ${ej.repeticionesTarget} repeticiones · ${ej.pesoSugerido}</div>
+                <div class="target-stats">${ej.seriesTarget} series · ${ej.repeticionesTarget} reps · ${ej.pesoSugerido}</div>
                 ${ej.notaProfesor ? `<div style="font-size:0.85rem; color:#fca5a5; margin-top:4px">👨‍🏫 ${ej.notaProfesor}</div>` : ''}
               </div>
 
-              <h4 style="font-size:0.85rem; text-transform:uppercase; color:var(--text-gray); margin-bottom:8px">✏️ RESULTADO REAL ALCANZADO:</h4>
+              <h4 style="font-size:0.8rem; text-transform:uppercase; color:var(--text-gray); margin-bottom:8px">✏️ REGISTRO REAL POR SERIE:</h4>
 
               <div class="sets-table-header">
                 <div>SERIE</div>
-                <div>REPETICIONES</div>
-                <div>PESO USADO</div>
+                <div>REPS</div>
+                <div>PESO</div>
+                <div>COMENTARIO POR SERIE</div>
               </div>
 
               ${draftEj.sets.map((set, setIdx) => `
@@ -535,18 +548,21 @@ document.addEventListener('DOMContentLoaded', () => {
                   <div>
                     <input type="text" class="set-input" value="${set.peso}" onchange="window.updateDraftSet('${ej.id}', ${setIdx}, 'peso', this.value)">
                   </div>
+                  <div>
+                    <input type="text" class="set-input set-comment-input" placeholder="Comentario..." value="${set.comentarioSet || ''}" onchange="window.updateDraftSet('${ej.id}', ${setIdx}, 'comentarioSet', this.value)">
+                  </div>
                 </div>
               `).join('')}
-
-              <div class="form-group" style="margin-top:14px; margin-bottom:0">
-                <label class="form-label">💬 Observación / Comentario del Alumno (Multilínea)</label>
-                <textarea class="exercise-textarea" placeholder="Escribe aquí si el peso estuvo liviano, si te dolió alguna articulación o cómo te sentiste..." onchange="window.updateDraftComment('${ej.id}', this.value)">${draftEj.comentario}</textarea>
-              </div>
             </div>
           `;
         }).join('')}
 
-        <button class="btn btn-primary" id="btnFinishWorkout" style="width:100%; padding:16px; font-size:1.1rem; margin-top:10px">
+        <div class="exercise-block" style="border-color:var(--border-highlight)">
+          <label class="form-label" style="color:var(--red-primary)">💬 COMENTARIO GENERAL DEL ENTRENAMIENTO (OPCIONAL)</label>
+          <textarea class="exercise-textarea" id="inputGeneralComment" placeholder="Escribe un comentario general sobre cómo te sentiste en la sesión..." onchange="window.updateGeneralComment(this.value)">${appState.workoutGeneralComment || ''}</textarea>
+        </div>
+
+        <button class="btn btn-primary" id="btnFinishWorkout" style="width:100%; padding:16px; font-size:1.1rem; margin-top:10px; box-shadow: 0 0 35px rgba(255, 46, 46, 0.45)">
           🏆 FINALIZAR Y GUARDAR ENTRENAMIENTO
         </button>
       </div>
@@ -559,21 +575,19 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   };
 
-  window.updateDraftComment = (ejId, val) => {
-    if (appState.workoutDraftSets[ejId]) {
-      appState.workoutDraftSets[ejId].comentario = val;
-    }
+  window.updateGeneralComment = (val) => {
+    appState.workoutGeneralComment = val;
   };
 
   function renderHistorialRealAlumno(historialLogs) {
-    if (historialLogs.length === 0) {
+    if (!historialLogs || historialLogs.length === 0) {
       return `<div style="text-align:center; color:var(--text-gray); padding:40px">Aún no has completado entrenamientos con este sistema.</div>`;
     }
 
     return `
       <div style="max-width:800px; margin:0 auto">
         <h3 style="margin-bottom:16px">📜 Registros de Entrenamientos Completados</h3>
-        ${historialLogs.map((log, idx) => `
+        ${historialLogs.map(log => `
           <div class="history-item-card">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px">
               <div>
@@ -583,11 +597,17 @@ document.addEventListener('DOMContentLoaded', () => {
               <span class="badge badge-active">Completado</span>
             </div>
 
+            ${log.comentarioGeneral ? `
+              <div style="background:rgba(255,46,46,0.08); border-left:3px solid var(--red-primary); padding:8px 12px; border-radius:0 6px 6px 0; margin-bottom:10px; font-size:0.85rem">
+                💬 <strong>Comentario General:</strong> "${log.comentarioGeneral}"
+              </div>
+            ` : ''}
+
             <div style="border-top:1px solid var(--border-color); padding-top:10px">
               ${log.sets.map(s => `
-                <div style="font-size:0.88rem; margin-bottom:6px">
+                <div style="font-size:0.85rem; margin-bottom:6px; background:rgba(0,0,0,0.3); padding:6px 10px; border-radius:6px">
                   <strong>${s.ejercicioNombre}</strong> — Serie ${s.setNumero}: <strong>${s.repsRealizadas} reps</strong> con <strong>${s.pesoUtilizado}</strong>
-                  ${s.comentarioAlumno ? `<div style="color:var(--yellow-warning); font-size:0.8rem; margin-top:2px">👤 Comentario: "${s.comentarioAlumno}"</div>` : ''}
+                  ${s.comentarioAlumno ? `<div style="color:var(--yellow-warning); font-size:0.8rem; margin-top:2px">💬 Serie: "${s.comentarioAlumno}"</div>` : ''}
                 </div>
               `).join('')}
             </div>
@@ -637,11 +657,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
         <div class="alumnos-grid">
           ${alumnosFiltrados.map(alumno => {
-            const rutina = store.getRutinaActiva(alumno.id);
-            const dRest = rutina ? store.calcularDiasRestantes(rutina.fechaVencimiento) : -1;
+            const rutinasAlumno = store.getRutinasAlumno(alumno.id);
+            const rutinaActiva = store.getRutinaActiva(alumno.id);
+            const dRest = rutinaActiva ? store.calcularDiasRestantes(rutinaActiva.fechaVencimiento) : -1;
 
             let badgeHtml = `<span class="badge badge-expired">Sin Rutina</span>`;
-            if (rutina) {
+            if (rutinaActiva) {
               if (dRest <= 1 && dRest >= 0) badgeHtml = `<span class="badge badge-warning">⏰ Vence en ${dRest}d</span>`;
               else if (dRest > 1) badgeHtml = `<span class="badge badge-active">● Activa (${dRest}d)</span>`;
             }
@@ -662,16 +683,21 @@ document.addEventListener('DOMContentLoaded', () => {
                 </div>
 
                 <div style="background:rgba(0,0,0,0.3); padding:10px; border-radius:8px; font-size:0.85rem; color:var(--text-gray); margin-bottom:12px">
-                  ${rutina ? `
-                    <div style="color:#fff; font-weight:700">💪 ${rutina.titulo}</div>
-                    <div style="font-size:0.75rem; margin-top:2px">Profe: ${rutina.profesorCreadorNombre || 'Gimnasio'} | Vence: ${rutina.fechaVencimiento}</div>
-                  ` : `
-                    <div>⚠️ Hacer clic para crear rutina.</div>
+                  ${rutinasAlumno.length > 0 ? rutinasAlumno.map(r => `
+                    <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.06); padding:6px 0">
+                      <div>
+                        <div style="color:#fff; font-weight:700">💪 ${r.titulo}</div>
+                        <div style="font-size:0.72rem; color:var(--text-muted)">Vence: ${r.fechaVencimiento} | ${r.dias ? r.dias.length : 0} días</div>
+                      </div>
+                      <button class="btn btn-secondary btn-sm btn-editar-rutina-click" data-alumno-id="${alumno.id}" data-rutina-id="${r.id}" style="border-color:var(--yellow-warning); color:var(--yellow-warning); padding:4px 10px; font-size:0.78rem">✏️ Editar</button>
+                    </div>
+                  `).join('') : `
+                    <div>⚠️ Sin rutinas creadas aún.</div>
                   `}
                 </div>
 
-                <div style="display:flex; gap:8px">
-                  <button class="btn btn-primary btn-sm" style="flex:1">📝 Crear Nueva Rutina</button>
+                <div style="display:flex; flex-wrap:wrap; gap:8px">
+                  <button class="btn btn-primary btn-sm btn-crear-rutina-click" data-alumno-id="${alumno.id}">+ Crear Nueva Rutina</button>
                   <button class="btn btn-secondary btn-sm btn-historial-click" data-alumno-id="${alumno.id}">📜 Historial Real</button>
                 </div>
               </div>
@@ -681,7 +707,7 @@ document.addEventListener('DOMContentLoaded', () => {
       </main>
 
       ${appState.modalActivo === 'nuevo_alumno' ? renderModalNuevoAlumno() : ''}
-      ${appState.modalActivo === 'crear_rutina' ? renderModalCrearRutina() : ''}
+      ${(appState.modalActivo === 'crear_rutina' || appState.modalActivo === 'editar_rutina') ? renderModalFormularioRutina(appState.modalActivo) : ''}
       ${appState.modalActivo === 'historial_alumno' ? renderModalHistorialAlumno() : ''}
     `;
 
@@ -706,15 +732,40 @@ document.addEventListener('DOMContentLoaded', () => {
 
     document.querySelectorAll('.alumno-card-clickable').forEach(card => {
       card.addEventListener('click', (e) => {
+        const alumnoId = card.dataset.alumnoId;
         if (e.target.classList.contains('btn-historial-click')) {
           e.stopPropagation();
-          appState.alumnoSeleccionadoId = e.target.dataset.alumnoId;
+          appState.alumnoSeleccionadoId = alumnoId;
           appState.modalActivo = 'historial_alumno';
-        } else {
-          appState.alumnoSeleccionadoId = card.dataset.alumnoId;
+          renderApp();
+        } else if (e.target.classList.contains('btn-editar-rutina-click')) {
+          e.stopPropagation();
+          appState.alumnoSeleccionadoId = alumnoId;
+          appState.rutinaEnEdicionId = e.target.dataset.rutinaId;
+          appState.modalActivo = 'editar_rutina';
+          initFormBuilderForRoutine(appState.rutinaEnEdicionId);
+          renderApp();
+        } else if (e.target.classList.contains('btn-crear-rutina-click')) {
+          e.stopPropagation();
+          appState.alumnoSeleccionadoId = alumnoId;
+          appState.rutinaEnEdicionId = null;
           appState.modalActivo = 'crear_rutina';
+          initFormBuilderForNew();
+          renderApp();
+        } else {
+          const rutina = store.getRutinaActiva(alumnoId);
+          appState.alumnoSeleccionadoId = alumnoId;
+          if (rutina) {
+            appState.rutinaEnEdicionId = rutina.id;
+            appState.modalActivo = 'editar_rutina';
+            initFormBuilderForRoutine(rutina.id);
+          } else {
+            appState.rutinaEnEdicionId = null;
+            appState.modalActivo = 'crear_rutina';
+            initFormBuilderForNew();
+          }
+          renderApp();
         }
-        renderApp();
       });
     });
 
@@ -753,32 +804,33 @@ document.addEventListener('DOMContentLoaded', () => {
     `;
   }
 
-  function renderModalCrearRutina() {
+  function renderModalFormularioRutina(modo) {
     const alumno = store.getAlumnoPorId(appState.alumnoSeleccionadoId);
-    const rutinaExistente = store.getRutinaActiva(alumno.id);
+    const esEdicion = modo === 'editar_rutina';
+    const rutinaExistente = esEdicion ? store.getRutinaPorId(appState.rutinaEnEdicionId) : null;
 
     return `
       <div class="modal-overlay">
         <div class="modal-content">
           <div class="modal-header">
-            <h3>📝 Asignar Nueva Rutina para ${alumno.nombre} (DNI ${alumno.dni})</h3>
+            <h3>${esEdicion ? '✏️ Editar Rutina' : '📝 Asignar Nueva Rutina'} — ${alumno ? alumno.nombre : ''}</h3>
             <button class="close-btn" id="btnCloseModal">&times;</button>
           </div>
 
           <form id="formCrearRutina">
-            <div style="display:grid; grid-template-columns: 2fr 1fr; gap:14px">
+            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap:12px">
               <div class="form-group">
-                <label class="form-label">Título de la Rutina</label>
+                <label class="form-label">Título de la Rutina *</label>
                 <input type="text" id="routineTitle" class="form-input" value="${rutinaExistente ? rutinaExistente.titulo : 'Fuerza e Hipertrofia'}" required>
               </div>
               <div class="form-group">
-                <label class="form-label">Duración (Días)</label>
-                <input type="number" id="routineDuration" class="form-input" min="1" max="90" value="${rutinaExistente ? rutinaExistente.duracionDias : 30}" required>
+                <label class="form-label">Duración (Días) *</label>
+                <input type="number" id="routineDuration" class="form-input" min="1" max="180" value="${rutinaExistente ? rutinaExistente.duracionDias : 30}" required>
               </div>
             </div>
 
-            <div style="display:flex; justify-content:space-between; align-items:center; margin:16px 0 10px">
-              <h4 style="color:var(--red-primary)">Días de Entrenamiento y Objetivos Indicados</h4>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin:16px 0 10px; border-top:1px solid var(--border-color); padding-top:14px">
+              <h4 style="color:var(--red-primary); font-weight:900">Días de Entrenamiento y Ejercicios</h4>
               <button type="button" class="btn btn-secondary btn-sm" id="btnAddDay">+ Agregar Día</button>
             </div>
 
@@ -786,7 +838,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
             <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:24px">
               <button type="button" class="btn btn-secondary" id="btnCancelModal">Cancelar</button>
-              <button type="submit" class="btn btn-primary">Crear Nueva Rutina y Archivar Anterior 🚀</button>
+              <button type="submit" class="btn btn-primary">
+                ${esEdicion ? '💾 Guardar Cambios en Rutina' : '🚀 Asignar Nueva Rutina'}
+              </button>
             </div>
           </form>
         </div>
@@ -811,14 +865,36 @@ document.addEventListener('DOMContentLoaded', () => {
     `;
   }
 
-  let currentFormDays = [
-    {
-      nombre: "Día 1: Pecho y Tríceps",
-      ejercicios: [
-        { nombre: "Press Plano con Barra", series: 4, repeticiones: "10-12", peso: "60 kg", notaProfesor: "Controlar descenso" }
-      ]
+  let currentFormDays = [];
+
+  function initFormBuilderForNew() {
+    currentFormDays = [
+      {
+        nombre: "Día 1: Pecho, Hombro y Tríceps",
+        ejercicios: [
+          { nombre: "Press Plano con Barra", series: 4, repeticiones: "10-12", peso: "60 kg", notaProfesor: "Controlar bajada" }
+        ]
+      }
+    ];
+  }
+
+  function initFormBuilderForRoutine(rutinaId) {
+    const rutina = store.getRutinaPorId(rutinaId);
+    if (rutina && rutina.dias) {
+      currentFormDays = rutina.dias.map(d => ({
+        nombre: d.nombre,
+        ejercicios: d.ejercicios.map(e => ({
+          nombre: e.nombre,
+          series: e.seriesTarget || 3,
+          repeticiones: e.repeticionesTarget || "12",
+          peso: e.pesoSugerido || "S/D",
+          notaProfesor: e.notaProfesor || ""
+        }))
+      }));
+    } else {
+      initFormBuilderForNew();
     }
-  ];
+  }
 
   function setupRoutineFormBuilder() {
     renderFormDays();
@@ -837,25 +913,37 @@ document.addEventListener('DOMContentLoaded', () => {
 
     container.innerHTML = currentFormDays.map((dia, diaIdx) => `
       <div style="background:rgba(0,0,0,0.5); border:1px solid var(--border-color); border-radius:var(--radius-sm); padding:14px; margin-bottom:14px">
-        <div style="display:flex; justify-content:space-between; gap:10px; margin-bottom:10px">
-          <input type="text" class="form-input" value="${dia.nombre}" onchange="window.updateFormDayName(${diaIdx}, this.value)" style="font-weight:800">
-          <button type="button" class="btn btn-secondary btn-sm" onclick="window.addFormExercise(${diaIdx})">+ Ejercicio</button>
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; margin-bottom:10px; flex-wrap:wrap">
+          <input type="text" class="form-input" value="${dia.nombre}" onchange="window.updateFormDayName(${diaIdx}, this.value)" style="font-weight:800; flex:1; min-width:140px">
+          <div style="display:flex; gap:4px">
+            <button type="button" class="btn btn-secondary btn-sm" onclick="window.moveFormDayUp(${diaIdx})" title="Subir Día" style="padding:4px 8px">⬆️</button>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="window.moveFormDayDown(${diaIdx})" title="Bajar Día" style="padding:4px 8px">⬇️</button>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="window.addFormExercise(${diaIdx})">+ Ejercicio</button>
+            ${currentFormDays.length > 1 ? `<button type="button" class="btn btn-secondary btn-sm" onclick="window.removeFormDay(${diaIdx})" style="color:var(--red-primary); border-color:var(--red-primary); padding:4px 8px">🗑️</button>` : ''}
+          </div>
         </div>
 
         ${dia.ejercicios.map((ej, ejIdx) => `
           <div style="background:rgba(255,255,255,0.03); border:1px solid var(--border-color); padding:10px; border-radius:8px; margin-bottom:8px">
-            <div class="form-group" style="margin-bottom:6px">
-              <label class="form-label" style="font-size:0.75rem">Nombre del Ejercicio</label>
-              <input type="text" class="form-input" value="${ej.nombre}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'nombre', this.value)">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; margin-bottom:6px">
+              <div class="form-group" style="margin-bottom:0; flex:1">
+                <label class="form-label" style="font-size:0.75rem">Nombre del Ejercicio</label>
+                <input type="text" class="form-input" value="${ej.nombre}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'nombre', this.value)">
+              </div>
+              <div style="display:flex; gap:4px; margin-top:16px">
+                <button type="button" class="btn btn-secondary btn-sm" onclick="window.moveFormExerciseUp(${diaIdx}, ${ejIdx})" style="padding:4px 6px" title="Subir Ejercicio">⬆️</button>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="window.moveFormExerciseDown(${diaIdx}, ${ejIdx})" style="padding:4px 6px" title="Bajar Ejercicio">⬇️</button>
+                ${dia.ejercicios.length > 1 ? `<button type="button" class="btn btn-secondary btn-sm" onclick="window.removeFormExercise(${diaIdx}, ${ejIdx})" style="color:var(--red-primary); border-color:var(--red-primary); padding:4px 6px">🗑️</button>` : ''}
+              </div>
             </div>
 
-            <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:8px; margin-bottom:6px">
+            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(85px, 1fr)); gap:8px; margin-bottom:6px">
               <div class="form-group" style="margin-bottom:0">
                 <label class="form-label" style="font-size:0.72rem">Series Objetivo</label>
                 <input type="number" class="form-input" value="${ej.series}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'series', this.value)">
               </div>
               <div class="form-group" style="margin-bottom:0">
-                <label class="form-label" style="font-size:0.72rem">Repeticiones Objetivo</label>
+                <label class="form-label" style="font-size:0.72rem">Reps Objetivo</label>
                 <input type="text" class="form-input" value="${ej.repeticiones}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'repeticiones', this.value)">
               </div>
               <div class="form-group" style="margin-bottom:0">
@@ -878,6 +966,48 @@ document.addEventListener('DOMContentLoaded', () => {
   window.addFormExercise = (diaIdx) => {
     currentFormDays[diaIdx].ejercicios.push({ nombre: "Nuevo Ejercicio", series: 3, repeticiones: "12", peso: "10 kg", notaProfesor: "" });
     renderFormDays();
+  };
+  window.removeFormExercise = (diaIdx, ejIdx) => {
+    currentFormDays[diaIdx].ejercicios.splice(ejIdx, 1);
+    renderFormDays();
+  };
+  window.removeFormDay = (diaIdx) => {
+    currentFormDays.splice(diaIdx, 1);
+    renderFormDays();
+  };
+  window.moveFormDayUp = (diaIdx) => {
+    if (diaIdx > 0) {
+      const temp = currentFormDays[diaIdx];
+      currentFormDays[diaIdx] = currentFormDays[diaIdx - 1];
+      currentFormDays[diaIdx - 1] = temp;
+      renderFormDays();
+    }
+  };
+  window.moveFormDayDown = (diaIdx) => {
+    if (diaIdx < currentFormDays.length - 1) {
+      const temp = currentFormDays[diaIdx];
+      currentFormDays[diaIdx] = currentFormDays[diaIdx + 1];
+      currentFormDays[diaIdx + 1] = temp;
+      renderFormDays();
+    }
+  };
+  window.moveFormExerciseUp = (diaIdx, ejIdx) => {
+    if (ejIdx > 0) {
+      const ejs = currentFormDays[diaIdx].ejercicios;
+      const temp = ejs[ejIdx];
+      ejs[ejIdx] = ejs[ejIdx - 1];
+      ejs[ejIdx - 1] = temp;
+      renderFormDays();
+    }
+  };
+  window.moveFormExerciseDown = (diaIdx, ejIdx) => {
+    const ejs = currentFormDays[diaIdx].ejercicios;
+    if (ejIdx < ejs.length - 1) {
+      const temp = ejs[ejIdx];
+      ejs[ejIdx] = ejs[ejIdx + 1];
+      ejs[ejIdx + 1] = temp;
+      renderFormDays();
+    }
   };
   window.updateFormExercise = (diaIdx, ejIdx, field, val) => {
     currentFormDays[diaIdx].ejercicios[ejIdx][field] = val;
@@ -903,16 +1033,28 @@ document.addEventListener('DOMContentLoaded', () => {
       }))
     }));
 
-    store.crearOActualizarRutina({
-      alumnoId: appState.alumnoSeleccionadoId,
-      profesorNombre: profActual.nombre,
-      titulo,
-      duracionDias: duracion,
-      dias: formattedDays
-    });
+    if (appState.modalActivo === 'editar_rutina' && appState.rutinaEnEdicionId) {
+      store.editarRutinaExistente({
+        rutinaId: appState.rutinaEnEdicionId,
+        profesorNombre: profActual.nombre,
+        titulo,
+        duracionDias: duracion,
+        dias: formattedDays
+      });
+      alert("✅ Rutina actualizada correctamente. El alumno recibirá una notificación con los cambios.");
+    } else {
+      store.crearOActualizarRutina({
+        alumnoId: appState.alumnoSeleccionadoId,
+        profesorNombre: profActual.nombre,
+        titulo,
+        duracionDias: duracion,
+        dias: formattedDays
+      });
+      alert("🚀 Nueva rutina asignada y activada correctamente.");
+    }
 
-    alert("🚀 Nueva rutina asignada y activada. La rutina anterior fue archivada en el historial.");
     appState.modalActivo = null;
+    appState.rutinaEnEdicionId = null;
     renderApp();
   }
 
@@ -928,17 +1070,31 @@ document.addEventListener('DOMContentLoaded', () => {
       if ('Notification' in window) {
         Notification.requestPermission().then(permission => {
           if (permission === 'granted') {
-            alert("🔔 Notificaciones Web Push activadas correctamente en tu dispositivo.");
             if ('serviceWorker' in navigator && window.supabaseEngine) {
-              navigator.serviceWorker.ready.then(reg => {
-                reg.pushManager.getSubscription().then(sub => {
-                  if (sub && appState.usuarioActual) {
-                    window.supabaseEngine.registerPushSubscription(appState.usuarioActual.data.id, sub.toJSON());
+              navigator.serviceWorker.ready.then(async reg => {
+                try {
+                  let sub = await reg.pushManager.getSubscription();
+                  if (!sub) {
+                    const vapidKey = window.ENV_VAPID_PUBLIC_KEY || 'BEl62iUYgUivxIkv69yViEuiBIa-m9GYv50D2nE85-dummy-public-key';
+                    sub = await reg.pushManager.subscribe({
+                      userVisibleOnly: true,
+                      applicationServerKey: urlBase64ToUint8Array(vapidKey)
+                    });
                   }
-                });
+                  if (sub && appState.usuarioActual) {
+                    await window.supabaseEngine.registerPushSubscription(appState.usuarioActual.data.id, sub.toJSON());
+                    alert("🔔 Suscripción Web Push activa y vinculada a tu cuenta correctamente.");
+                  }
+                } catch (e) {
+                  console.warn("⚠️ Permiso concedido pero hubo una observación en la suscripción Web Push:", e);
+                  alert("🔔 Notificaciones activadas en el navegador.");
+                }
+                renderApp();
               });
+            } else {
+              alert("🔔 Notificaciones habilitadas.");
+              renderApp();
             }
-            renderApp();
           } else {
             alert("⚠️ Permiso de notificaciones denegado. Puedes habilitarlo desde la configuración de tu navegador.");
           }
@@ -972,7 +1128,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('btnFinishWorkout')?.addEventListener('click', () => {
       const dia = appState.diaActivoEntrenamiento;
       const alumno = appState.usuarioActual.data;
-      const rutinaActiva = store.getRutinaActiva(alumno.id);
+      const rutinaActiva = store.getRutinaPorId(appState.rutinaSeleccionadaId) || store.getRutinaActiva(alumno.id);
 
       const setsLogArr = [];
       Object.keys(appState.workoutDraftSets).forEach(ejId => {
@@ -983,17 +1139,18 @@ document.addEventListener('DOMContentLoaded', () => {
             setNumero: s.setNumero,
             repsRealizadas: s.reps,
             pesoUtilizado: s.peso,
-            comentarioAlumno: ejData.comentario
+            comentarioAlumno: s.comentarioSet || ''
           });
         });
       });
 
       store.guardarEntrenamientoReal({
         alumnoId: alumno.id,
-        rutinaId: rutinaActiva.id,
+        rutinaId: rutinaActiva ? rutinaActiva.id : 'rut-default',
         diaId: dia.id,
         diaNombre: dia.nombre,
-        setsLog: setsLogArr
+        setsLog: setsLogArr,
+        comentarioGeneral: appState.workoutGeneralComment || ''
       });
 
       alert("🏆 ¡Entrenamiento completado y guardado en tu historial!");

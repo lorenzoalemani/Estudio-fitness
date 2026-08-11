@@ -81,6 +81,7 @@ CREATE TABLE workout_logs (
   routine_id UUID NOT NULL REFERENCES routines(id) ON DELETE CASCADE,
   dia_numero INT NOT NULL DEFAULT 1,
   dia_nombre TEXT NOT NULL,
+  comentario_general TEXT,
   estado TEXT NOT NULL DEFAULT 'completado' CHECK (estado IN ('en_progreso', 'completado')),
   fecha_entrenamiento TIMESTAMPTZ DEFAULT NOW()
 );
