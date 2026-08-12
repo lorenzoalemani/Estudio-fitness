@@ -32,7 +32,8 @@ document.addEventListener('DOMContentLoaded', () => {
     modalActivo: null,
     alumnoSeleccionadoId: null,
     mostrarDrawerNotifs: false,
-    workoutDraftSets: {} // Estado temporal del entrenamiento en progreso por serie
+    workoutDraftSets: {},       // Estado temporal del entrenamiento en progreso por serie
+    historialProfesorLogs: null  // Caché async del historial del alumno visto por el profesor
   };
 
   // Escuchar cambios de Supabase Realtime / Local Store
@@ -170,15 +171,40 @@ document.addEventListener('DOMContentLoaded', () => {
       if (res) {
         appState.usuarioActual = res;
 
-        // Exponer el ID de sesión para sincronización Realtime y syncWithSupabase
         if (res.rol === 'alumno' && res.data && res.data.id) {
+          // --- SESIÓN ALUMNO ---
           window._sessionAlumnoId = res.data.id;
-          // Sincronizar rutinas del alumno vía RPC después del login
-          setTimeout(() => gymStore.syncWithSupabase(res.data.id), 300);
+          window._sessionProfesorId = null;
+          // Sincronizar rutinas e historial vía RPC después del login
+          setTimeout(async () => {
+            await gymStore.syncWithSupabase(res.data.id);
+            // Sincronizar historial desde Supabase
+            if (window.supabaseEngine) {
+              const sbLogs = await window.supabaseEngine.obtenerHistorialDesdeSupabase(res.data.id);
+              if (sbLogs && sbLogs.length > 0) {
+                sbLogs.forEach(sbLog => {
+                  const idx = gymStore.data.workoutLogs.findIndex(w => w.id === sbLog.id);
+                  if (idx >= 0) {
+                    gymStore.data.workoutLogs[idx] = sbLog;
+                  } else {
+                    gymStore.data.workoutLogs.push(sbLog);
+                  }
+                });
+                gymStore.saveData();
+                window.dispatchEvent(new CustomEvent('gym_store_updated'));
+              }
+            }
+          }, 300);
+        } else if (res.rol === 'profesor' && res.data && res.data.id) {
+          // --- SESIÓN PROFESOR ---
+          window._sessionProfesorId = res.data.id;
+          window._sessionAlumnoId = null;
         } else {
           window._sessionAlumnoId = null;
+          window._sessionProfesorId = null;
         }
 
+        appState.historialProfesorLogs = null; // limpiar caché al cambiar de sesión
         renderApp();
       } else {
         alert("❌ DNI o Contraseña incorrectos. Verifica tus datos.");
@@ -287,7 +313,7 @@ document.addEventListener('DOMContentLoaded', () => {
           )
         ) : ''}
 
-        ${appState.tabCliente === 'historial' ? renderHistorialRealAlumno(historialEntrenamientos) : ''}
+        ${appState.tabCliente === 'historial' ? renderHistorialAgrupado(historialEntrenamientos, store.data.rutinas) : ''}
       </main>
     `;
 
@@ -590,42 +616,140 @@ document.addEventListener('DOMContentLoaded', () => {
     appState.workoutGeneralComment = val;
   };
 
-  function renderHistorialRealAlumno(historialLogs) {
-    if (!historialLogs || historialLogs.length === 0) {
-      return `<div style="text-align:center; color:var(--text-gray); padding:40px">Aún no has completado entrenamientos con este sistema.</div>`;
+  // --- HISTORIAL AGRUPADO: Rutina → Semana → Día → Ejercicios → Series ---
+  function renderHistorialAgrupado(logs, rutinas) {
+    if (!logs || logs.length === 0) {
+      return `<div style="text-align:center; color:var(--text-gray); padding:40px 20px">
+        <div style="font-size:2.5rem; margin-bottom:10px">📜</div>
+        <div style="font-size:1rem; font-weight:700">Aún no hay entrenamientos registrados.</div>
+        <div style="font-size:0.85rem; margin-top:6px">Completa una sesión para ver tu historial aquí.</div>
+      </div>`;
     }
 
-    return `
-      <div style="max-width:800px; margin:0 auto">
-        <h3 style="margin-bottom:16px">📜 Registros de Entrenamientos Completados</h3>
-        ${historialLogs.map(log => `
-          <div class="history-item-card">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px">
-              <div>
-                <strong style="font-size:1.1rem; color:var(--green-active)">✓ ${log.diaNombre}</strong>
-                <div style="font-size:0.8rem; color:var(--text-gray)">Fecha: ${new Date(log.fecha).toLocaleString()}</div>
-              </div>
-              <span class="badge badge-active">Completado</span>
-            </div>
+    // Agrupar: rutinaId → semana → día
+    const grouped = {};
+    logs.forEach(log => {
+      const rId = log.rutinaId || 'sin-rutina';
+      if (!grouped[rId]) {
+        const rutina = rutinas ? rutinas.find(r => r.id === rId) : null;
+        grouped[rId] = {
+          titulo: log.rutinaT || (rutina ? rutina.titulo : 'Rutina'),
+          fechaInicio: rutina ? rutina.fechaInicio : null,
+          duracionDias: rutina ? (rutina.duracionDias || 30) : 30,
+          semanas: {}
+        };
+      }
+      const g = grouped[rId];
 
-            ${log.comentarioGeneral ? `
-              <div style="background:rgba(255,46,46,0.08); border-left:3px solid var(--red-primary); padding:8px 12px; border-radius:0 6px 6px 0; margin-bottom:10px; font-size:0.85rem">
-                💬 <strong>Comentario General:</strong> "${log.comentarioGeneral}"
-              </div>
-            ` : ''}
+      // Calcular semana relativa a la fecha de inicio de la rutina
+      let semana = log.semana || 1;
+      if (!log.semana && g.fechaInicio && log.fecha) {
+        const diffDays = Math.floor(
+          (new Date(log.fecha) - new Date(g.fechaInicio)) / 86400000
+        );
+        semana = Math.max(1, Math.ceil((diffDays + 1) / 7));
+      }
 
-            <div style="border-top:1px solid var(--border-color); padding-top:10px">
-              ${log.sets.map(s => `
-                <div style="font-size:0.85rem; margin-bottom:6px; background:rgba(0,0,0,0.3); padding:6px 10px; border-radius:6px">
-                  <strong>${s.ejercicioNombre}</strong> — Serie ${s.setNumero}: <strong>${s.repsRealizadas} reps</strong> con <strong>${s.pesoUtilizado}</strong>
-                  ${s.comentarioAlumno ? `<div style="color:var(--yellow-warning); font-size:0.8rem; margin-top:2px">💬 Serie: "${s.comentarioAlumno}"</div>` : ''}
-                </div>
-              `).join('')}
+      if (!g.semanas[semana]) g.semanas[semana] = {};
+      const diaKey = String(log.diaNumero || log.diaNombre || 1);
+      if (!g.semanas[semana][diaKey]) g.semanas[semana][diaKey] = [];
+      g.semanas[semana][diaKey].push(log);
+    });
+
+    return `<div style="max-width:800px; margin:0 auto">
+      ${Object.entries(grouped).map(([rId, g]) => {
+        const totalSemanas = Math.max(1, Math.ceil(g.duracionDias / 7));
+        const semanasOrdenadas = Object.keys(g.semanas).map(Number).sort((a, b) => a - b);
+
+        return `
+        <div style="margin-bottom:28px">
+          <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px; padding:12px 16px;
+                      background:rgba(255,46,46,0.08); border-radius:10px; border-left:4px solid var(--red-primary)">
+            <div style="font-size:1.3rem">💪</div>
+            <div>
+              <div style="font-size:1.1rem; font-weight:900; color:#fff">${g.titulo}</div>
+              <div style="font-size:0.78rem; color:var(--text-gray)">${totalSemanas} semanas · ${g.duracionDias} días
+                ${g.fechaInicio ? ' · Inicio: ' + new Date(g.fechaInicio).toLocaleDateString('es-AR') : ''}
+              </div>
             </div>
           </div>
-        `).join('')}
-      </div>
-    `;
+
+          ${Array.from({ length: totalSemanas }, (_, i) => i + 1).map(numSemana => {
+            const diasEsaSemana = g.semanas[numSemana];
+            const tieneRegistros = diasEsaSemana && Object.keys(diasEsaSemana).length > 0;
+
+            return `
+            <div style="margin-bottom:12px">
+              <div class="history-accordion-header" data-acc-id="acc-s${numSemana}-${rId.slice(0,8)}"
+                   style="display:flex; justify-content:space-between; align-items:center;
+                          background:rgba(255,255,255,0.04); border:1px solid var(--border-color);
+                          padding:10px 14px; border-radius:8px; cursor:pointer; user-select:none">
+                <span style="font-weight:800; font-size:0.95rem">📅 Semana ${numSemana}</span>
+                <span style="color:var(--text-gray); font-size:0.8rem">
+                  ${tieneRegistros ? Object.keys(diasEsaSemana).length + ' día(s) registrado(s)' : 'Sin registros'} ▼
+                </span>
+              </div>
+
+              <div class="history-accordion-body" id="acc-s${numSemana}-${rId.slice(0,8)}"
+                   style="display:none; padding:10px 0 0">
+                ${!tieneRegistros
+                  ? `<div style="text-align:center; color:var(--text-gray); font-size:0.82rem; padding:12px">
+                       Sin entrenamientos registrados esta semana.
+                     </div>`
+                  : Object.entries(diasEsaSemana).map(([diaKey, diaLogs]) => {
+                      return diaLogs.map(log => `
+                      <div class="history-item-card" style="margin-bottom:10px; border-left:3px solid var(--border-highlight)">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
+                          <div>
+                            <strong style="color:var(--green-active); font-size:1rem">✓ ${log.diaNombre}</strong>
+                            <div style="font-size:0.75rem; color:var(--text-gray)">
+                              ${new Date(log.fecha).toLocaleString('es-AR', { weekday:'short', day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' })}
+                            </div>
+                          </div>
+                          <span class="badge badge-active">Completado</span>
+                        </div>
+
+                        ${log.comentarioGeneral ? `
+                          <div style="background:rgba(255,46,46,0.08); border-left:3px solid var(--red-primary);
+                                      padding:7px 12px; border-radius:0 6px 6px 0; margin-bottom:8px; font-size:0.82rem">
+                            💬 <strong>Comentario general:</strong> "${log.comentarioGeneral}"
+                          </div>` : ''}
+
+                        <div style="border-top:1px solid var(--border-color); padding-top:8px">
+                          ${(() => {
+                            // Agrupar series por ejercicio
+                            const ejMap = {};
+                            (log.sets || []).forEach(s => {
+                              const key = s.ejercicioNombre;
+                              if (!ejMap[key]) ejMap[key] = [];
+                              ejMap[key].push(s);
+                            });
+                            return Object.entries(ejMap).map(([ejNombre, sets]) => `
+                              <div style="margin-bottom:8px">
+                                <div style="font-size:0.88rem; font-weight:800; color:#fff; margin-bottom:4px">
+                                  🏋️ ${ejNombre}
+                                </div>
+                                ${sets.map(s => `
+                                  <div style="font-size:0.82rem; background:rgba(0,0,0,0.3);
+                                              padding:5px 10px; border-radius:6px; margin-bottom:3px">
+                                    Serie ${s.setNumero}: <strong>${s.repsRealizadas} reps</strong>
+                                    con <strong>${s.pesoUtilizado}</strong>
+                                    ${s.comentarioAlumno ? `<span style="color:var(--yellow-warning)">
+                                      · 💬 "${s.comentarioAlumno}"</span>` : ''}
+                                  </div>`).join('')}
+                              </div>`).join('');
+                          })()}
+                        </div>
+                      </div>
+                      `).join('');
+                    }).join('')
+                }
+              </div>
+            </div>`;
+          }).join('')}
+        </div>`;
+      }).join('')}
+    </div>`;
   }
 
   // --- DASHBOARD PROFESOR ---
@@ -861,16 +985,42 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function renderModalHistorialAlumno() {
     const alumno = store.getAlumnoPorId(appState.alumnoSeleccionadoId);
-    const historialLogs = store.getHistorialEntrenamientosReales(alumno.id);
+    if (!alumno) return '';
+
+    // Si no hay caché y Supabase está disponible, disparar fetch async
+    if (appState.historialProfesorLogs === null && window.supabaseEngine && window._sessionProfesorId) {
+      const alumnoId = alumno.id;
+      const profesorId = window._sessionProfesorId;
+      window.supabaseEngine.obtenerHistorialParaProfesor(alumnoId, profesorId)
+        .then(sbLogs => {
+          appState.historialProfesorLogs = sbLogs && sbLogs.length > 0
+            ? sbLogs
+            : store.getHistorialEntrenamientosReales(alumnoId); // fallback local
+          window.dispatchEvent(new CustomEvent('gym_store_updated'));
+        })
+        .catch(() => {
+          appState.historialProfesorLogs = store.getHistorialEntrenamientosReales(alumnoId);
+          window.dispatchEvent(new CustomEvent('gym_store_updated'));
+        });
+    }
+
+    const historialLogs = appState.historialProfesorLogs
+      ?? store.getHistorialEntrenamientosReales(alumno.id);
 
     return `
       <div class="modal-overlay">
         <div class="modal-content">
           <div class="modal-header">
-            <h3>📜 Historial Real de Entrenamientos: ${alumno.nombre}</h3>
+            <h3>📜 Historial: ${alumno.nombre}</h3>
             <button class="close-btn" id="btnCloseModal">&times;</button>
           </div>
-          ${renderHistorialRealAlumno(historialLogs)}
+          ${appState.historialProfesorLogs === null
+            ? `<div style="text-align:center; padding:40px; color:var(--text-gray)">
+                <div style="font-size:2rem; margin-bottom:8px">⏳</div>
+                Cargando historial desde Supabase...
+               </div>`
+            : renderHistorialAgrupado(historialLogs, store.data.rutinas)
+          }
         </div>
       </div>
     `;
@@ -1146,21 +1296,23 @@ document.addEventListener('DOMContentLoaded', () => {
         const ejData = appState.workoutDraftSets[ejId];
         ejData.sets.forEach(s => {
           setsLogArr.push({
-            ejercicioNombre: ejData.nombre,
-            setNumero: s.setNumero,
-            repsRealizadas: s.reps,
-            pesoUtilizado: s.peso,
-            comentarioAlumno: s.comentarioSet || ''
+            ejercicioId:       ejId,              // para vincular exercise_goal_id en Supabase
+            ejercicioNombre:   ejData.nombre,
+            setNumero:         s.setNumero,
+            repsRealizadas:    s.reps,
+            pesoUtilizado:     s.peso,
+            comentarioAlumno:  s.comentarioSet || ''
           });
         });
       });
 
       store.guardarEntrenamientoReal({
-        alumnoId: alumno.id,
-        rutinaId: rutinaActiva ? rutinaActiva.id : 'rut-default',
-        diaId: dia.id,
-        diaNombre: dia.nombre,
-        setsLog: setsLogArr,
+        alumnoId:         alumno.id,
+        rutinaId:         rutinaActiva ? rutinaActiva.id : 'rut-default',
+        diaId:            dia.id,
+        diaNombre:        dia.nombre,
+        diaNumero:        dia.diaNumero || 1,    // número real del día en la rutina
+        setsLog:          setsLogArr,
         comentarioGeneral: appState.workoutGeneralComment || ''
       });
 

@@ -329,38 +329,86 @@ class SupabaseEngine {
   async guardarWorkoutLogEnSupabase(log) {
     if (!this.client) return;
     try {
-      const logUuid = this.ensureValidUUID(log.id);
+      const logUuid    = this.ensureValidUUID(log.id);  // ya es UUID nativo, ensureValidUUID lo pasa sin cambios
       const alumnoUuid = this.ensureValidUUID(log.alumnoId);
-      const routineUuid = this.ensureValidUUID(log.rutinaId);
+      const routineUuid= this.ensureValidUUID(log.rutinaId);
       log.id = logUuid;
 
       const { error: lErr } = await this.client.from('workout_logs').insert({
-        id: logUuid,
-        alumno_id: alumnoUuid,
-        routine_id: routineUuid,
-        dia_nombre: log.diaNombre,
-        comentario_general: log.comentarioGeneral,
-        estado: log.estado || 'completado'
+        id:                  logUuid,
+        alumno_id:           alumnoUuid,
+        routine_id:          routineUuid,
+        dia_numero:          log.diaNumero || 1,           // número real del día
+        dia_nombre:          log.diaNombre,
+        comentario_general:  log.comentarioGeneral || null,
+        estado:              log.estado || 'completado',
+        fecha_entrenamiento: log.fecha                     // fecha real del alumno
       });
 
       if (lErr) {
-        console.error("❌ Error en INSERT workout_logs:", lErr);
+        console.error('❌ Error en INSERT workout_logs:', lErr);
         return;
       }
 
       for (const s of log.sets) {
         await this.client.from('workout_log_sets').insert({
-          workout_log_id: logUuid,
-          exercise_nombre: s.ejercicioNombre,
-          set_numero: s.setNumero,
-          reps_realizadas: s.repsRealizadas,
-          peso_utilizado: s.pesoUtilizado,
-          comentario_alumno: s.comentarioAlumno
+          workout_log_id:   logUuid,
+          exercise_goal_id: s.ejercicioId || null,         // vincula al ejercicio objetivo
+          exercise_nombre:  s.ejercicioNombre,
+          set_numero:       s.setNumero,
+          reps_realizadas:  s.repsRealizadas,
+          peso_utilizado:   s.pesoUtilizado,
+          comentario_alumno:s.comentarioAlumno || null
         });
       }
-      console.log("✅ Entrenamiento real persistido relacionalmente en Supabase DB.");
+      console.log('✅ Entrenamiento real persistido en Supabase DB.', { logUuid, sets: log.sets.length });
     } catch (err) {
-      console.error("❌ Excepción guardando entrenamiento real en Supabase DB:", err);
+      console.error('❌ Excepción guardando entrenamiento real en Supabase DB:', err);
+    }
+  }
+
+  // --- HISTORIAL: alumno obtiene sus propios registros vía RPC segura ---
+  async obtenerHistorialDesdeSupabase(alumnoId) {
+    if (!this.client) return [];
+    try {
+      const alumnoUuid = this.ensureValidUUID(alumnoId);
+      const { data, error } = await this.client.rpc(
+        'obtener_historial_alumno',
+        { p_alumno_id: alumnoUuid }
+      );
+      if (error) {
+        console.error('❌ RPC obtener_historial_alumno falló:', error.message);
+        return [];
+      }
+      const logs = Array.isArray(data) ? data : (data || []);
+      console.log(`✅ Historial obtenido desde Supabase: ${logs.length} registros.`);
+      return logs;
+    } catch (err) {
+      console.error('❌ Excepción en obtenerHistorialDesdeSupabase:', err);
+      return [];
+    }
+  }
+
+  // --- HISTORIAL: profesor obtiene registros de un alumno vía RPC segura ---
+  async obtenerHistorialParaProfesor(alumnoId, profesorId) {
+    if (!this.client) return [];
+    try {
+      const alumnoUuid   = this.ensureValidUUID(alumnoId);
+      const profesorUuid = this.ensureValidUUID(profesorId);
+      const { data, error } = await this.client.rpc(
+        'obtener_historial_para_profesor',
+        { p_alumno_id: alumnoUuid, p_profesor_id: profesorUuid }
+      );
+      if (error) {
+        console.error('❌ RPC obtener_historial_para_profesor falló:', error.message);
+        return [];
+      }
+      const logs = Array.isArray(data) ? data : (data || []);
+      console.log(`✅ Historial del alumno obtenido para profesor: ${logs.length} registros.`);
+      return logs;
+    } catch (err) {
+      console.error('❌ Excepción en obtenerHistorialParaProfesor:', err);
+      return [];
     }
   }
 

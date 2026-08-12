@@ -12,8 +12,8 @@ const DEFAULT_AUTHORIZED_DNIS = [
 
 const DEFAULT_DATA = {
   profesores: [
-    { id: "prof-1", dni: "99001122", password: "123", nombre: "Prof. Carlos Rossi", rol: "profesor" },
-    { id: "prof-2", dni: "88001122", password: "123", nombre: "Prof. Franco Gómez", rol: "profesor" }
+    { id: "5dfb74e3-bfe5-4085-9b9a-89b1fa4d732d", dni: "99001122", password: "123", nombre: "Prof. Carlos Rossi", rol: "profesor" },
+    { id: "2f7a1c0b-76d8-466c-ae0d-1478ffcb1bca", dni: "88001122", password: "123", nombre: "Prof. Franco Gómez", rol: "profesor" }
   ],
   dnisAutorizados: DEFAULT_AUTHORIZED_DNIS,
   alumnos: [
@@ -399,6 +399,8 @@ class GymStore {
     const nuevaRutina = {
       id: routineUuid,
       alumnoId,
+      // UUID real del profesor (del perfil en Supabase), para routines.profesor_id
+      profesorId: window._sessionProfesorId || null,
       profesorCreadorNombre: profesorNombre || "Profesor de Estudio Fitness",
       titulo: titulo || "Rutina Personalizada",
       duracionDias: Number(duracionDias),
@@ -436,7 +438,7 @@ class GymStore {
 
     rutina.titulo = titulo || rutina.titulo;
     rutina.duracionDias = Number(duracionDias) || rutina.duracionDias;
-    
+
     // Recalcular vencimiento desde la fecha de inicio
     const fInicio = rutina.fechaInicio ? new Date(rutina.fechaInicio) : new Date();
     const fechaVenc = new Date(fInicio.getTime() + Number(rutina.duracionDias) * 86400000);
@@ -444,6 +446,12 @@ class GymStore {
     rutina.dias = dias;
 
     if (profesorNombre) rutina.profesorCreadorNombre = profesorNombre;
+
+    // Asegurar que profesorId esté presente para que guardar_rutina_profesor
+    // actualice routines.profesor_id con el UUID real del profesor
+    if (window._sessionProfesorId && !rutina.profesorId) {
+      rutina.profesorId = window._sessionProfesorId;
+    }
 
     // Persistir en Supabase DB
     if (window.supabaseEngine) {
@@ -464,14 +472,22 @@ class GymStore {
   }
 
   // --- GUARDADO DE SESIÓN DE ENTRENAMIENTO REAL POR SERIES Y COMENTARIO GENERAL ---
-  guardarEntrenamientoReal({ alumnoId, rutinaId, diaId, diaNombre, setsLog, comentarioGeneral = "" }) {
+  guardarEntrenamientoReal({ alumnoId, rutinaId, diaId, diaNombre, diaNumero, setsLog, comentarioGeneral = "" }) {
+    // UUID nativo desde el inicio: mismo ID en localStorage y en Supabase
+    const logId = (window.crypto && window.crypto.randomUUID)
+      ? window.crypto.randomUUID()
+      : ("log-" + Date.now());
+
+    const fechaISO = new Date().toISOString();
+
     const nuevoLog = {
-      id: "log-" + Date.now(),
+      id: logId,
       alumnoId,
       rutinaId,
       diaId,
       diaNombre,
-      fecha: new Date().toISOString(),
+      diaNumero: diaNumero || 1,
+      fecha: fechaISO,
       estado: "completado",
       comentarioGeneral: comentarioGeneral || "",
       sets: setsLog
