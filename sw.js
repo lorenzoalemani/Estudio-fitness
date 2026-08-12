@@ -1,11 +1,10 @@
-const CACHE_NAME = 'estudio-fitness-v5';
-const ASSETS_TO_CACHE = [
+const CACHE_NAME = 'estudio-fitness-v6';
+
+// Assets estáticos: íconos, estilos, manifesto — estrategia Cache-First
+const STATIC_ASSETS = [
   './',
   './index.html',
   './src/styles.css',
-  './src/supabase.js',
-  './src/data.js',
-  './src/app.js',
   './src/logo.svg',
   './icons/icon-192x192.svg',
   './icons/icon-512x512.svg',
@@ -14,30 +13,80 @@ const ASSETS_TO_CACHE = [
   './manifest.json'
 ];
 
+// Archivos de lógica JS — estrategia Network-First
+// El browser siempre intenta la red para obtener la versión actualizada.
+// Si la red falla (modo offline), usa la versión cacheada como fallback.
+const NETWORK_FIRST_ASSETS = [
+  './src/supabase.js',
+  './src/data.js',
+  './src/app.js'
+];
+
+// Pre-cachear todos los assets en la instalación
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS_TO_CACHE))
+    caches.open(CACHE_NAME).then((cache) =>
+      cache.addAll([...STATIC_ASSETS, ...NETWORK_FIRST_ASSETS])
+    )
   );
+  // Tomar control inmediato sin esperar a que cierren las pestañas anteriores
   self.skipWaiting();
 });
 
+// Al activar: eliminar caches de versiones anteriores
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames.map((cache) => {
-          if (cache !== CACHE_NAME) return caches.delete(cache);
-        })
-      );
-    })
+    caches.keys().then((cacheNames) =>
+      Promise.all(
+        cacheNames
+          .filter((name) => name !== CACHE_NAME)
+          .map((name) => caches.delete(name))
+      )
+    )
   );
+  // Tomar control de todos los clientes abiertos inmediatamente
   self.clients.claim();
 });
 
+// Estrategia de fetch según el tipo de recurso
 self.addEventListener('fetch', (event) => {
+  const url = new URL(event.request.url);
+  const pathname = url.pathname;
+
+  // Solo interceptar peticiones al mismo origen (no CDN externas como Supabase)
+  if (url.origin !== self.location.origin) {
+    return; // No interceptar peticiones externas (Supabase API, CDN)
+  }
+
+  // Network-First para los archivos de lógica JS
+  const isNetworkFirst = NETWORK_FIRST_ASSETS.some((asset) =>
+    pathname.endsWith(asset.replace('./', '/'))
+  );
+
+  if (isNetworkFirst) {
+    event.respondWith(
+      fetch(event.request)
+        .then((networkResponse) => {
+          // Actualizar el caché con la versión fresca de la red
+          const responseClone = networkResponse.clone();
+          caches.open(CACHE_NAME).then((cache) =>
+            cache.put(event.request, responseClone)
+          );
+          return networkResponse;
+        })
+        .catch(() => {
+          // Red no disponible: servir desde caché (modo offline)
+          return caches.match(event.request);
+        })
+    );
+    return;
+  }
+
+  // Cache-First para assets estáticos (íconos, estilos, HTML)
   event.respondWith(
-    caches.match(event.request).then((response) => {
-      return response || fetch(event.request).catch(() => caches.match('./index.html'));
+    caches.match(event.request).then((cachedResponse) => {
+      if (cachedResponse) return cachedResponse;
+      return fetch(event.request).catch(() => caches.match('./index.html'));
     })
   );
 });
@@ -96,4 +145,3 @@ self.addEventListener('notificationclick', (event) => {
     })
   );
 });
-
