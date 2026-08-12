@@ -142,10 +142,12 @@ class GymStore {
     window.dispatchEvent(new CustomEvent('gym_store_updated'));
   }
 
-  async syncWithSupabase() {
+  async syncWithSupabase(alumnoId) {
     if (!window.supabaseEngine) return;
     try {
-      const freshData = await window.supabaseEngine.fetchFullStateFromSupabase();
+      // Si hay alumnoId, la RPC obtener_rutinas_alumno obtendrá sus rutinas.
+      // Si no hay alumnoId (profesor), solo se sincronizan profiles y dnis.
+      const freshData = await window.supabaseEngine.fetchFullStateFromSupabase(alumnoId || null);
       if (freshData) {
         let huboCambios = false;
 
@@ -169,6 +171,7 @@ class GymStore {
           huboCambios = true;
         }
 
+        // Rutinas: solo cuando se obtuvieron via RPC (alumnoId presente)
         if (freshData.rutinas && freshData.rutinas.length > 0) {
           freshData.rutinas.forEach(sbRutina => {
             const idx = this.data.rutinas.findIndex(r => r.id === sbRutina.id);
@@ -176,6 +179,14 @@ class GymStore {
               this.data.rutinas[idx] = sbRutina;
             } else {
               this.data.rutinas.push(sbRutina);
+            }
+
+            // Actualizar rutinaActivaId en el perfil local del alumno si es activa
+            if (alumnoId && sbRutina.estado === 'activa') {
+              const alumno = this.data.alumnos.find(a => a.id === alumnoId || a.id === sbRutina.alumnoId);
+              if (alumno && !alumno.rutinaActivaId) {
+                alumno.rutinaActivaId = sbRutina.id;
+              }
             }
           });
           huboCambios = true;
@@ -211,7 +222,9 @@ class GymStore {
   listenSupabaseRealtime() {
     window.addEventListener('supabase_realtime_change', async (e) => {
       console.log("⚡ Actualización Supabase recibida en tiempo real:", e.detail);
-      await this.syncWithSupabase();
+      // Pasar el alumnoId del usuario logueado si está disponible en sesión
+      const alumnoId = (window._sessionAlumnoId) || null;
+      await this.syncWithSupabase(alumnoId);
     });
 
     window.addEventListener('storage', (e) => {
@@ -223,7 +236,8 @@ class GymStore {
       }
     });
 
-    setTimeout(() => this.syncWithSupabase(), 400);
+    // Sincronización inicial diferida (sin alumnoId — perfil y dnis)
+    setTimeout(() => this.syncWithSupabase(null), 400);
   }
 
   // --- AUTENTICACIÓN Y AUTORIZACIÓN POR DNI ---
@@ -297,8 +311,9 @@ class GymStore {
       alumno.estadoAutorizacion = 'autorizado';
       alumno.nombre = nombre.trim();
     } else {
+      const newId = (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() : ("al-" + Date.now());
       alumno = {
-        id: "al-" + Date.now(),
+        id: newId,
         dni: cleanDni,
         password: "123",
         nombre: nombre.trim(),
@@ -331,8 +346,15 @@ class GymStore {
 
   getRutinaActiva(alumnoId) {
     const alumno = this.getAlumnoPorId(alumnoId);
-    if (!alumno || alumno.estadoAutorizacion !== 'autorizado' || !alumno.rutinaActivaId) return null;
-    return this.data.rutinas.find(r => r.id === alumno.rutinaActivaId && r.estado === 'activa') || null;
+    if (!alumno || alumno.estadoAutorizacion !== 'autorizado') return null;
+    if (alumno.rutinaActivaId) {
+      const rut = this.data.rutinas.find(r => r.id === alumno.rutinaActivaId && r.estado === 'activa');
+      if (rut) return rut;
+    }
+    // Fallback: Retornar la rutina activa más reciente asignada al alumno
+    return this.data.rutinas
+      .filter(r => (r.alumnoId === alumno.id || r.alumnoId === alumno.dni) && (r.estado === 'activa' || !r.estado))
+      .sort((a, b) => new Date(b.fechaInicio || 0) - new Date(a.fechaInicio || 0))[0] || null;
   }
 
   getHistorialRutinas(alumnoId) {
@@ -372,8 +394,10 @@ class GymStore {
     const hoy = new Date();
     const fechaVenc = new Date(hoy.getTime() + Number(duracionDias) * 86400000);
 
+    const routineUuid = (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() : ("rut-" + Date.now());
+
     const nuevaRutina = {
-      id: "rut-" + Date.now(),
+      id: routineUuid,
       alumnoId,
       profesorCreadorNombre: profesorNombre || "Profesor de Estudio Fitness",
       titulo: titulo || "Rutina Personalizada",

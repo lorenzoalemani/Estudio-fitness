@@ -59,25 +59,25 @@ class SupabaseEngine {
   }
 
   // --- CONSULTAS SELECT Y SINCRONIZACIÓN DESDE SUPABASE DB ---
-  async fetchFullStateFromSupabase() {
+  // alumnoId opcional: si se pasa, usa la RPC segura para obtener rutinas del alumno.
+  // Si es profesor (alumnoId = null), las rutinas se omiten (el profesor usa localStorage).
+  async fetchFullStateFromSupabase(alumnoId) {
     if (!this.client) return null;
     try {
-      const [resAuthDnis, resProfiles, resRoutines, resDays, resGoals, resLogs, resLogSets, resNotifs] = await Promise.all([
+      // 1. Consultas abiertas por RLS: profiles y authorized_dnis tienen
+      //    políticas anon que permiten al menos el INSERT de alumnos nuevos.
+      //    El SELECT de profiles devuelve vacío para anon — se usa para
+      //    detectar si el alumno fue autorizado en otro dispositivo.
+      const [resAuthDnis, resProfiles, resLogs, resLogSets, resNotifs] = await Promise.all([
         this.client.from('authorized_dnis').select('*'),
-        this.client.from('profiles').select('*'),
-        this.client.from('routines').select('*'),
-        this.client.from('routine_days').select('*'),
-        this.client.from('exercise_goals').select('*'),
+        this.client.from('profiles').select('id,dni,nombre,telefono,rol,estado_autorizacion,created_at'),
         this.client.from('workout_logs').select('*'),
         this.client.from('workout_log_sets').select('*'),
         this.client.from('notifications').select('*')
       ]);
 
-      if (resAuthDnis.error || resProfiles.error || resRoutines.error) {
-        console.warn("ℹ️ Consulta a Supabase en proceso o restringida por RLS:", resProfiles.error || resRoutines.error);
-      }
-
       const dnisAutorizados = (resAuthDnis.data || []).map(d => ({ dni: d.dni, nombre: d.nombre }));
+
       const alumnos = (resProfiles.data || []).filter(p => p.rol === 'alumno').map(a => ({
         id: a.id,
         dni: a.dni,
@@ -86,7 +86,7 @@ class SupabaseEngine {
         telefono: a.telefono || "",
         estadoAutorizacion: a.estado_autorizacion,
         fechaRegistro: a.created_at ? a.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
-        rutinaActivaId: a.rutina_activa_id || null
+        rutinaActivaId: null
       }));
 
       const profesores = (resProfiles.data || []).filter(p => p.rol === 'profesor').map(p => ({
@@ -97,54 +97,23 @@ class SupabaseEngine {
         rol: "profesor"
       }));
 
-      // Reconstruir rutinas con sus días y ejercicios
-      const daysByRoutine = {};
-      (resDays.data || []).forEach(d => {
-        if (!daysByRoutine[d.routine_id]) daysByRoutine[d.routine_id] = [];
-        daysByRoutine[d.routine_id].push({
-          id: d.id,
-          diaNumero: d.dia_numero,
-          nombre: d.nombre,
-          ejercicios: []
+      // 2. Rutinas: solo via RPC segura cuando hay alumnoId conocido.
+      //    Si es profesor o no hay alumnoId, las rutinas se omiten (usa localStorage).
+      let rutinas = [];
+      if (alumnoId) {
+        const alumnoUuid = this.ensureValidUUID(alumnoId);
+        const { data: rpcData, error: rpcErr } = await this.client.rpc('obtener_rutinas_alumno', {
+          p_alumno_id: alumnoUuid
         });
-      });
+        if (rpcErr) {
+          console.warn("⚠️ RPC obtener_rutinas_alumno falló:", rpcErr.message);
+        } else {
+          rutinas = Array.isArray(rpcData) ? rpcData : [];
+          console.log(`📦 RPC obtener_rutinas_alumno: ${rutinas.length} rutina(s) para alumno ${alumnoUuid}`);
+        }
+      }
 
-      const goalsByDay = {};
-      (resGoals.data || []).forEach(g => {
-        if (!goalsByDay[g.day_id]) goalsByDay[g.day_id] = [];
-        goalsByDay[g.day_id].push({
-          id: g.id,
-          orden: g.orden || 1,
-          nombre: g.nombre,
-          seriesTarget: g.series_target,
-          repeticionesTarget: g.repeticiones_target,
-          pesoSugerido: g.peso_sugerido,
-          notaProfesor: g.nota_profesor || "",
-          profesorNotaAutor: g.profesor_nota_autor || ""
-        });
-      });
-
-      // Asociar ejercicios a sus días
-      Object.values(daysByRoutine).forEach(dayList => {
-        dayList.forEach(d => {
-          d.ejercicios = (goalsByDay[d.id] || []).sort((a, b) => a.orden - b.orden);
-        });
-        dayList.sort((a, b) => a.diaNumero - b.diaNumero);
-      });
-
-      const rutinas = (resRoutines.data || []).map(r => ({
-        id: r.id,
-        alumnoId: r.alumno_id,
-        profesorCreadorNombre: r.profesor_creador_nombre || "Profesor",
-        titulo: r.titulo,
-        duracionDias: r.duracion_dias,
-        fechaInicio: r.fecha_inicio,
-        fechaVencimiento: r.fecha_vencimiento,
-        estado: r.estado,
-        dias: daysByRoutine[r.id] || []
-      }));
-
-      // Reconstruir historial de entrenamientos
+      // 3. Historial de entrenamientos
       const setsByLog = {};
       (resLogSets.data || []).forEach(s => {
         if (!setsByLog[s.workout_log_id]) setsByLog[s.workout_log_id] = [];
@@ -193,38 +162,51 @@ class SupabaseEngine {
     }
   }
 
- // --- OPERACIONES DE ESCRITURA RELACIONAL EN SUPABASE DB ---
-async registrarPerfilEnSupabase(alumno) {
-  if (!this.client) return;
-  try {
-    const cleanDni = String(alumno.dni).trim();
-    const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(alumno.id);
-    const profileId = isUUID ? alumno.id : (window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : '00000000-0000-4000-a000-' + String(Date.now()).padStart(12, '0'));
+  // --- HELPER UUID DETERMINÍSTICO PARA SUPABASE DB ---
+  ensureValidUUID(idStr) {
+    if (!idStr) return (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() : '00000000-0000-4000-a000-' + String(Date.now()).padStart(12, '0');
+    const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(idStr);
+    if (isUUID) return idStr;
 
-    const { data, error } = await this.client
-      .from('profiles')
-      .upsert({
+    // Convertir de forma determinística strings como "rut-1723456789000" o "al-1723456789000"
+    const digits = String(idStr).replace(/[^0-9]/g, '');
+    let paddedHex = '000000000000';
+    try {
+      if (digits.length > 0) {
+        paddedHex = BigInt(digits).toString(16).padStart(12, '0').slice(-12);
+      }
+    } catch (e) {
+      paddedHex = String(Date.now()).padStart(12, '0').slice(-12);
+    }
+    return `00000000-0000-4000-a000-${paddedHex}`;
+  }
+
+  // --- OPERACIONES DE ESCRITURA RELACIONAL EN SUPABASE DB ---
+  async registrarPerfilEnSupabase(alumno) {
+    if (!this.client) return;
+    try {
+      const cleanDni = String(alumno.dni).trim();
+      const profileId = this.ensureValidUUID(alumno.id);
+      alumno.id = profileId;
+
+      const { error } = await this.client.from('profiles').insert({
         id: profileId,
         dni: cleanDni,
         nombre: alumno.nombre.trim(),
         telefono: alumno.telefono ? alumno.telefono.trim() : "",
         rol: 'alumno',
-        estado_autorizacion: alumno.estadoAutorizacion || 'pendiente'
-      }, { onConflict: 'dni' })
-      .select();
+        estado_autorizacion: 'pendiente'
+      });
 
-    if (error) {
-      console.error("❌ Error insertando perfil en Supabase DB (profiles):", error);
-    } else {
-      console.log("✅ Perfil de alumno registrado/actualizado exitosamente en Supabase DB (profiles):", data);
-      if (profileId !== alumno.id && data && data[0]) {
-        alumno.id = data[0].id;
+      if (error) {
+        console.error("❌ Error insertando perfil en Supabase DB (profiles):", error);
+      } else {
+        console.log("✅ Perfil de alumno registrado exitosamente en Supabase DB (profiles).");
       }
+    } catch (err) {
+      console.error("❌ Excepción al registrar perfil en Supabase DB:", err);
     }
-  } catch (err) {
-    console.error("❌ Excepción al registrar perfil en Supabase DB:", err);
   }
-}
 
   async autorizarDniEnSupabase(dni, nombre) {
     if (!this.client) return;
@@ -261,116 +243,114 @@ async registrarPerfilEnSupabase(alumno) {
   }
 
   async persistirNuevaRutinaEnSupabase(rutina) {
-    if (!this.client) return;
+    if (!this.client) return { ok: false, error: 'cliente_no_inicializado' };
     try {
-      // 1. Insertar Rutina
-      const { data: rData, error: rErr } = await this.client.from('routines').insert({
-        id: rutina.id,
-        alumno_id: rutina.alumnoId,
-        profesor_creador_nombre: rutina.profesorCreadorNombre,
-        titulo: rutina.titulo,
-        duracion_dias: rutina.duracionDias,
-        fecha_inicio: rutina.fechaInicio,
-        fecha_vencimiento: rutina.fechaVencimiento,
-        estado: rutina.estado || 'activa'
-      }).select().single();
+      const routineUuid = this.ensureValidUUID(rutina.id);
+      const alumnoUuid  = this.ensureValidUUID(rutina.alumnoId);
+      rutina.id       = routineUuid;
+      rutina.alumnoId = alumnoUuid;
 
-      if (rErr) throw rErr;
+      // Asegurar UUIDs válidos en todos los niveles
+      rutina.dias = (rutina.dias || []).map(d => ({
+        ...d,
+        id: this.ensureValidUUID(d.id),
+        ejercicios: (d.ejercicios || []).map(e => ({
+          ...e,
+          id: this.ensureValidUUID(e.id)
+        }))
+      }));
 
-      // 2. Insertar Días y Ejercicios
-      for (const d of rutina.dias) {
-        const { data: dData, error: dErr } = await this.client.from('routine_days').insert({
-          id: d.id,
-          routine_id: rutina.id,
-          dia_numero: d.diaNumero,
-          nombre: d.nombre
-        }).select().single();
+      // Única vía: RPC guardar_rutina_profesor (SECURITY DEFINER)
+      // Las tablas routines / routine_days / exercise_goals están protegidas por RLS.
+      const { data: rpcData, error: rpcErr } = await this.client.rpc(
+        'guardar_rutina_profesor',
+        { p_rutina: rutina }
+      );
 
-        if (dErr) continue;
-
-        for (let idx = 0; idx < d.ejercicios.length; idx++) {
-          const e = d.ejercicios[idx];
-          await this.client.from('exercise_goals').insert({
-            id: e.id,
-            day_id: dData.id,
-            orden: idx + 1,
-            nombre: e.nombre,
-            series_target: e.seriesTarget,
-            repeticiones_target: e.repeticionesTarget,
-            peso_sugerido: e.pesoSugerido,
-            nota_profesor: e.notaProfesor,
-            profesor_nota_autor: e.profesorNotaAutor
-          });
-        }
+      if (rpcErr) {
+        console.error('❌ RPC guardar_rutina_profesor falló (nueva rutina):', rpcErr.message, rpcErr);
+        return { ok: false, error: rpcErr.message };
       }
-      console.log("✅ Nueva rutina persistida relacionalmente en Supabase DB.");
+
+      if (rpcData && rpcData.ok === false) {
+        console.error('❌ RPC guardar_rutina_profesor retornó error de negocio:', rpcData.error);
+        return { ok: false, error: rpcData.error };
+      }
+
+      console.log('✅ Nueva rutina persistida atómicamente via RPC en Supabase DB.', rpcData);
+      return { ok: true, data: rpcData };
     } catch (err) {
-      console.warn("⚠️ Error guardando rutina en Supabase DB (operando en modo local):", err);
+      console.error('❌ Excepción en persistirNuevaRutinaEnSupabase:', err);
+      return { ok: false, error: err.message };
     }
   }
 
   async persistirEdicionRutinaEnSupabase(rutina) {
-    if (!this.client) return;
+    if (!this.client) return { ok: false, error: 'cliente_no_inicializado' };
     try {
-      // 1. Actualizar Rutina
-      await this.client.from('routines').update({
-        titulo: rutina.titulo,
-        duracion_dias: rutina.duracionDias,
-        fecha_vencimiento: rutina.fechaVencimiento,
-        profesor_creador_nombre: rutina.profesorCreadorNombre
-      }).eq('id', rutina.id);
+      const routineUuid = this.ensureValidUUID(rutina.id);
+      rutina.id = routineUuid;
 
-      // 2. Reemplazar días y ejercicios de la rutina
-      await this.client.from('routine_days').delete().eq('routine_id', rutina.id);
+      // Asegurar UUIDs válidos en todos los niveles
+      rutina.dias = (rutina.dias || []).map(d => ({
+        ...d,
+        id: this.ensureValidUUID(d.id),
+        ejercicios: (d.ejercicios || []).map(e => ({
+          ...e,
+          id: this.ensureValidUUID(e.id)
+        }))
+      }));
 
-      for (const d of rutina.dias) {
-        const { data: dData, error: dErr } = await this.client.from('routine_days').insert({
-          id: d.id,
-          routine_id: rutina.id,
-          dia_numero: d.diaNumero,
-          nombre: d.nombre
-        }).select().single();
+      // Única vía: RPC guardar_rutina_profesor (SECURITY DEFINER)
+      // La RPC detecta si la rutina existe y hace UPDATE o INSERT según corresponda.
+      const { data: rpcData, error: rpcErr } = await this.client.rpc(
+        'guardar_rutina_profesor',
+        { p_rutina: rutina }
+      );
 
-        if (dErr) continue;
-
-        for (let idx = 0; idx < d.ejercicios.length; idx++) {
-          const e = d.ejercicios[idx];
-          await this.client.from('exercise_goals').insert({
-            id: e.id,
-            day_id: dData.id,
-            orden: idx + 1,
-            nombre: e.nombre,
-            series_target: e.seriesTarget,
-            repeticiones_target: e.repeticionesTarget,
-            peso_sugerido: e.pesoSugerido,
-            nota_profesor: e.notaProfesor,
-            profesor_nota_autor: e.profesorNotaAutor
-          });
-        }
+      if (rpcErr) {
+        console.error('❌ RPC guardar_rutina_profesor falló (edición rutina):', rpcErr.message, rpcErr);
+        return { ok: false, error: rpcErr.message };
       }
-      console.log("✅ Edición de rutina persistida relacionalmente en Supabase DB.");
+
+      if (rpcData && rpcData.ok === false) {
+        console.error('❌ RPC guardar_rutina_profesor retornó error de negocio:', rpcData.error);
+        return { ok: false, error: rpcData.error };
+      }
+
+      console.log('✅ Edición de rutina persistida atómicamente via RPC en Supabase DB.', rpcData);
+      return { ok: true, data: rpcData };
     } catch (err) {
-      console.warn("⚠️ Error actualizando rutina en Supabase DB:", err);
+      console.error('❌ Excepción en persistirEdicionRutinaEnSupabase:', err);
+      return { ok: false, error: err.message };
     }
   }
 
   async guardarWorkoutLogEnSupabase(log) {
     if (!this.client) return;
     try {
-      const { data: lData, error: lErr } = await this.client.from('workout_logs').insert({
-        id: log.id,
-        alumno_id: log.alumnoId,
-        routine_id: log.rutinaId,
+      const logUuid = this.ensureValidUUID(log.id);
+      const alumnoUuid = this.ensureValidUUID(log.alumnoId);
+      const routineUuid = this.ensureValidUUID(log.rutinaId);
+      log.id = logUuid;
+
+      const { error: lErr } = await this.client.from('workout_logs').insert({
+        id: logUuid,
+        alumno_id: alumnoUuid,
+        routine_id: routineUuid,
         dia_nombre: log.diaNombre,
         comentario_general: log.comentarioGeneral,
         estado: log.estado || 'completado'
-      }).select().single();
+      });
 
-      if (lErr) throw lErr;
+      if (lErr) {
+        console.error("❌ Error en INSERT workout_logs:", lErr);
+        return;
+      }
 
       for (const s of log.sets) {
         await this.client.from('workout_log_sets').insert({
-          workout_log_id: lData.id,
+          workout_log_id: logUuid,
           exercise_nombre: s.ejercicioNombre,
           set_numero: s.setNumero,
           reps_realizadas: s.repsRealizadas,
@@ -380,37 +360,38 @@ async registrarPerfilEnSupabase(alumno) {
       }
       console.log("✅ Entrenamiento real persistido relacionalmente en Supabase DB.");
     } catch (err) {
-      console.warn("⚠️ Error guardando entrenamiento real en Supabase DB:", err);
+      console.error("❌ Excepción guardando entrenamiento real en Supabase DB:", err);
     }
   }
 
   async registerPushSubscription(userId, subscription) {
     if (!this.client) return;
     try {
-      await this.client.from('push_subscriptions').upsert({
-        user_id: userId,
-        subscription_json: subscription
-      }, { onConflict: 'user_id, subscription_json' });
-      console.log("✅ Suscripción Web Push sincronizada en Supabase.");
+      const userUuid = this.ensureValidUUID(userId);
+
+      // RPC segura (única vía — push_subscriptions está protegida para anon)
+      const { error: rpcErr } = await this.client.rpc('guardar_push_subscription', {
+        p_user_id: userUuid,
+        p_subscription: subscription
+      });
+
+      if (rpcErr) {
+        console.error("❌ RPC guardar_push_subscription falló:", rpcErr.message);
+      } else {
+        console.log("✅ Suscripción Web Push guardada mediante RPC segura en Supabase DB.");
+      }
     } catch (e) {
-      console.error("Error guardando suscripción Push:", e);
+      console.error("❌ Excepción guardando suscripción Push:", e);
     }
   }
 
   async enviarPushNotificationAAlumno(alumnoId, payload) {
     if (!this.client) return;
     try {
-      const { data: subs, error } = await this.client
-        .from('push_subscriptions')
-        .select('subscription_json')
-        .eq('user_id', alumnoId);
-
-      if (error || !subs || subs.length === 0) {
-        console.log("ℹ️ No hay suscripciones Web Push activas registradas para el alumno:", alumnoId);
-        return;
-      }
-
-      console.log(`📡 Despachando Web Push a ${subs.length} dispositivo(s) para alumno ${alumnoId}...`);
+      // push_subscriptions está protegida para anon: usamos la RPC para leer
+      // las suscripciones del alumno de forma segura en el backend de Supabase.
+      // El backend /api/send-push usa la service_role key para consultar directamente.
+      const userUuid = this.ensureValidUUID(alumnoId);
 
       const endpoints = [
         '/.netlify/functions/send-push',
@@ -420,34 +401,35 @@ async registrarPerfilEnSupabase(alumno) {
         endpoints.unshift(window.ENV_PUSH_ENDPOINT);
       }
 
-      for (const item of subs) {
-        let sent = false;
-        for (const ep of endpoints) {
-          try {
-            const res = await fetch(ep, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                subscription: item.subscription_json,
-                payload: payload
-              })
-            });
-            if (res.ok) {
-              const resData = await res.json();
-              console.log(`✅ Web Push despachado con éxito mediante [${ep}]:`, resData);
-              sent = true;
-              break;
-            }
-          } catch (pushErr) {
-            console.warn(`⚠️ Endpoint [${ep}] no disponible:`, pushErr.message);
+      let sent = false;
+      for (const ep of endpoints) {
+        try {
+          const res = await fetch(ep, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              alumnoId: userUuid,
+              payload: payload
+            })
+          });
+          if (res.ok) {
+            const resData = await res.json();
+            console.log(`✅ Web Push despachado mediante [${ep}]:`, resData);
+            sent = true;
+            break;
+          } else {
+            const errText = await res.text();
+            console.warn(`⚠️ Endpoint [${ep}] respondió con error ${res.status}:`, errText);
           }
-        }
-        if (!sent) {
-          console.warn("⚠️ Ningún endpoint backend de Web Push estuvo accesible.");
+        } catch (pushErr) {
+          console.warn(`⚠️ Endpoint [${ep}] no disponible:`, pushErr.message);
         }
       }
+      if (!sent) {
+        console.warn("⚠️ Ningún endpoint backend de Web Push estuvo accesible para alumno:", alumnoId);
+      }
     } catch (err) {
-      console.error("Error al obtener suscripciones push del alumno:", err);
+      console.error("❌ Error al enviar notificación push al alumno:", err);
     }
   }
 }

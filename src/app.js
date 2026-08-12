@@ -169,10 +169,21 @@ document.addEventListener('DOMContentLoaded', () => {
       const res = store.login(dni, pass);
       if (res) {
         appState.usuarioActual = res;
+
+        // Exponer el ID de sesión para sincronización Realtime y syncWithSupabase
+        if (res.rol === 'alumno' && res.data && res.data.id) {
+          window._sessionAlumnoId = res.data.id;
+          // Sincronizar rutinas del alumno vía RPC después del login
+          setTimeout(() => gymStore.syncWithSupabase(res.data.id), 300);
+        } else {
+          window._sessionAlumnoId = null;
+        }
+
         renderApp();
       } else {
         alert("❌ DNI o Contraseña incorrectos. Verifica tus datos.");
       }
+
     });
 
     document.getElementById('btnToggleRegister')?.addEventListener('click', () => {
