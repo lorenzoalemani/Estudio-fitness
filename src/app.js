@@ -616,6 +616,19 @@ document.addEventListener('DOMContentLoaded', () => {
     appState.workoutGeneralComment = val;
   };
 
+  // Extrae el día calendario (YYYY-MM-DD) de un ISO string usando la ZONA HORARIA LOCAL
+  // del navegador, NO UTC. log.fecha se guarda como new Date().toISOString() (ej. "2026-08-12T23:30:00.000Z"),
+  // y usar toISOString().slice(0,10) para agrupar desplazaría al día siguiente cualquier
+  // entrenamiento hecho entre las 21:00 y las 23:59 hora Argentina (UTC-3). No modifica el
+  // formato almacenado en Supabase, solo cómo se interpreta acá para contar días.
+  function getFechaCalendarioLocal(fechaISO) {
+    const d = new Date(fechaISO);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
+
   // --- HISTORIAL AGRUPADO: Rutina → Semana → Día → Ejercicios → Series ---
   function renderHistorialAgrupado(logs, rutinas) {
     if (!logs || logs.length === 0) {
@@ -678,6 +691,20 @@ document.addEventListener('DOMContentLoaded', () => {
             const diasEsaSemana = g.semanas[numSemana];
             const tieneRegistros = diasEsaSemana && Object.keys(diasEsaSemana).length > 0;
 
+            // logsEsaSemana = TODOS los workout_logs de la semana, sin importar bajo qué diaNumero quedaron agrupados
+            const logsEsaSemana = tieneRegistros ? Object.values(diasEsaSemana).flat() : [];
+
+            // "día" = fecha calendario única (zona horaria local), NO diaNumero de rutina
+            const fechasUnicas = new Set(logsEsaSemana.map(l => getFechaCalendarioLocal(l.fecha)));
+            const totalDiasCalendario = fechasUnicas.size;
+
+            // "entrenamiento" = un workout_log, sin agrupar
+            const totalEntrenamientos = logsEsaSemana.length;
+
+            const resumenSemana = totalDiasCalendario === totalEntrenamientos
+              ? `${totalDiasCalendario} ${totalDiasCalendario === 1 ? 'día' : 'días'}`
+              : `${totalDiasCalendario} ${totalDiasCalendario === 1 ? 'día' : 'días'} · ${totalEntrenamientos} entrenamientos`;
+
             return `
             <div style="margin-bottom:12px">
               <div class="history-accordion-header" data-acc-id="acc-s${numSemana}-${rId.slice(0,8)}"
@@ -686,7 +713,7 @@ document.addEventListener('DOMContentLoaded', () => {
                           padding:10px 14px; border-radius:8px; cursor:pointer; user-select:none">
                 <span style="font-weight:800; font-size:0.95rem">📅 Semana ${numSemana}</span>
                 <span style="color:var(--text-gray); font-size:0.8rem">
-                  ${tieneRegistros ? Object.keys(diasEsaSemana).length + ' día(s) registrado(s)' : 'Sin registros'} ▼
+                  ${tieneRegistros ? resumenSemana : 'Sin registros'} ▼
                 </span>
               </div>
 
@@ -870,6 +897,9 @@ document.addEventListener('DOMContentLoaded', () => {
         const alumnoId = card.dataset.alumnoId;
         if (e.target.classList.contains('btn-historial-click')) {
           e.stopPropagation();
+          // Se invalida el caché en cada apertura del historial (no solo al cambiar de alumno)
+          // para que el profesor siempre vea los registros más recientes desde Supabase.
+          appState.historialProfesorLogs = null;
           appState.alumnoSeleccionadoId = alumnoId;
           appState.modalActivo = 'historial_alumno';
           renderApp();
@@ -1359,7 +1389,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const accId = header.dataset.accId;
         const body = document.getElementById(accId);
         if (body) {
-          body.classList.toggle('open');
+          const estaAbierto = body.style.display === 'block';
+          body.style.display = estaAbierto ? 'none' : 'block';
         }
       });
     });
