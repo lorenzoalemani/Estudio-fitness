@@ -125,6 +125,42 @@ document.addEventListener('DOMContentLoaded', () => {
     `;
   }
 
+  function renderBottomNav() {
+    if (!appState.usuarioActual) return '';
+    const isProfesor = appState.usuarioActual.rol === 'profesor';
+    const user = appState.usuarioActual.data;
+    const notifs = store.getNotificacionesPorRol(isProfesor ? 'profesor' : 'alumno', user ? user.id : null);
+    const unreadCount = notifs.filter(n => !n.leido).length;
+
+    const iconRutina = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 9h8M8 13h8M8 17h5"/></svg>`;
+    const iconHistorial = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>`;
+    const iconAvisos = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>`;
+    const iconAlumnos = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 3 3.87"/></svg>`;
+
+    const items = isProfesor ? [
+      { id: 'navAlumnos',    label: 'Alumnos', icon: iconAlumnos, active: appState.modalActivo === null && !appState.mostrarDrawerNotifs },
+      { id: 'navAvisosProf', label: 'Avisos',   icon: iconAvisos,  active: appState.mostrarDrawerNotifs, badge: unreadCount }
+    ] : [
+      { id: 'navRutina',       label: 'Rutinas',   icon: iconRutina,    active: appState.tabCliente === 'rutina' && !appState.mostrarDrawerNotifs },
+      { id: 'navHistorial',    label: 'Historial', icon: iconHistorial, active: appState.tabCliente === 'historial' && !appState.mostrarDrawerNotifs },
+      { id: 'navAvisosAlumno', label: 'Avisos',     icon: iconAvisos,    active: appState.mostrarDrawerNotifs, badge: unreadCount }
+    ];
+
+    return `
+      <nav class="bottom-nav">
+        ${items.map(it => `
+          <button class="bottom-nav-item ${it.active ? 'active' : ''}" id="${it.id}">
+            <span class="bottom-nav-icon">
+              ${it.icon}
+              ${it.badge ? `<span class="bottom-nav-badge">${it.badge}</span>` : ''}
+            </span>
+            <span class="bottom-nav-label">${it.label}</span>
+          </button>
+        `).join('')}
+      </nav>
+    `;
+  }
+
   // --- LOGIN Y REGISTRO POR DNI CON VERIFICACIÓN DE AUTORIZACIÓN ---
   function renderLoginScreen() {
     appContainer.innerHTML = `
@@ -300,11 +336,6 @@ document.addEventListener('DOMContentLoaded', () => {
       ${renderHeader()}
 
       <main class="client-dashboard">
-        <div class="tabs-container" style="max-width:500px; margin:0 auto 20px">
-          <button class="tab-btn ${appState.tabCliente === 'rutina' ? 'active' : ''}" id="tabRutina">🏋️ Mis Rutinas (${rutinas.length})</button>
-          <button class="tab-btn ${appState.tabCliente === 'historial' ? 'active' : ''}" id="tabHistorial">📜 Historial Real (${historialEntrenamientos.length})</button>
-        </div>
-
         ${appState.tabCliente === 'rutina' ? (
           appState.diaActivoEntrenamiento ? renderWorkoutSession() : (
             appState.diaSeleccionadoId ? renderDayDetailView(alumno) : (
@@ -315,20 +346,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
         ${appState.tabCliente === 'historial' ? renderHistorialAgrupado(historialEntrenamientos, store.data.rutinas) : ''}
       </main>
+
+      ${renderBottomNav()}
     `;
 
     bindHeaderEvents();
-
-    document.getElementById('tabRutina')?.addEventListener('click', () => {
-      appState.tabCliente = 'rutina';
-      appState.diaActivoEntrenamiento = null;
-      renderApp();
-    });
-
-    document.getElementById('tabHistorial')?.addEventListener('click', () => {
-      appState.tabCliente = 'historial';
-      renderApp();
-    });
+    bindBottomNavEvents();
 
     // Eventos de navegación por tarjetas de rutina
     document.querySelectorAll('.routine-select-card').forEach(card => {
@@ -871,9 +894,12 @@ document.addEventListener('DOMContentLoaded', () => {
       ${appState.modalActivo === 'nuevo_alumno' ? renderModalNuevoAlumno() : ''}
       ${(appState.modalActivo === 'crear_rutina' || appState.modalActivo === 'editar_rutina') ? renderModalFormularioRutina(appState.modalActivo) : ''}
       ${appState.modalActivo === 'historial_alumno' ? renderModalHistorialAlumno() : ''}
+
+      ${renderBottomNav()}
     `;
 
     bindHeaderEvents();
+    bindBottomNavEvents();
 
     const inputSearch = document.getElementById('inputSearchProf');
     inputSearch?.addEventListener('input', (e) => {
@@ -1249,6 +1275,41 @@ document.addEventListener('DOMContentLoaded', () => {
     renderApp();
   }
 
+  function toggleNotifDrawer() {
+    appState.mostrarDrawerNotifs = !appState.mostrarDrawerNotifs;
+    if (appState.usuarioActual) {
+      store.marcarNotificacionesLeidas(
+        appState.usuarioActual.rol,
+        appState.usuarioActual.rol === 'alumno' ? appState.usuarioActual.data.id : null
+      );
+    }
+    renderApp();
+  }
+
+  function bindBottomNavEvents() {
+    document.getElementById('navRutina')?.addEventListener('click', () => {
+      appState.tabCliente = 'rutina';
+      appState.diaActivoEntrenamiento = null;
+      appState.mostrarDrawerNotifs = false;
+      renderApp();
+    });
+
+    document.getElementById('navHistorial')?.addEventListener('click', () => {
+      appState.tabCliente = 'historial';
+      appState.mostrarDrawerNotifs = false;
+      renderApp();
+    });
+
+    document.getElementById('navAvisosAlumno')?.addEventListener('click', toggleNotifDrawer);
+    document.getElementById('navAvisosProf')?.addEventListener('click', toggleNotifDrawer);
+
+    document.getElementById('navAlumnos')?.addEventListener('click', () => {
+      appState.modalActivo = null;
+      appState.mostrarDrawerNotifs = false;
+      renderApp();
+    });
+  }
+
   function bindHeaderEvents() {
     document.getElementById('btnLogout')?.addEventListener('click', () => {
       appState.usuarioActual = null;
@@ -1293,16 +1354,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
 
-    document.getElementById('btnNotifBell')?.addEventListener('click', () => {
-      appState.mostrarDrawerNotifs = !appState.mostrarDrawerNotifs;
-      if (appState.usuarioActual) {
-        store.marcarNotificacionesLeidas(
-          appState.usuarioActual.rol,
-          appState.usuarioActual.rol === 'alumno' ? appState.usuarioActual.data.id : null
-        );
-      }
-      renderApp();
-    });
+    document.getElementById('btnNotifBell')?.addEventListener('click', toggleNotifDrawer);
 
     document.getElementById('btnCloseNotifs')?.addEventListener('click', () => {
       appState.mostrarDrawerNotifs = false;

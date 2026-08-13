@@ -208,6 +208,7 @@ body {
 .client-dashboard, .trainer-dashboard {
   width: 100%; max-width: 650px; margin: 0 auto;
   padding: 16px; box-sizing: border-box;
+  padding-bottom: calc(84px + env(safe-area-inset-bottom));
 }
 
 .nav-breadcrumb-btn {
@@ -485,4 +486,73 @@ body {
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(12px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+/* BOTTOM NAVIGATION BAR (mobile-first, estilo apps nativas) */
+.bottom-nav {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  z-index: 500;
+  display: flex;
+  justify-content: space-around;
+  align-items: stretch;
+  background: rgba(14, 14, 18, 0.96);
+  backdrop-filter: blur(16px);
+  border-top: 1px solid var(--border-color);
+  padding: 6px 6px calc(6px + env(safe-area-inset-bottom));
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.bottom-nav-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  background: transparent;
+  border: none;
+  padding: 6px 4px;
+  cursor: pointer;
+  color: var(--text-gray);
+  opacity: 0.65;
+  transition: all var(--transition-fast);
+}
+
+.bottom-nav-item:active {
+  opacity: 1;
+}
+
+.bottom-nav-item.active {
+  color: var(--red-primary);
+  opacity: 1;
+}
+
+.bottom-nav-icon {
+  position: relative;
+  width: 24px; height: 24px;
+  display: flex; align-items: center; justify-content: center;
+}
+
+.bottom-nav-icon svg {
+  width: 22px; height: 22px;
+}
+
+.bottom-nav-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.bottom-nav-badge {
+  position: absolute;
+  top: -4px; right: -6px;
+  background: var(--red-primary);
+  color: #fff;
+  border-radius: 50%;
+  width: 16px; height: 16px;
+  font-size: 0.62rem;
+  font-weight: 800;
+  display: flex; align-items: center; justify-content: center;
 }
