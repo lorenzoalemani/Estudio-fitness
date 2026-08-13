@@ -244,6 +244,10 @@ class SupabaseEngine {
 
   async persistirNuevaRutinaEnSupabase(rutina) {
     if (!this.client) return { ok: false, error: 'cliente_no_inicializado' };
+    if (!window._sessionProfesorId) {
+      console.error('🚫 Bloqueado: intento de escribir una rutina sin sesión de profesor activa.');
+      return { ok: false, error: 'no_autorizado_no_es_profesor' };
+    }
     try {
       const routineUuid = this.ensureValidUUID(rutina.id);
       const alumnoUuid  = this.ensureValidUUID(rutina.alumnoId);
@@ -287,6 +291,10 @@ class SupabaseEngine {
 
   async persistirEdicionRutinaEnSupabase(rutina) {
     if (!this.client) return { ok: false, error: 'cliente_no_inicializado' };
+    if (!window._sessionProfesorId) {
+      console.error('🚫 Bloqueado: intento de escribir una rutina sin sesión de profesor activa.');
+      return { ok: false, error: 'no_autorizado_no_es_profesor' };
+    }
     try {
       const routineUuid = this.ensureValidUUID(rutina.id);
       rutina.id = routineUuid;

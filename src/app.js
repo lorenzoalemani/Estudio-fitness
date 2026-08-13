@@ -919,8 +919,12 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     document.querySelectorAll('.alumno-card-clickable').forEach(card => {
-      card.addEventListener('click', (e) => {
+      card.addEventListener('click', async (e) => {
         const alumnoId = card.dataset.alumnoId;
+        // Antes de mostrar/editar el detalle o la rutina de este alumno,
+        // refrescamos su estado desde Supabase (fuente de verdad) para no
+        // confiar en la copia local del profesor, que puede estar desactualizada.
+        await store.syncWithSupabase(alumnoId);
         if (e.target.classList.contains('btn-historial-click')) {
           e.stopPropagation();
           // Se invalida el caché en cada apertura del historial (no solo al cambiar de alumno)

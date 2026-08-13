@@ -117,6 +117,7 @@ const DEFAULT_DATA = {
 class GymStore {
   constructor() {
     this.data = this.loadData();
+    this._syncSeq = 0; // Token de secuencia para descartar respuestas de sync fuera de orden
     this.listenSupabaseRealtime();
     this.checkExpirationsAndNotify();
   }
@@ -144,10 +145,20 @@ class GymStore {
 
   async syncWithSupabase(alumnoId) {
     if (!window.supabaseEngine) return;
+    // Token de secuencia: si mientras esta llamada está en vuelo se dispara
+    // otra sync más nueva, la respuesta de ESTA llamada se descarta al volver,
+    // para que nunca "gane" una respuesta vieja sobre una más reciente.
+    const requestToken = ++this._syncSeq;
     try {
       // Si hay alumnoId, la RPC obtener_rutinas_alumno obtendrá sus rutinas.
       // Si no hay alumnoId (profesor), solo se sincronizan profiles y dnis.
       const freshData = await window.supabaseEngine.fetchFullStateFromSupabase(alumnoId || null);
+
+      if (requestToken !== this._syncSeq) {
+        console.log("⏭️ Descartando respuesta de sync obsoleta (fuera de orden).");
+        return;
+      }
+
       if (freshData) {
         let huboCambios = false;
 
@@ -229,10 +240,13 @@ class GymStore {
 
     window.addEventListener('storage', (e) => {
       if (e.key === STORAGE_KEY && e.newValue) {
-        try {
-          this.data = JSON.parse(e.newValue);
-          window.dispatchEvent(new CustomEvent('gym_store_updated'));
-        } catch (err) {}
+        // No confiamos ciegamente en el contenido de localStorage escrito por otra
+        // pestaña: puede pertenecer a otra sesión (alumno/profesor) o estar
+        // desactualizado. En vez de sobrescribir this.data directamente,
+        // forzamos una resincronización real contra Supabase (fuente de verdad)
+        // respetando el rol de ESTA pestaña.
+        const alumnoId = window._sessionAlumnoId || null;
+        this.syncWithSupabase(alumnoId);
       }
     });
 
