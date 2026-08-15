@@ -496,9 +496,22 @@ class GymStore {
   }
 
   // --- EDITAR RUTINA EXISTENTE CONSERVANDO HISTORIAL Y MULTI-RUTINAS ---
-  editarRutinaExistente({ rutinaId, profesorNombre, titulo, duracionDias, dias }) {
+  async editarRutinaExistente({ rutinaId, profesorNombre, titulo, duracionDias, dias }) {
     const rutina = this.getRutinaPorId(rutinaId);
     if (!rutina) throw new Error("La rutina a editar no fue encontrada.");
+
+    // Guardamos los valores originales antes de mutar, para poder revertir
+    // en memoria si Supabase rechaza el guardado (rutina es la referencia
+    // real del store, así que cualquier asignación de acá en más ya "pisa"
+    // el estado en memoria antes de confirmar nada con el servidor).
+    const original = {
+      titulo: rutina.titulo,
+      duracionDias: rutina.duracionDias,
+      fechaVencimiento: rutina.fechaVencimiento,
+      dias: rutina.dias,
+      profesorCreadorNombre: rutina.profesorCreadorNombre,
+      profesorId: rutina.profesorId
+    };
 
     rutina.titulo = titulo || rutina.titulo;
     rutina.duracionDias = Number(duracionDias) || rutina.duracionDias;
@@ -517,9 +530,23 @@ class GymStore {
       rutina.profesorId = window._sessionProfesorId;
     }
 
-    // Persistir en Supabase DB
+    // Persistir en Supabase DB y ESPERAR confirmación real antes de
+    // notificar al alumno o persistir localmente. Si Supabase rechaza el
+    // guardado, revertimos la mutación en memoria (no dejamos "confirmado"
+    // algo que el servidor no aceptó).
     if (window.supabaseEngine) {
-      window.supabaseEngine.persistirEdicionRutinaEnSupabase(rutina);
+      const resultado = await window.supabaseEngine.persistirEdicionRutinaEnSupabase(rutina);
+
+      if (!resultado || resultado.ok !== true) {
+        rutina.titulo = original.titulo;
+        rutina.duracionDias = original.duracionDias;
+        rutina.fechaVencimiento = original.fechaVencimiento;
+        rutina.dias = original.dias;
+        rutina.profesorCreadorNombre = original.profesorCreadorNombre;
+        rutina.profesorId = original.profesorId;
+
+        return { ok: false, error: (resultado && resultado.error) || 'error_desconocido' };
+      }
     }
 
     // Enviar notificación Push al alumno
@@ -532,7 +559,7 @@ class GymStore {
     });
 
     this.saveData();
-    return rutina;
+    return { ok: true, data: rutina };
   }
 
   // --- CREAR/EDITAR/ELIMINAR RUTINA PROPIA (AUTO-GESTIÓN DEL ALUMNO) ---

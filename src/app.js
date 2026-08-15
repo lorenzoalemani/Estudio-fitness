@@ -1374,7 +1374,7 @@ document.addEventListener('DOMContentLoaded', () => {
     currentFormDays[diaIdx].ejercicios[ejIdx][field] = val;
   };
 
-  function saveRoutineFromForm() {
+  async function saveRoutineFromForm() {
     const titulo = document.getElementById('routineTitle').value;
     const duracion = document.getElementById('routineDuration').value;
     const usuarioActualData = appState.usuarioActual.data;
@@ -1420,14 +1420,18 @@ document.addEventListener('DOMContentLoaded', () => {
         alert("❌ Error: " + err.message);
       }
     } else if (appState.modalActivo === 'editar_rutina' && appState.rutinaEnEdicionId) {
-      store.editarRutinaExistente({
+      const resultado = await store.editarRutinaExistente({
         rutinaId: appState.rutinaEnEdicionId,
         profesorNombre: usuarioActualData.nombre,
         titulo,
         duracionDias: duracion,
         dias: formattedDays
       });
-      alert("✅ Rutina actualizada correctamente. El alumno recibirá una notificación con los cambios.");
+      if (resultado && resultado.ok) {
+        alert("✅ Rutina actualizada correctamente. El alumno recibirá una notificación con los cambios.");
+      } else {
+        alert("❌ No se pudo guardar la rutina: " + ((resultado && resultado.error) || "error desconocido") + ". Los cambios no se aplicaron, probá de nuevo.");
+      }
     } else {
       store.crearOActualizarRutina({
         alumnoId: appState.alumnoSeleccionadoId,
@@ -1617,9 +1621,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const formRutina = document.getElementById('formCrearRutina');
     if (formRutina) {
       setupRoutineFormBuilder();
-      formRutina.addEventListener('submit', (e) => {
+      formRutina.addEventListener('submit', async (e) => {
         e.preventDefault();
-        saveRoutineFromForm();
+        await saveRoutineFromForm();
       });
     }
   }
