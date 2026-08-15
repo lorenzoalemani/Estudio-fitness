@@ -118,6 +118,11 @@ class GymStore {
   constructor() {
     this.data = this.loadData();
     this._syncSeq = 0; // Token de secuencia para descartar respuestas de sync fuera de orden
+    this._authSyncSeq = 0; // Token de secuencia EXCLUSIVO de syncs con alumnoId (autenticadas).
+    // Una sync sin alumnoId (más liviana, no trae rutinas) nunca debe poder
+    // invalidar la respuesta de una sync CON alumnoId (la que sí trae rutinas),
+    // aunque haya arrancado después y termine antes. Por eso se comparan por
+    // separado: cada tipo de llamada solo puede ser "pisada" por otra de su mismo tipo.
     this.listenSupabaseRealtime();
     this.checkExpirationsAndNotify();
   }
@@ -149,12 +154,22 @@ class GymStore {
     // otra sync más nueva, la respuesta de ESTA llamada se descarta al volver,
     // para que nunca "gane" una respuesta vieja sobre una más reciente.
     const requestToken = ++this._syncSeq;
+    // Si esta llamada trae alumnoId (autenticada), también reserva un token en
+    // el contador paralelo _authSyncSeq. Solo otra llamada CON alumnoId más
+    // nueva puede invalidarla — una sync sin alumnoId que arranque después
+    // (por ejemplo, la inicial del constructor) ya no puede pisarla.
+    const isAuthSync = !!alumnoId;
+    const authRequestToken = isAuthSync ? ++this._authSyncSeq : null;
     try {
       // Si hay alumnoId, la RPC obtener_rutinas_alumno obtendrá sus rutinas.
       // Si no hay alumnoId (profesor), solo se sincronizan profiles y dnis.
       const freshData = await window.supabaseEngine.fetchFullStateFromSupabase(alumnoId || null);
 
-      if (requestToken !== this._syncSeq) {
+      const isStale = isAuthSync
+        ? (authRequestToken !== this._authSyncSeq)
+        : (requestToken !== this._syncSeq);
+
+      if (isStale) {
         console.log("⏭️ Descartando respuesta de sync obsoleta (fuera de orden).");
         return;
       }
