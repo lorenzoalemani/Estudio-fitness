@@ -1381,11 +1381,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const esModoAlumnoPropio = appState.modalActivo === 'crear_rutina_propia' || appState.modalActivo === 'editar_rutina_propia';
 
     const formattedDays = currentFormDays.map((d, dIdx) => ({
-      id: "dia-" + Date.now() + "-" + dIdx,
+      id: crypto.randomUUID(),
       diaNumero: dIdx + 1,
       nombre: d.nombre,
       ejercicios: d.ejercicios.map((e, idx) => ({
-        id: "ej-" + Date.now() + "-" + idx,
+        id: crypto.randomUUID(),
         nombre: e.nombre,
         seriesTarget: Number(e.series) || 3,
         repeticionesTarget: e.repeticiones || "12",
