@@ -13,6 +13,9 @@ document.addEventListener('DOMContentLoaded', () => {
           appState.rutinaSeleccionadaId = event.data.routineId;
           appState.diaSeleccionadoId = null;
           renderApp();
+          // PWA: al interactuar con una notificación de rutina actualizada,
+          // forzamos la reobtención fresca desde Supabase (no confiar en caché).
+          if (window.gymStore) window.gymStore.forceRefreshRutinas(appState.usuarioActual.data.id);
         }
       }
     });
@@ -136,12 +139,16 @@ document.addEventListener('DOMContentLoaded', () => {
     const iconHistorial = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>`;
     const iconAvisos = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>`;
     const iconAlumnos = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 3 3.87"/></svg>`;
+    const iconMisRutinas = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="8" r="4"/><path d="M2 21v-1a7 7 0 0 1 7-7h1.5"/><path d="M18 14v6M15 17h6"/></svg>`;
+    const iconRanking = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 21h8M12 17v4M7 4h10v4a5 5 0 0 1-10 0V4Z"/><path d="M7 6H4a2 2 0 0 0 2 4M17 6h3a2 2 0 0 1-2 4"/></svg>`;
 
     const items = isProfesor ? [
       { id: 'navAlumnos',    label: 'Alumnos', icon: iconAlumnos, active: appState.modalActivo === null && !appState.mostrarDrawerNotifs },
       { id: 'navAvisosProf', label: 'Avisos',   icon: iconAvisos,  active: appState.mostrarDrawerNotifs, badge: unreadCount }
     ] : [
       { id: 'navRutina',       label: 'Rutinas',   icon: iconRutina,    active: appState.tabCliente === 'rutina' && !appState.mostrarDrawerNotifs },
+      { id: 'navMisRutinas',   label: 'Mías',       icon: iconMisRutinas, active: appState.tabCliente === 'mis_rutinas' && !appState.mostrarDrawerNotifs },
+      { id: 'navRanking',      label: 'Ranking',    icon: iconRanking,   active: appState.tabCliente === 'ranking' && !appState.mostrarDrawerNotifs },
       { id: 'navHistorial',    label: 'Historial', icon: iconHistorial, active: appState.tabCliente === 'historial' && !appState.mostrarDrawerNotifs },
       { id: 'navAvisosAlumno', label: 'Avisos',     icon: iconAvisos,    active: appState.mostrarDrawerNotifs, badge: unreadCount }
     ];
@@ -309,33 +316,22 @@ document.addEventListener('DOMContentLoaded', () => {
   // --- DASHBOARD ALUMNO (NUEVA NAVEGACIÓN MOBILE-FIRST POR TARJETAS) ---
   function renderClientDashboard() {
     const alumno = appState.usuarioActual.data;
+    const pendienteAutorizacion = alumno.estadoAutorizacion === 'pendiente';
 
-    // Verificar si la cuenta está pendiente de autorización por el profesor
-    if (alumno.estadoAutorizacion === 'pendiente') {
-      appContainer.innerHTML = `
-        ${renderHeader()}
-        <main class="client-dashboard" style="max-width:500px; margin:40px auto">
-          <div class="routine-banner" style="flex-direction:column; text-align:center; border-color:var(--yellow-warning)">
-            <span class="badge badge-warning" style="font-size:1rem; padding:8px 16px">⚠️ CUENTA PENDIENTE DE AUTORIZACIÓN</span>
-            <h2 style="margin-top:12px">Hola, ${alumno.nombre}</h2>
-            <p style="color:var(--text-gray); font-size:0.92rem; margin-top:8px">
-              Tu DNI (<strong>${alumno.dni}</strong>) aún no ha sido autorizado en el gimnasio por el profesor. 
-              Por favor solicita a tu profesor de Estudio Fitness que te registre para acceder a tus rutinas.
-            </p>
-          </div>
-        </main>
-      `;
-      bindHeaderEvents();
-      return;
-    }
-
-    const rutinas = store.getRutinasAlumno(alumno.id);
     const historialEntrenamientos = store.getHistorialEntrenamientosReales(alumno.id);
 
     appContainer.innerHTML = `
       ${renderHeader()}
 
       <main class="client-dashboard">
+        ${pendienteAutorizacion ? `
+          <div class="pending-banner">
+            ⚠️ Tu DNI (<strong>${alumno.dni}</strong>) todavía no fue autorizado por tu profesor, así que aún no
+            vas a ver rutinas asignadas. Mientras tanto, ¡ya podés crear y entrenar tus propias rutinas en
+            <strong>"Mías"</strong>! Pedile a tu profe que te autorice para recibir rutinas personalizadas.
+          </div>
+        ` : ''}
+
         ${appState.tabCliente === 'rutina' ? (
           appState.diaActivoEntrenamiento ? renderWorkoutSession() : (
             appState.diaSeleccionadoId ? renderDayDetailView(alumno) : (
@@ -344,17 +340,23 @@ document.addEventListener('DOMContentLoaded', () => {
           )
         ) : ''}
 
+        ${appState.tabCliente === 'mis_rutinas' ? renderMisRutinasView(alumno) : ''}
+        ${appState.tabCliente === 'ranking' ? renderRankingView() : ''}
         ${appState.tabCliente === 'historial' ? renderHistorialAgrupado(historialEntrenamientos, store.data.rutinas) : ''}
       </main>
+
+      ${(appState.modalActivo === 'crear_rutina_propia' || appState.modalActivo === 'editar_rutina_propia') ? renderModalFormularioRutina(appState.modalActivo) : ''}
 
       ${renderBottomNav()}
     `;
 
     bindHeaderEvents();
     bindBottomNavEvents();
+    bindMisRutinasEvents(alumno);
 
-    // Eventos de navegación por tarjetas de rutina
-    document.querySelectorAll('.routine-select-card').forEach(card => {
+    // Eventos de navegación por tarjetas de rutina (excluye las de "Mis Rutinas",
+    // que tienen su propio binding en bindMisRutinasEvents para soportar Editar/Borrar)
+    document.querySelectorAll('.routine-select-card:not(.routine-propia-card)').forEach(card => {
       card.addEventListener('click', () => {
         appState.rutinaSeleccionadaId = card.dataset.rutinaId;
         appState.diaSeleccionadoId = null;
@@ -451,6 +453,131 @@ document.addEventListener('DOMContentLoaded', () => {
     `;
   }
 
+  // --- FEATURE "MIS RUTINAS": vista de rutinas auto-gestionadas por el alumno ---
+  function renderMisRutinasView(alumno) {
+    const misRutinas = store.getRutinasPropiasAlumno(alumno.id);
+
+    return `
+      <div style="margin-bottom:16px; display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap">
+        <div>
+          <h2 style="font-size:1.4rem; font-weight:900; letter-spacing:0.5px">🧑‍🔧 Mis Rutinas</h2>
+          <p style="font-size:0.85rem; color:var(--text-gray)">Rutinas personales que armás y gestionás vos mismo</p>
+        </div>
+        <button class="btn btn-primary btn-sm" id="btnNuevaRutinaPropia">+ Crear Rutina Propia</button>
+      </div>
+
+      ${misRutinas.length === 0 ? `
+        <div class="routine-banner" style="text-align:center; justify-content:center; flex-direction:column; padding:30px 20px">
+          <div style="font-size:2.5rem; margin-bottom:10px">📝</div>
+          <h3 style="font-size:1.1rem; font-weight:900">Todavía no creaste rutinas propias</h3>
+          <p style="color:var(--text-gray); font-size:0.88rem; margin-top:6px">
+            Armá tu propia rutina de entrenamiento y empezá a registrar tus series cuando quieras.
+          </p>
+        </div>
+      ` : misRutinas.map(r => `
+        <div class="routine-select-card routine-propia-card" data-rutina-id="${r.id}">
+          <div class="routine-card-header">
+            <span class="badge badge-info">🔧 Auto-gestionada</span>
+            <span class="badge badge-info">${r.dias ? r.dias.length : 0} ${r.dias && r.dias.length === 1 ? 'día' : 'días'}</span>
+          </div>
+
+          <div>
+            <h3 class="routine-card-title">${r.titulo}</h3>
+            <p class="routine-card-subtitle">Creada por vos · Duración: ${r.duracionDias} días</p>
+          </div>
+
+          <div style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid var(--border-color); padding-top:10px; margin-top:4px; gap:8px; flex-wrap:wrap">
+            <div class="routine-card-days-count">Tocar para ver días ➔</div>
+            <div style="display:flex; gap:6px">
+              <button class="btn btn-secondary btn-sm btn-editar-rutina-propia" data-rutina-id="${r.id}" style="border-color:var(--yellow-warning); color:var(--yellow-warning); padding:4px 10px; font-size:0.78rem">✏️ Editar</button>
+              <button class="btn btn-secondary btn-sm btn-eliminar-rutina-propia" data-rutina-id="${r.id}" style="border-color:var(--red-primary); color:var(--red-primary); padding:4px 10px; font-size:0.78rem">🗑️ Borrar</button>
+            </div>
+          </div>
+        </div>
+      `).join('')}
+    `;
+  }
+
+  function bindMisRutinasEvents(alumno) {
+    document.getElementById('btnNuevaRutinaPropia')?.addEventListener('click', () => {
+      appState.alumnoSeleccionadoId = alumno.id;
+      appState.rutinaEnEdicionId = null;
+      appState.modalActivo = 'crear_rutina_propia';
+      initFormBuilderForNew();
+      renderApp();
+    });
+
+    document.querySelectorAll('.routine-propia-card').forEach(card => {
+      card.addEventListener('click', (e) => {
+        const rId = card.dataset.rutinaId;
+
+        if (e.target.closest('.btn-editar-rutina-propia')) {
+          e.stopPropagation();
+          appState.alumnoSeleccionadoId = alumno.id;
+          appState.rutinaEnEdicionId = rId;
+          appState.modalActivo = 'editar_rutina_propia';
+          initFormBuilderForRoutine(rId);
+          renderApp();
+          return;
+        }
+
+        if (e.target.closest('.btn-eliminar-rutina-propia')) {
+          e.stopPropagation();
+          if (confirm("¿Seguro que querés eliminar esta rutina propia? Esta acción no se puede deshacer.")) {
+            try {
+              store.eliminarRutinaPropia(rId, alumno.id);
+            } catch (err) {
+              alert("❌ Error: " + err.message);
+            }
+            renderApp();
+          }
+          return;
+        }
+
+        // Reutiliza el mismo flujo de días/ejercicios/entrenamiento que las rutinas asignadas
+        appState.rutinaSeleccionadaId = rId;
+        appState.diaSeleccionadoId = null;
+        appState.tabCliente = 'rutina';
+        renderApp();
+      });
+    });
+  }
+
+  // --- FEATURE RANKING: tabla de posiciones en tiempo real con medallas Top 3 ---
+  function renderRankingView() {
+    const ranking = store.getRanking();
+    const miId = appState.usuarioActual.data.id;
+    const medalla = (pos) => pos === 1 ? '🥇' : pos === 2 ? '🥈' : pos === 3 ? '🥉' : `#${pos}`;
+
+    return `
+      <div style="margin-bottom:16px">
+        <h2 style="font-size:1.4rem; font-weight:900; letter-spacing:0.5px">🏆 Ranking</h2>
+        <p style="font-size:0.85rem; color:var(--text-gray)">Puntos acumulados por entrenamientos completados y racha semanal</p>
+      </div>
+
+      ${ranking.length === 0 ? `
+        <div class="routine-banner" style="text-align:center; justify-content:center; flex-direction:column; padding:30px 20px">
+          <div style="font-size:2.5rem; margin-bottom:10px">🏆</div>
+          <h3 style="font-size:1.1rem; font-weight:900">Aún no hay puntos registrados</h3>
+          <p style="color:var(--text-gray); font-size:0.88rem; margin-top:6px">Completá un entrenamiento para empezar a sumar puntos.</p>
+        </div>
+      ` : `
+        <div class="ranking-list">
+          ${ranking.map(a => `
+            <div class="ranking-row ${a.id === miId ? 'ranking-row-me' : ''} ${a.posicion <= 3 ? 'ranking-row-top' + a.posicion : ''}">
+              <div class="ranking-pos">${medalla(a.posicion)}</div>
+              <div class="ranking-info">
+                <div class="ranking-name">${a.nombre}${a.id === miId ? ' <span style="color:var(--red-primary)">(Vos)</span>' : ''}</div>
+                ${a.rachaSemanal && a.rachaSemanal.semanas >= 2 ? `<div class="ranking-streak">🔥 Racha de ${a.rachaSemanal.semanas} semanas</div>` : ''}
+              </div>
+              <div class="ranking-points">${Math.round(a.puntosTotal || 0)} pts</div>
+            </div>
+          `).join('')}
+        </div>
+      `}
+    `;
+  }
+
   function renderRoutineDaysView(alumno) {
     const rutina = store.getRutinaPorId(appState.rutinaSeleccionadaId);
     if (!rutina) {
@@ -538,6 +665,7 @@ document.addEventListener('DOMContentLoaded', () => {
               </div>
             ` : ''}
           </div>
+          ${ej.videoUrl ? `<a href="${ej.videoUrl}" target="_blank" rel="noopener noreferrer" class="btn-video-demo">🎬 Ver ejercicio</a>` : ''}
         </div>
       `).join('')}
 
@@ -589,6 +717,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="target-stats">${ej.seriesTarget} series · ${ej.repeticionesTarget} reps · ${ej.pesoSugerido}</div>
                 ${ej.notaProfesor ? `<div style="font-size:0.85rem; color:#fca5a5; margin-top:4px">👨‍🏫 ${ej.notaProfesor}</div>` : ''}
               </div>
+              ${ej.videoUrl ? `<a href="${ej.videoUrl}" target="_blank" rel="noopener noreferrer" class="btn-video-demo">🎬 Ver ejercicio</a>` : ''}
 
               <h4 style="font-size:0.8rem; text-transform:uppercase; color:var(--text-gray); margin-bottom:8px">✏️ REGISTRO REAL POR SERIE:</h4>
 
@@ -1000,15 +1129,20 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function renderModalFormularioRutina(modo) {
+    const esPropiaModo = modo === 'crear_rutina_propia' || modo === 'editar_rutina_propia';
+    const esEdicion = modo === 'editar_rutina' || modo === 'editar_rutina_propia';
     const alumno = store.getAlumnoPorId(appState.alumnoSeleccionadoId);
-    const esEdicion = modo === 'editar_rutina';
     const rutinaExistente = esEdicion ? store.getRutinaPorId(appState.rutinaEnEdicionId) : null;
+
+    const tituloModal = esPropiaModo
+      ? (esEdicion ? '✏️ Editar Mi Rutina' : '📝 Crear Mi Rutina Propia')
+      : `${esEdicion ? '✏️ Editar Rutina' : '📝 Asignar Nueva Rutina'} — ${alumno ? alumno.nombre : ''}`;
 
     return `
       <div class="modal-overlay">
         <div class="modal-content">
           <div class="modal-header">
-            <h3>${esEdicion ? '✏️ Editar Rutina' : '📝 Asignar Nueva Rutina'} — ${alumno ? alumno.nombre : ''}</h3>
+            <h3>${tituloModal}</h3>
             <button class="close-btn" id="btnCloseModal">&times;</button>
           </div>
 
@@ -1034,7 +1168,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:24px">
               <button type="button" class="btn btn-secondary" id="btnCancelModal">Cancelar</button>
               <button type="submit" class="btn btn-primary">
-                ${esEdicion ? '💾 Guardar Cambios en Rutina' : '🚀 Asignar Nueva Rutina'}
+                ${esEdicion ? '💾 Guardar Cambios' : (esPropiaModo ? '🚀 Crear Mi Rutina' : '🚀 Asignar Nueva Rutina')}
               </button>
             </div>
           </form>
@@ -1093,7 +1227,7 @@ document.addEventListener('DOMContentLoaded', () => {
       {
         nombre: "Día 1: Pecho, Hombro y Tríceps",
         ejercicios: [
-          { nombre: "Press Plano con Barra", series: 4, repeticiones: "10-12", peso: "60 kg", notaProfesor: "Controlar bajada" }
+          { nombre: "Press Plano con Barra", series: 4, repeticiones: "10-12", peso: "60 kg", notaProfesor: "Controlar bajada", videoUrl: "" }
         ]
       }
     ];
@@ -1109,7 +1243,8 @@ document.addEventListener('DOMContentLoaded', () => {
           series: e.seriesTarget || 3,
           repeticiones: e.repeticionesTarget || "12",
           peso: e.pesoSugerido || "S/D",
-          notaProfesor: e.notaProfesor || ""
+          notaProfesor: e.notaProfesor || "",
+          videoUrl: e.videoUrl || ""
         }))
       }));
     } else {
@@ -1122,7 +1257,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('btnAddDay')?.addEventListener('click', () => {
       currentFormDays.push({
         nombre: `Día ${currentFormDays.length + 1}: General`,
-        ejercicios: [{ nombre: "Nuevo Ejercicio", series: 3, repeticiones: "12", peso: "10 kg", notaProfesor: "" }]
+        ejercicios: [{ nombre: "Nuevo Ejercicio", series: 3, repeticiones: "12", peso: "10 kg", notaProfesor: "", videoUrl: "" }]
       });
       renderFormDays();
     });
@@ -1177,6 +1312,11 @@ document.addEventListener('DOMContentLoaded', () => {
               <label class="form-label" style="font-size:0.72rem">Indicación / Nota del Profesor</label>
               <input type="text" class="form-input" placeholder="Ej: Controlar 2 seg de bajada" value="${ej.notaProfesor || ''}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'notaProfesor', this.value)">
             </div>
+
+            <div class="form-group" style="margin-bottom:0; margin-top:6px">
+              <label class="form-label" style="font-size:0.72rem">🎬 URL de Video/Demo (Opcional)</label>
+              <input type="url" class="form-input" placeholder="https://youtube.com/..." value="${ej.videoUrl || ''}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'videoUrl', this.value)">
+            </div>
           </div>
         `).join('')}
       </div>
@@ -1185,7 +1325,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   window.updateFormDayName = (diaIdx, val) => { currentFormDays[diaIdx].nombre = val; };
   window.addFormExercise = (diaIdx) => {
-    currentFormDays[diaIdx].ejercicios.push({ nombre: "Nuevo Ejercicio", series: 3, repeticiones: "12", peso: "10 kg", notaProfesor: "" });
+    currentFormDays[diaIdx].ejercicios.push({ nombre: "Nuevo Ejercicio", series: 3, repeticiones: "12", peso: "10 kg", notaProfesor: "", videoUrl: "" });
     renderFormDays();
   };
   window.removeFormExercise = (diaIdx, ejIdx) => {
@@ -1237,7 +1377,8 @@ document.addEventListener('DOMContentLoaded', () => {
   function saveRoutineFromForm() {
     const titulo = document.getElementById('routineTitle').value;
     const duracion = document.getElementById('routineDuration').value;
-    const profActual = appState.usuarioActual.data;
+    const usuarioActualData = appState.usuarioActual.data;
+    const esModoAlumnoPropio = appState.modalActivo === 'crear_rutina_propia' || appState.modalActivo === 'editar_rutina_propia';
 
     const formattedDays = currentFormDays.map((d, dIdx) => ({
       id: "dia-" + Date.now() + "-" + dIdx,
@@ -1250,14 +1391,38 @@ document.addEventListener('DOMContentLoaded', () => {
         repeticionesTarget: e.repeticiones || "12",
         pesoSugerido: e.peso || "S/D",
         notaProfesor: e.notaProfesor || "",
-        profesorNotaAutor: profActual.nombre
+        profesorNotaAutor: esModoAlumnoPropio ? `${usuarioActualData.nombre} (vos)` : usuarioActualData.nombre,
+        videoUrl: e.videoUrl || ""
       }))
     }));
 
-    if (appState.modalActivo === 'editar_rutina' && appState.rutinaEnEdicionId) {
+    if (esModoAlumnoPropio) {
+      try {
+        if (appState.modalActivo === 'editar_rutina_propia' && appState.rutinaEnEdicionId) {
+          store.editarRutinaPropia({
+            rutinaId: appState.rutinaEnEdicionId,
+            alumnoId: usuarioActualData.id,
+            titulo,
+            duracionDias: duracion,
+            dias: formattedDays
+          });
+          alert("✅ Rutina propia actualizada correctamente.");
+        } else {
+          store.crearRutinaPropia({
+            alumnoId: usuarioActualData.id,
+            titulo,
+            duracionDias: duracion,
+            dias: formattedDays
+          });
+          alert("🚀 ¡Rutina propia creada! Ya podés empezar a entrenarla desde \"Mías\".");
+        }
+      } catch (err) {
+        alert("❌ Error: " + err.message);
+      }
+    } else if (appState.modalActivo === 'editar_rutina' && appState.rutinaEnEdicionId) {
       store.editarRutinaExistente({
         rutinaId: appState.rutinaEnEdicionId,
-        profesorNombre: profActual.nombre,
+        profesorNombre: usuarioActualData.nombre,
         titulo,
         duracionDias: duracion,
         dias: formattedDays
@@ -1266,7 +1431,7 @@ document.addEventListener('DOMContentLoaded', () => {
     } else {
       store.crearOActualizarRutina({
         alumnoId: appState.alumnoSeleccionadoId,
-        profesorNombre: profActual.nombre,
+        profesorNombre: usuarioActualData.nombre,
         titulo,
         duracionDias: duracion,
         dias: formattedDays
@@ -1291,9 +1456,27 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function bindBottomNavEvents() {
-    document.getElementById('navRutina')?.addEventListener('click', () => {
+    document.getElementById('navRutina')?.addEventListener('click', async () => {
       appState.tabCliente = 'rutina';
       appState.diaActivoEntrenamiento = null;
+      appState.mostrarDrawerNotifs = false;
+      renderApp(); // feedback visual inmediato de cambio de tab
+
+      // PWA / Bottom Nav: al tocar "Rutinas" forzamos la reobtención fresca
+      // desde Supabase para que el alumno siempre vea la última versión.
+      if (appState.usuarioActual?.rol === 'alumno' && window.gymStore) {
+        await window.gymStore.forceRefreshRutinas(appState.usuarioActual.data.id);
+      }
+    });
+
+    document.getElementById('navMisRutinas')?.addEventListener('click', () => {
+      appState.tabCliente = 'mis_rutinas';
+      appState.mostrarDrawerNotifs = false;
+      renderApp();
+    });
+
+    document.getElementById('navRanking')?.addEventListener('click', () => {
+      appState.tabCliente = 'ranking';
       appState.mostrarDrawerNotifs = false;
       renderApp();
     });
@@ -1392,7 +1575,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
       });
 
-      store.guardarEntrenamientoReal({
+      const logGuardado = store.guardarEntrenamientoReal({
         alumnoId:         alumno.id,
         rutinaId:         rutinaActiva ? rutinaActiva.id : 'rut-default',
         diaId:            dia.id,
@@ -1402,7 +1585,9 @@ document.addEventListener('DOMContentLoaded', () => {
         comentarioGeneral: appState.workoutGeneralComment || ''
       });
 
-      alert("🏆 ¡Entrenamiento completado y guardado en tu historial!");
+      const puntosGanados = Math.round((logGuardado?.puntos || 0));
+      const bonusTexto = logGuardado?.bonusRacha ? ` (incluye +${logGuardado.bonusRacha} 🔥 bonus por racha semanal)` : '';
+      alert(`🏆 ¡Entrenamiento completado y guardado en tu historial!\n+${puntosGanados} puntos ganados${bonusTexto}`);
       appState.diaActivoEntrenamiento = null;
       appState.tabCliente = 'historial';
       renderApp();

@@ -250,8 +250,38 @@ class GymStore {
       }
     });
 
+    // --- PWA ANCLADA AL INICIO: refetch automático al volver a primer plano ---
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        const alumnoId = window._sessionAlumnoId || null;
+        console.log("🔄 PWA volvió a primer plano (visibilitychange) → refetch automático con Supabase.");
+        this.syncWithSupabase(alumnoId);
+      }
+    });
+
+    document.addEventListener('resume', () => {
+      const alumnoId = window._sessionAlumnoId || null;
+      console.log("🔄 Evento 'resume' (PWA nativa) → refetch automático con Supabase.");
+      this.syncWithSupabase(alumnoId);
+    }, false);
+
+    window.addEventListener('pageshow', (e) => {
+      if (e.persisted) {
+        const alumnoId = window._sessionAlumnoId || null;
+        console.log("🔄 Evento 'pageshow' (bfcache) → refetch automático con Supabase.");
+        this.syncWithSupabase(alumnoId);
+      }
+    });
+
     // Sincronización inicial diferida (sin alumnoId — perfil y dnis)
     setTimeout(() => this.syncWithSupabase(null), 400);
+  }
+
+  // --- REFETCH FORZADO AL TOCAR "RUTINAS" EN BOTTOM NAV O AL ABRIR UNA NOTIFICACIÓN ---
+  async forceRefreshRutinas(alumnoId = null) {
+    const idAUsar = alumnoId || window._sessionAlumnoId || null;
+    console.log("🔄 Forzando reobtención fresca de Rutinas desde Supabase (tab Rutinas / notificación).");
+    return this.syncWithSupabase(idAUsar);
   }
 
   // --- AUTENTICACIÓN Y AUTORIZACIÓN POR DNI ---
@@ -350,8 +380,13 @@ class GymStore {
 
   getRutinasAlumno(alumnoId) {
     return this.data.rutinas
-      .filter(r => r.alumnoId === alumnoId)
+      .filter(r => r.alumnoId === alumnoId && !r.esPropia)
       .sort((a, b) => (b.estado === 'activa' ? 1 : 0) - (a.estado === 'activa' ? 1 : 0));
+  }
+
+  // --- FEATURE "MIS RUTINAS": rutinas auto-gestionadas por el propio alumno ---
+  getRutinasPropiasAlumno(alumnoId) {
+    return this.data.rutinas.filter(r => r.esPropia && r.alumnoCreadorId === alumnoId);
   }
 
   getRutinaPorId(rutinaId) {
@@ -365,9 +400,9 @@ class GymStore {
       const rut = this.data.rutinas.find(r => r.id === alumno.rutinaActivaId && r.estado === 'activa');
       if (rut) return rut;
     }
-    // Fallback: Retornar la rutina activa más reciente asignada al alumno
+    // Fallback: Retornar la rutina activa más reciente asignada al alumno (excluye rutinas propias)
     return this.data.rutinas
-      .filter(r => (r.alumnoId === alumno.id || r.alumnoId === alumno.dni) && (r.estado === 'activa' || !r.estado))
+      .filter(r => (r.alumnoId === alumno.id || r.alumnoId === alumno.dni) && !r.esPropia && (r.estado === 'activa' || !r.estado))
       .sort((a, b) => new Date(b.fechaInicio || 0) - new Date(a.fechaInicio || 0))[0] || null;
   }
 
@@ -485,6 +520,117 @@ class GymStore {
     return rutina;
   }
 
+  // --- CREAR/EDITAR/ELIMINAR RUTINA PROPIA (AUTO-GESTIÓN DEL ALUMNO) ---
+  // Diseño intencional: las rutinas propias son 100% locales (LocalStorage) y
+  // NUNCA se escriben en Supabase, para respetar el Fix 3 (bloqueo de
+  // escritura de rutinas cuando no hay sesión de profesor activa). El alumno
+  // no tiene `window._sessionProfesorId`, así que cualquier intento de
+  // persistencia hacia la tabla `routines` sería rechazado de todas formas.
+  crearRutinaPropia({ alumnoId, titulo, duracionDias, dias }) {
+    const alumno = this.getAlumnoPorId(alumnoId);
+    if (!alumno) throw new Error("Alumno no encontrado.");
+
+    const hoy = new Date();
+    const fechaVenc = new Date(hoy.getTime() + Number(duracionDias) * 86400000);
+    const routineUuid = (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() : ("rutp-" + Date.now());
+
+    const nuevaRutina = {
+      id: routineUuid,
+      alumnoId,
+      esPropia: true,
+      alumnoCreadorId: alumnoId,
+      profesorCreadorNombre: "Auto-gestionada por el alumno",
+      titulo: titulo || "Mi Rutina Personal",
+      duracionDias: Number(duracionDias) || 30,
+      fechaInicio: hoy.toISOString().split('T')[0],
+      fechaVencimiento: fechaVenc.toISOString().split('T')[0],
+      estado: "activa",
+      dias
+    };
+
+    this.data.rutinas.push(nuevaRutina);
+    this.saveData();
+    return nuevaRutina;
+  }
+
+  editarRutinaPropia({ rutinaId, alumnoId, titulo, duracionDias, dias }) {
+    const rutina = this.getRutinaPorId(rutinaId);
+    if (!rutina || !rutina.esPropia || rutina.alumnoCreadorId !== alumnoId) {
+      throw new Error("No tenés permiso para editar esta rutina.");
+    }
+    rutina.titulo = titulo || rutina.titulo;
+    rutina.duracionDias = Number(duracionDias) || rutina.duracionDias;
+    const fInicio = rutina.fechaInicio ? new Date(rutina.fechaInicio) : new Date();
+    rutina.fechaVencimiento = new Date(fInicio.getTime() + Number(rutina.duracionDias) * 86400000).toISOString().split('T')[0];
+    rutina.dias = dias;
+    this.saveData();
+    return rutina;
+  }
+
+  eliminarRutinaPropia(rutinaId, alumnoId) {
+    const idx = this.data.rutinas.findIndex(r => r.id === rutinaId);
+    if (idx === -1) throw new Error("Rutina no encontrada.");
+    const rutina = this.data.rutinas[idx];
+    if (!rutina.esPropia || rutina.alumnoCreadorId !== alumnoId) {
+      throw new Error("No tenés permiso para eliminar esta rutina.");
+    }
+    this.data.rutinas.splice(idx, 1);
+    const alumno = this.getAlumnoPorId(alumnoId);
+    if (alumno && alumno.rutinaActivaId === rutinaId) alumno.rutinaActivaId = null;
+    this.saveData();
+  }
+
+  // --- SISTEMA DE PUNTUACIÓN Y RACHA SEMANAL ---
+  // Clave de semana ISO (YYYY-Www), estable independientemente del día exacto.
+  getWeekKey(date) {
+    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+    const dayNum = d.getUTCDay() || 7;
+    d.setUTCDate(d.getUTCDate() + 4 - dayNum);
+    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
+    return `${d.getUTCFullYear()}-W${weekNo}`;
+  }
+
+  // +100 Base + Σ(peso × reps) por cada serie registrada / 100
+  // (equivale a Peso × Reps × Series / 100 cuando peso/reps son constantes entre series)
+  calcularPuntosSesion(setsLog) {
+    let volumen = 0;
+    (setsLog || []).forEach(s => {
+      const pesoNum = parseFloat(String(s.pesoUtilizado).replace(',', '.')) || 0;
+      const repsNum = Number(s.repsRealizadas) || 0;
+      volumen += pesoNum * repsNum;
+    });
+    return Math.round((100 + volumen / 100) * 100) / 100;
+  }
+
+  // Actualiza la racha semanal del alumno y suma los puntos totales.
+  // +50 puntos extra si esta sesión continúa una racha de 2+ semanas consecutivas.
+  actualizarRachaYSumarPuntos(alumno, fechaISO, puntosBase) {
+    const semanaActual = this.getWeekKey(new Date(fechaISO));
+    if (!alumno.rachaSemanal) alumno.rachaSemanal = { semanas: 0, ultimaSemana: null };
+
+    let bonusRacha = 0;
+    if (alumno.rachaSemanal.ultimaSemana !== semanaActual) {
+      const semanaAnteriorEsperada = this.getWeekKey(new Date(new Date(fechaISO).getTime() - 7 * 86400000));
+      alumno.rachaSemanal.semanas = (alumno.rachaSemanal.ultimaSemana === semanaAnteriorEsperada)
+        ? alumno.rachaSemanal.semanas + 1
+        : 1;
+      alumno.rachaSemanal.ultimaSemana = semanaActual;
+      if (alumno.rachaSemanal.semanas >= 2) bonusRacha = 50;
+    }
+
+    alumno.puntosTotal = Math.round(((alumno.puntosTotal || 0) + puntosBase + bonusRacha) * 100) / 100;
+    return bonusRacha;
+  }
+
+  // --- RANKING EN TIEMPO REAL (Top alumnos por puntos acumulados) ---
+  getRanking() {
+    return [...this.data.alumnos]
+      .filter(a => (a.puntosTotal || 0) > 0 || a.estadoAutorizacion === 'autorizado')
+      .sort((a, b) => (b.puntosTotal || 0) - (a.puntosTotal || 0))
+      .map((a, idx) => ({ ...a, posicion: idx + 1 }));
+  }
+
   // --- GUARDADO DE SESIÓN DE ENTRENAMIENTO REAL POR SERIES Y COMENTARIO GENERAL ---
   guardarEntrenamientoReal({ alumnoId, rutinaId, diaId, diaNombre, diaNumero, setsLog, comentarioGeneral = "" }) {
     // UUID nativo desde el inicio: mismo ID en localStorage y en Supabase
@@ -493,6 +639,12 @@ class GymStore {
       : ("log-" + Date.now());
 
     const fechaISO = new Date().toISOString();
+
+    // --- SISTEMA DE PUNTUACIÓN Y RANKING ---
+    const alumno = this.getAlumnoPorId(alumnoId);
+    const puntosBase = this.calcularPuntosSesion(setsLog);
+    const bonusRacha = alumno ? this.actualizarRachaYSumarPuntos(alumno, fechaISO, puntosBase) : 0;
+    const puntosSesion = puntosBase + bonusRacha;
 
     const nuevoLog = {
       id: logId,
@@ -504,7 +656,9 @@ class GymStore {
       fecha: fechaISO,
       estado: "completado",
       comentarioGeneral: comentarioGeneral || "",
-      sets: setsLog
+      sets: setsLog,
+      puntos: puntosSesion,
+      bonusRacha
     };
 
     this.data.workoutLogs.unshift(nuevoLog);
@@ -513,7 +667,6 @@ class GymStore {
       window.supabaseEngine.guardarWorkoutLogEnSupabase(nuevoLog);
     }
 
-    const alumno = this.getAlumnoPorId(alumnoId);
     if (alumno) {
       this.crearNotificacion({
         destinatarioRol: "profesor",
