@@ -397,6 +397,32 @@ class SupabaseEngine {
     }
   }
 
+  // --- RUTINAS (PUNTO C): profesor obtiene las rutinas de UN alumno conocido ---
+  // Reutiliza la MISMA RPC 'obtener_rutinas_alumno' que ya usa el alumno para
+  // sus propias rutinas (SECURITY DEFINER, ya probada). No es una RPC nueva:
+  // es la misma llamada que ya existe en fetchFullStateFromSupabase(), solo
+  // extraída como método independiente para poder invocarla una vez por cada
+  // alumno que el profesor ya conoce localmente. No toca ensureValidUUID
+  // (solo la usa, sin modificarla) ni fetchFullStateFromSupabase.
+  async obtenerRutinasAlumnoDesdeSupabase(alumnoId) {
+    if (!this.client) return { ok: false, error: 'cliente_no_inicializado', rutinas: [] };
+    try {
+      const alumnoUuid = this.ensureValidUUID(alumnoId);
+      const { data: rpcData, error: rpcErr } = await this.client.rpc('obtener_rutinas_alumno', {
+        p_alumno_id: alumnoUuid
+      });
+      if (rpcErr) {
+        console.warn(`⚠️ RPC obtener_rutinas_alumno falló para alumno ${alumnoUuid}:`, rpcErr.message);
+        return { ok: false, error: rpcErr.message, rutinas: [] };
+      }
+      const rutinas = Array.isArray(rpcData) ? rpcData : [];
+      return { ok: true, rutinas };
+    } catch (err) {
+      console.warn(`⚠️ Excepción en obtenerRutinasAlumnoDesdeSupabase (alumno ${alumnoId}):`, err);
+      return { ok: false, error: err.message, rutinas: [] };
+    }
+  }
+
   // --- HISTORIAL: profesor obtiene registros de un alumno vía RPC segura ---
   async obtenerHistorialParaProfesor(alumnoId, profesorId) {
     if (!this.client) return [];

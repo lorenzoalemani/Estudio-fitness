@@ -245,12 +245,64 @@ class GymStore {
     }
   }
 
+  // --- RUTINAS DEL PROFESOR (PUNTO C) ---
+  // El profesor no tiene un alumnoId propio, así que syncWithSupabase(null)
+  // nunca trae rutinas (ver comentario en esa función). Para que el profesor
+  // vea rutinas creadas/editadas desde OTRO dispositivo, consultamos la RPC
+  // obtener_rutinas_alumno UNA VEZ POR CADA ALUMNO que el profesor ya conoce
+  // localmente (this.data.alumnos), y mergeamos los resultados.
+  //
+  // Condición de seguridad: si la consulta de un alumno puntual falla (error
+  // de red, RPC, o promesa rechazada), esa falla se ignora por completo y NO
+  // borra ni pisa las rutinas locales existentes — ni las de ese alumno ni
+  // las de ningún otro. Solo se actualizan las rutinas que sí llegaron ok.
+  // No modifica _syncSeq/_authSyncSeq (no comparte su lógica de descarte).
+  async syncRutinasProfesor() {
+    if (!window.supabaseEngine) return;
+
+    const alumnosConocidos = (this.data.alumnos || []).filter(a => a && a.id);
+    if (alumnosConocidos.length === 0) return;
+
+    const resultados = await Promise.allSettled(
+      alumnosConocidos.map(alumno => window.supabaseEngine.obtenerRutinasAlumnoDesdeSupabase(alumno.id))
+    );
+
+    let huboCambios = false;
+
+    resultados.forEach(r => {
+      // Promesa rechazada o resultado ok:false -> se ignora, no se toca this.data.
+      if (r.status !== 'fulfilled') return;
+      const resultado = r.value;
+      if (!resultado || resultado.ok !== true) return;
+
+      (resultado.rutinas || []).forEach(sbRutina => {
+        const idx = this.data.rutinas.findIndex(rt => rt.id === sbRutina.id);
+        if (idx >= 0) {
+          this.data.rutinas[idx] = sbRutina;
+        } else {
+          this.data.rutinas.push(sbRutina);
+        }
+        huboCambios = true;
+      });
+    });
+
+    if (huboCambios) {
+      console.log("🟢 Rutinas del profesor sincronizadas desde Supabase (Fuente de Verdad).");
+      this.saveData();
+    }
+  }
+
   listenSupabaseRealtime() {
     window.addEventListener('supabase_realtime_change', async (e) => {
       console.log("⚡ Actualización Supabase recibida en tiempo real:", e.detail);
       // Pasar el alumnoId del usuario logueado si está disponible en sesión
       const alumnoId = (window._sessionAlumnoId) || null;
       await this.syncWithSupabase(alumnoId);
+      // Realtime es solo AVISO: si hay sesión de profesor activa, volvemos a
+      // consultar Supabase (no this.data) para traer las rutinas actualizadas.
+      if (window._sessionProfesorId) {
+        await this.syncRutinasProfesor();
+      }
     });
 
     window.addEventListener('storage', (e) => {
@@ -262,6 +314,9 @@ class GymStore {
         // respetando el rol de ESTA pestaña.
         const alumnoId = window._sessionAlumnoId || null;
         this.syncWithSupabase(alumnoId);
+        if (window._sessionProfesorId) {
+          this.syncRutinasProfesor();
+        }
       }
     });
 
@@ -271,6 +326,9 @@ class GymStore {
         const alumnoId = window._sessionAlumnoId || null;
         console.log("🔄 PWA volvió a primer plano (visibilitychange) → refetch automático con Supabase.");
         this.syncWithSupabase(alumnoId);
+        if (window._sessionProfesorId) {
+          this.syncRutinasProfesor();
+        }
       }
     });
 
@@ -278,6 +336,9 @@ class GymStore {
       const alumnoId = window._sessionAlumnoId || null;
       console.log("🔄 Evento 'resume' (PWA nativa) → refetch automático con Supabase.");
       this.syncWithSupabase(alumnoId);
+      if (window._sessionProfesorId) {
+        this.syncRutinasProfesor();
+      }
     }, false);
 
     window.addEventListener('pageshow', (e) => {
@@ -285,6 +346,9 @@ class GymStore {
         const alumnoId = window._sessionAlumnoId || null;
         console.log("🔄 Evento 'pageshow' (bfcache) → refetch automático con Supabase.");
         this.syncWithSupabase(alumnoId);
+        if (window._sessionProfesorId) {
+          this.syncRutinasProfesor();
+        }
       }
     });
 

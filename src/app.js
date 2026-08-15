@@ -242,6 +242,12 @@ document.addEventListener('DOMContentLoaded', () => {
           // --- SESIÓN PROFESOR ---
           window._sessionProfesorId = res.data.id;
           window._sessionAlumnoId = null;
+          // Sincronizar rutinas de todos los alumnos conocidos tras el login
+          // (punto C). No existe persistencia de sesión, así que este login
+          // es el único punto de entrada confiable para el profesor.
+          setTimeout(async () => {
+            await gymStore.syncRutinasProfesor();
+          }, 300);
         } else {
           window._sessionAlumnoId = null;
           window._sessionProfesorId = null;
