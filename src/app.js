@@ -84,7 +84,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         <div class="header-actions">
           ${user ? `
-            <span class="badge ${isProfesor ? 'badge-warning' : 'badge-active'}">
+            <span class="badge header-user-badge ${isProfesor ? 'badge-warning' : 'badge-active'}" title="${user.nombre}">
               ${isProfesor ? '⚡' : '👤'} ${user.nombre}
             </span>
           ` : ''}
@@ -101,7 +101,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 : (unreadCount > 0 ? `<span style="position:absolute; top:-4px; right:-4px; background:var(--red-primary); color:#fff; border-radius:50%; width:18px; height:18px; font-size:0.7rem; font-weight:800; display:flex; align-items:center; justify-content:center">${unreadCount}</span>` : '')
               }
             </button>
-            <button class="btn btn-secondary btn-sm" id="btnLogout">Salir 🚪</button>
+            <button class="btn btn-secondary btn-sm header-logout-btn" id="btnLogout"><span class="header-logout-label">Salir</span> 🚪</button>
           ` : ''}
         </div>
       </header>

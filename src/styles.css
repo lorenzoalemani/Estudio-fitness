@@ -63,29 +63,48 @@ body {
      así que este mismo padding funciona en todas las plataformas. */
   padding: calc(12px + env(safe-area-inset-top)) 18px 12px;
   display: flex; align-items: center; justify-content: space-between;
+  gap: 8px;
 }
 
+/* Logo + título: PUEDE achicarse/truncar (min-width:0 + ellipsis) para
+   cederle espacio a los botones de la derecha. El logo nunca se achica. */
 .brand-wrapper {
   display: flex; align-items: center; gap: 10px; cursor: pointer;
+  min-width: 0; flex-shrink: 1; overflow: hidden;
 }
 
 .brand-logo {
-  height: 40px; width: auto;
+  height: 40px; width: auto; flex-shrink: 0;
   filter: drop-shadow(0 0 10px rgba(255, 46, 46, 0.5));
 }
 
 .brand-title {
   font-size: 1.25rem; font-weight: 900; letter-spacing: 1px; text-transform: uppercase;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0;
 }
 
 .brand-title span { color: var(--red-primary); }
 
+/* Usuario + campanita + salir: ocupa el espacio restante (flex:1) y dentro
+   de él, SOLO el badge de usuario puede achicarse/truncar. La campanita y
+   "Salir" quedan con flex-shrink:0 -> NUNCA se salen de la pantalla, sin
+   importar cuán largo sea el nombre del usuario ni el ancho del viewport. */
 .header-actions {
-  display: flex; align-items: center; gap: 10px;
+  display: flex; align-items: center; justify-content: flex-end; gap: 8px;
+  flex: 1 1 auto; min-width: 0;
+}
+
+/* Badge de usuario dentro del header: único lugar donde el badge trunca
+   (no afecta a los demás badges de la app, como "ACTIVA"/"INACTIVA"). */
+.header-user-badge {
+  min-width: 0; max-width: 150px; flex-shrink: 1;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  display: inline-block;
 }
 
 /* BOTÓN-ÍCONO CIRCULAR (campanita de notificaciones): tamaño táctil mínimo
-   recomendado (~44px) para que quede fácil de tocar y completamente visible. */
+   recomendado (~44px) para que quede fácil de tocar y completamente visible.
+   flex-shrink:0 en header-actions garantiza que nunca se recorte. */
 .btn-icon {
   width: 44px; height: 44px; padding: 0;
   border-radius: 50%;
@@ -103,6 +122,8 @@ body {
   border: 2px solid var(--bg-dark);
   pointer-events: none;
 }
+
+.header-logout-btn { flex-shrink: 0; }
 
 /* BADGES */
 .badge {
@@ -477,8 +498,12 @@ body {
     box-sizing: border-box;
   }
 
-  .app-header { padding: calc(10px + env(safe-area-inset-top)) 12px 10px; }
-  .brand-title { font-size: 1.05rem; }
+  .app-header { padding: calc(10px + env(safe-area-inset-top)) 12px 10px; gap: 6px; }
+  .header-actions { gap: 6px; }
+  .header-user-badge { max-width: 92px; font-size: 0.68rem; padding: 4px 8px; }
+  .header-logout-label { display: none; }
+  #btnLogout { padding: 8px 10px; }
+  .brand-title { font-size: 1.05rem; max-width: 120px; }
   .brand-logo { height: 32px; }
   .login-container { width: 94%; padding: 20px 14px; margin: 16px auto; }
   
@@ -499,7 +524,8 @@ body {
   .set-input { padding: 6px 2px; font-size: 0.82rem; min-width: 0; }
   .set-comment-input { font-size: 0.75rem; padding: 6px 4px; min-width: 0; }
   
-  .btn { width: 100%; min-height: 46px; font-size: 0.92rem; }
+  .btn:not(.btn-icon):not(.header-logout-btn) { width: 100%; min-height: 46px; font-size: 0.92rem; }
+  .header-logout-btn { width: auto; }
   .btn-sm { width: auto; min-height: 36px; padding: 6px 10px; font-size: 0.8rem; }
   
   .modal-overlay { padding: 8px; }
@@ -586,6 +612,18 @@ body {
   .bottom-nav-icon { width: 20px; height: 20px; }
   .bottom-nav-icon svg { width: 19px; height: 19px; }
   .bottom-nav-item { padding: 6px 2px; }
+
+  .header-user-badge { max-width: 68px; font-size: 0.64rem; padding: 4px 6px; }
+  .brand-title { max-width: 88px; font-size: 0.95rem; }
+}
+
+/* Refuerzo para pantallas extremadamente angostas (iPhone SE 1ra gen, 320px) */
+@media (max-width: 340px) {
+  .header-user-badge { max-width: 46px; }
+  .brand-title { max-width: 64px; font-size: 0.88rem; }
+  .brand-logo { height: 28px; }
+  .app-header { padding-left: 8px; padding-right: 8px; }
+  .header-actions { gap: 4px; }
 }
 
 /* BANNER DE CUENTA PENDIENTE (feature "Mis Rutinas": ya no bloquea el acceso) */
