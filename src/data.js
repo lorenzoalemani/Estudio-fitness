@@ -2,116 +2,32 @@
 
 const STORAGE_KEY = 'estudio_fitness_db_v4';
 
-// Padrón Inicial de DNI Autorizados por el Gimnasio
-const DEFAULT_AUTHORIZED_DNIS = [
-  { dni: "12345678", nombre: "Juan Pérez" },
-  { dni: "87654321", nombre: "María González" },
-  { dni: "11223344", nombre: "Lucas Benítez" },
-  { dni: "44332211", nombre: "Sofía Martínez" }
-];
+// UUID fijo de OCTAVIO MONTERSINO — el MISMO id que se inserta en Supabase
+// (profiles.id) mediante el script SQL de limpieza, para que el profesor
+// quede identificado igual en local y en la DB y no se dupliquen registros
+// al sincronizar entre dispositivos.
+const OCTAVIO_ID = "da631950-9e21-447e-801a-dd21d3fae8d4";
 
+// Padrón Inicial de DNI Autorizados por el Gimnasio.
+// Vacío a propósito: ya no hay alumnos de prueba pre-autorizados. El
+// profesor autoriza alumnos reales desde el panel (autorizarOAgregarAlumnoPorProfesor).
+const DEFAULT_AUTHORIZED_DNIS = [];
+
+// Estado inicial de una instalación nueva (localStorage vacío): un único
+// profesor real, sin alumnos, rutinas, historiales ni notificaciones de
+// demostración.
 const DEFAULT_DATA = {
   profesores: [
-    { id: "5dfb74e3-bfe5-4085-9b9a-89b1fa4d732d", dni: "99001122", password: "123", nombre: "Prof. Carlos Rossi", rol: "profesor" },
-    { id: "2f7a1c0b-76d8-466c-ae0d-1478ffcb1bca", dni: "88001122", password: "123", nombre: "Prof. Franco Gómez", rol: "profesor" }
+    { id: OCTAVIO_ID, dni: "41976817", password: "octagym2000", nombre: "OCTAVIO MONTERSINO", rol: "profesor" }
   ],
   dnisAutorizados: DEFAULT_AUTHORIZED_DNIS,
-  alumnos: [
-    { id: "al-1", dni: "12345678", password: "123", nombre: "Juan Pérez", telefono: "1198765432", estadoAutorizacion: "autorizado", fechaRegistro: "2026-01-10", rutinaActivaId: "rut-1" },
-    { id: "al-2", dni: "87654321", password: "123", nombre: "María González", telefono: "1145678901", estadoAutorizacion: "autorizado", fechaRegistro: "2026-02-01", rutinaActivaId: "rut-2" },
-    { id: "al-3", dni: "11223344", password: "123", nombre: "Lucas Benítez", telefono: "1133445566", estadoAutorizacion: "autorizado", fechaRegistro: "2026-02-15", rutinaActivaId: "rut-3" },
-    { id: "al-4", dni: "44332211", password: "123", nombre: "Sofía Martínez", telefono: "1166778899", estadoAutorizacion: "autorizado", fechaRegistro: "2026-01-05", rutinaActivaId: null }
-  ],
-  rutinas: [
-    {
-      id: "rut-1",
-      alumnoId: "al-1",
-      profesorCreadorNombre: "Prof. Carlos Rossi",
-      titulo: "Fuerza e Hipertrofia - Mesociclo 1",
-      duracionDias: 30,
-      fechaInicio: new Date(Date.now() - 15 * 86400000).toISOString().split('T')[0],
-      fechaVencimiento: new Date(Date.now() + 15 * 86400000).toISOString().split('T')[0],
-      estado: "activa",
-      dias: [
-        {
-          id: "dia-1",
-          diaNumero: 1,
-          nombre: "Día 1: Pecho, Hombro y Tríceps",
-          ejercicios: [
-            {
-              id: "ej-101",
-              nombre: "Press Plano con Barra",
-              seriesTarget: 4,
-              repeticionesTarget: "10-12",
-              pesoSugerido: "60 kg",
-              notaProfesor: "Controlar descenso a 2 segundos.",
-              profesorNotaAutor: "Prof. Carlos Rossi"
-            },
-            {
-              id: "ej-102",
-              nombre: "Press Inclinado con Mancuernas",
-              seriesTarget: 3,
-              repeticionesTarget: "12",
-              pesoSugerido: "20 kg c/u",
-              notaProfesor: "Mantener omóplatos retraídos.",
-              profesorNotaAutor: "Prof. Franco Gómez"
-            }
-          ]
-        }
-      ]
-    },
-    {
-      id: "rut-3",
-      alumnoId: "al-3",
-      profesorCreadorNombre: "Prof. Franco Gómez",
-      titulo: "Acondicionamiento Inicial",
-      duracionDias: 30,
-      fechaInicio: new Date(Date.now() - 29 * 86400000).toISOString().split('T')[0],
-      fechaVencimiento: new Date(Date.now() + 1 * 86400000).toISOString().split('T')[0],
-      estado: "activa",
-      dias: [
-        {
-          id: "dia-301",
-          diaNumero: 1,
-          nombre: "Día 1: Full Body",
-          ejercicios: [
-            {
-              id: "ej-301",
-              nombre: "Goblet Squat con Mancuerna",
-              seriesTarget: 3,
-              repeticionesTarget: "12",
-              pesoSugerido: "14 kg",
-              notaProfesor: "Mancuerna bien pegada al pecho.",
-              profesorNotaAutor: "Prof. Franco Gómez"
-            }
-          ]
-        }
-      ]
-    }
-  ],
+  alumnos: [],
+  rutinas: [],
 
   // REGISTROS REALES DE ENTRENAMIENTO POR SERIE (RESULTADO REAL ALUMNO)
-  workoutLogs: [
-    {
-      id: "log-1",
-      alumnoId: "al-1",
-      rutinaId: "rut-1",
-      diaId: "dia-1",
-      diaNombre: "Día 1: Pecho, Hombro y Tríceps",
-      fecha: new Date(Date.now() - 86400000).toISOString(),
-      estado: "completado",
-      sets: [
-        { ejercicioNombre: "Press Plano con Barra", setNumero: 1, repsRealizadas: 12, pesoUtilizado: "60 kg" },
-        { ejercicioNombre: "Press Plano con Barra", setNumero: 2, repsRealizadas: 11, pesoUtilizado: "60 kg" },
-        { ejercicioNombre: "Press Plano con Barra", setNumero: 3, repsRealizadas: 10, pesoUtilizado: "60 kg" },
-        { ejercicioNombre: "Press Plano con Barra", setNumero: 4, repsRealizadas: 9, pesoUtilizado: "60 kg", comentarioAlumno: "Me costó la última serie 😅" }
-      ]
-    }
-  ],
+  workoutLogs: [],
 
-  notificaciones: [
-    { id: "notif-1", destinatarioRol: "profesor", alumnoId: "al-1", mensaje: "💬 Juan Pérez completó Día 1 y dejó un comentario.", fecha: new Date(Date.now() - 3600000).toISOString(), leido: false }
-  ]
+  notificaciones: []
 };
 
 class GymStore {
