@@ -1534,6 +1534,15 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function bindHeaderEvents() {
     document.getElementById('btnLogout')?.addEventListener('click', () => {
+      // A propósito NO se llama a reg.pushManager.getSubscription().unsubscribe()
+      // acá. La suscripción física del navegador es del dispositivo, no de la
+      // sesión de la app: si la desuscribiéramos en cada logout, el próximo
+      // usuario que loguee en este mismo dispositivo dispararía SIEMPRE una
+      // resuscripción nueva (más lento, y en iOS puede pedir permiso de nuevo).
+      // Ahora que guardar_push_subscription reasigna el endpoint por UPSERT
+      // (ver SQL), el problema de "queda asociado al usuario viejo" se
+      // resuelve en el próximo login+activación sin necesidad de desuscribir
+      // acá. Solo se limpia el estado de sesión de la app.
       appState.usuarioActual = null;
       renderApp();
     });
@@ -1560,19 +1569,32 @@ document.addEventListener('DOMContentLoaded', () => {
                 try {
                   let sub = await reg.pushManager.getSubscription();
                   if (!sub) {
-                    const vapidKey = window.ENV_VAPID_PUBLIC_KEY || 'BEl62iUYgUivxIkv69yViEuiBIa-m9GYv50D2nE85-dummy-public-key';
+                    // La VAPID public key real se pide al backend (no es secreta,
+                    // pero no vive hardcodeada en el frontend). Si no está
+                    // configurada en el servidor, cortamos acá con un error
+                    // explícito en vez de caer a una key dummy inválida.
+                    const vapidKey = await window.supabaseEngine.getVapidPublicKey();
+                    if (!vapidKey) {
+                      throw new Error("No se pudo obtener la clave pública VAPID del servidor (falta configurar VAPID_PUBLIC_KEY en Vercel).");
+                    }
                     sub = await reg.pushManager.subscribe({
                       userVisibleOnly: true,
                       applicationServerKey: urlBase64ToUint8Array(vapidKey)
                     });
                   }
                   if (sub && appState.usuarioActual) {
+                    // Esta llamada ahora propaga el error real si la RPC falla
+                    // (ver registerPushSubscription en supabase.js): antes,
+                    // cualquier falla acá quedaba enmascarada por el catch de
+                    // abajo, que siempre mostraba un mensaje de "activadas"
+                    // aunque la suscripción nunca se hubiera guardado en la DB.
+                    // Esto era la causa de "se activan pero no llegan".
                     await window.supabaseEngine.registerPushSubscription(appState.usuarioActual.data.id, sub.toJSON());
                     alert("🔔 Suscripción Web Push activa y vinculada a tu cuenta correctamente.");
                   }
                 } catch (e) {
-                  console.warn("⚠️ Permiso concedido pero hubo una observación en la suscripción Web Push:", e);
-                  alert("🔔 Notificaciones activadas en el navegador.");
+                  console.error("❌ No se pudo activar/guardar la suscripción Web Push:", e);
+                  alert("⚠️ No se pudo activar la notificación push: " + ((e && e.message) || "error desconocido") + ". Probá de nuevo o contactá al profesor.");
                 }
                 renderApp();
               });

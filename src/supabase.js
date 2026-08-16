@@ -3,8 +3,10 @@
 // Configuración por defecto o mediante variables globales/entorno
 const SUPABASE_CONFIG = {
   url: window.ENV_SUPABASE_URL || 'https://fsvuuysjfnjjjbfjgxjj.supabase.co',
-  anonKey: window.ENV_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZzdnV1eXNqZm5qampiZmpneGpqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYzNzE4NjIsImV4cCI6MjEwMTk0Nzg2Mn0.0kqWhbrsdEvJyKmPM4jH4AGO441n4eXpYjBtAxICvAE',
-  vapidPublicKey: window.ENV_VAPID_PUBLIC_KEY || 'BEl62iUYgUivxIkv69yViEuiBIa-m9GYv50D2nE85-dummy-public-key'
+  anonKey: window.ENV_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZzdnV1eXNqZm5qampiZmpneGpqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODYzNzE4NjIsImV4cCI6MjEwMTk0Nzg2Mn0.0kqWhbrsdEvJyKmPM4jH4AGO441n4eXpYjBtAxICvAE'
+  // La VAPID public key ya NO vive acá hardcodeada (ni real ni dummy):
+  // se pide en runtime al backend vía SupabaseEngine.getVapidPublicKey(),
+  // que lee /api/vapid-public-key (Vercel) o /.netlify/functions/vapid-public-key.
 };
 
 class SupabaseEngine {
@@ -446,25 +448,52 @@ class SupabaseEngine {
     }
   }
 
-  async registerPushSubscription(userId, subscription) {
-    if (!this.client) return;
-    try {
-      const userUuid = this.ensureValidUUID(userId);
-
-      // RPC segura (única vía — push_subscriptions está protegida para anon)
-      const { error: rpcErr } = await this.client.rpc('guardar_push_subscription', {
-        p_user_id: userUuid,
-        p_subscription: subscription
-      });
-
-      if (rpcErr) {
-        console.error("❌ RPC guardar_push_subscription falló:", rpcErr.message);
-      } else {
-        console.log("✅ Suscripción Web Push guardada mediante RPC segura en Supabase DB.");
+  // Consulta al backend (Vercel/Netlify) la VAPID public key real, configurada
+  // como variable de entorno del lado del servidor (VAPID_PUBLIC_KEY). No es
+  // información secreta -- es la clave PÚBLICA del par VAPID -- pero se sirve
+  // desde un endpoint en vez de hardcodearla en el bundle para que un mismo
+  // origen de verdad (las env vars de Vercel) alimente tanto a /api/send-push.js
+  // como al frontend, sin duplicarla ni usar una key dummy que Apple/Google
+  // rechazan silenciosamente al suscribir.
+  async getVapidPublicKey() {
+    const endpoints = [
+      '/.netlify/functions/vapid-public-key',
+      '/api/vapid-public-key'
+    ];
+    for (const ep of endpoints) {
+      try {
+        const res = await fetch(ep);
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.publicKey) return data.publicKey;
+        }
+      } catch (e) {
+        // probamos el siguiente endpoint disponible (Netlify vs Vercel)
       }
-    } catch (e) {
-      console.error("❌ Excepción guardando suscripción Push:", e);
     }
+    console.error("❌ No se pudo obtener VAPID_PUBLIC_KEY desde ningún endpoint backend.");
+    return null;
+  }
+
+  async registerPushSubscription(userId, subscription) {
+    if (!this.client) throw new Error("Cliente Supabase no inicializado.");
+
+    const userUuid = this.ensureValidUUID(userId);
+
+    // RPC segura (única vía — push_subscriptions está protegida para anon).
+    // A propósito NO se atrapa el error acá: el llamador (app.js) necesita
+    // saber si la suscripción realmente quedó guardada en la DB o no, para
+    // no mostrar un "✅ activado" falso cuando en realidad falló.
+    const { error: rpcErr } = await this.client.rpc('guardar_push_subscription', {
+      p_user_id: userUuid,
+      p_subscription: subscription
+    });
+
+    if (rpcErr) {
+      console.error("❌ RPC guardar_push_subscription falló:", rpcErr.message);
+      throw new Error(rpcErr.message);
+    }
+    console.log("✅ Suscripción Web Push guardada mediante RPC segura en Supabase DB.");
   }
 
   async enviarPushNotificationAAlumno(alumnoId, payload) {

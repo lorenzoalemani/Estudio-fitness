@@ -18,18 +18,12 @@
   <!-- Estilos & Fuentes -->
   <link rel="stylesheet" href="./src/styles.css">
 
-  <!-- VAPID PUBLIC KEY para Web Push (VER DIAGNÓSTICO): descomentar y pegar
-       la clave pública real (la misma que VAPID_PUBLIC_KEY en las env vars
-       de Vercel para /api/send-push.js) para reemplazar el placeholder.
-       Es una clave PÚBLICA, no un secreto: es seguro que viva en el
-       frontend. Mientras esta línea esté comentada, la app sigue usando la
-       clave dummy de fallback (supabase.js/app.js), que NO es válida para
-       suscribir dispositivos nuevos que todavía no tengan una suscripción
-       guardada en el navegador.
-  <script>
-    window.ENV_VAPID_PUBLIC_KEY = "PEGAR_AQUI_TU_VAPID_PUBLIC_KEY_REAL";
-  </script>
-  -->
+  <!-- La VAPID public key ya no se pega acá a mano: el frontend la pide en
+       runtime a /api/vapid-public-key (Vercel) o
+       /.netlify/functions/vapid-public-key (Netlify), que la sirven desde
+       la misma variable de entorno VAPID_PUBLIC_KEY que ya usa
+       /api/send-push.js para enviar. Un solo origen de verdad, sin
+       duplicar la clave ni hardcodear nada acá. -->
 
   <!-- Supabase JS Client SDK -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
