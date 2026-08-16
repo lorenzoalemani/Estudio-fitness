@@ -90,15 +90,16 @@ document.addEventListener('DOMContentLoaded', () => {
           ` : ''}
 
           ${appState.usuarioActual ? `
-            ${!pushConcedido ? `
-              <button class="btn btn-secondary btn-sm" id="btnEnablePush" style="border-color:var(--yellow-warning); color:var(--yellow-warning)">
-                🔔 Activar Push
-              </button>
-            ` : ''}
-
-            <button class="btn btn-secondary btn-icon" id="btnNotifBell" title="Notificaciones" style="position:relative">
+            <button
+              class="btn btn-secondary btn-icon notif-bell-btn"
+              id="btnNotifBell"
+              title="${pushConcedido ? 'Notificaciones' : 'Notificaciones (tocá para activar el push)'}"
+            >
               🔔
-              ${unreadCount > 0 ? `<span style="position:absolute; top:-4px; right:-4px; background:var(--red-primary); color:#fff; border-radius:50%; width:18px; height:18px; font-size:0.7rem; font-weight:800; display:flex; align-items:center; justify-content:center">${unreadCount}</span>` : ''}
+              ${!pushConcedido
+                ? `<span class="notif-bell-dot" title="Push desactivado"></span>`
+                : (unreadCount > 0 ? `<span style="position:absolute; top:-4px; right:-4px; background:var(--red-primary); color:#fff; border-radius:50%; width:18px; height:18px; font-size:0.7rem; font-weight:800; display:flex; align-items:center; justify-content:center">${unreadCount}</span>` : '')
+              }
             </button>
             <button class="btn btn-secondary btn-sm" id="btnLogout">Salir 🚪</button>
           ` : ''}
@@ -338,15 +339,16 @@ document.addEventListener('DOMContentLoaded', () => {
           </div>
         ` : ''}
 
-        ${appState.tabCliente === 'rutina' ? (
+        ${(appState.tabCliente === 'rutina' || appState.tabCliente === 'mis_rutinas') ? (
           appState.diaActivoEntrenamiento ? renderWorkoutSession() : (
             appState.diaSeleccionadoId ? renderDayDetailView(alumno) : (
-              appState.rutinaSeleccionadaId ? renderRoutineDaysView(alumno) : renderRoutinesListView(alumno)
+              appState.rutinaSeleccionadaId ? renderRoutineDaysView(alumno) : (
+                appState.tabCliente === 'mis_rutinas' ? renderMisRutinasView(alumno) : renderRoutinesListView(alumno)
+              )
             )
           )
         ) : ''}
 
-        ${appState.tabCliente === 'mis_rutinas' ? renderMisRutinasView(alumno) : ''}
         ${appState.tabCliente === 'ranking' ? renderRankingView() : ''}
         ${appState.tabCliente === 'historial' ? renderHistorialAgrupado(historialEntrenamientos, store.data.rutinas) : ''}
       </main>
@@ -540,10 +542,10 @@ document.addEventListener('DOMContentLoaded', () => {
           return;
         }
 
-        // Reutiliza el mismo flujo de días/ejercicios/entrenamiento que las rutinas asignadas
+        // Reutiliza el mismo flujo de días/ejercicios/entrenamiento que las rutinas asignadas,
+        // pero SIN cambiar de pestaña: se mantiene en "Mis Rutinas" (tabCliente ya es 'mis_rutinas').
         appState.rutinaSeleccionadaId = rId;
         appState.diaSeleccionadoId = null;
-        appState.tabCliente = 'rutina';
         renderApp();
       });
     });
@@ -595,7 +597,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const esActiva = rutina.estado === 'activa';
 
     return `
-      <button class="nav-breadcrumb-btn" id="btnBackToRoutines">⬅️ Volver a Mis Rutinas</button>
+      <button class="nav-breadcrumb-btn" id="btnBackToRoutines">⬅️ Volver a ${rutina.esPropia ? 'Mis Rutinas' : 'Rutinas'}</button>
 
       <div class="routine-banner" style="margin-bottom:20px">
         <div>
@@ -1454,6 +1456,24 @@ document.addEventListener('DOMContentLoaded', () => {
     renderApp();
   }
 
+  // Convierte la VAPID public key (base64url) al Uint8Array que exige
+  // pushManager.subscribe(). Esta función se invocaba en bindHeaderEvents
+  // pero no existía en ningún archivo del proyecto: cualquier dispositivo
+  // que no tuviera ya una suscripción guardada en el navegador (típicamente
+  // un dispositivo nuevo, como el celular de mamá) disparaba un
+  // ReferenceError silencioso, atrapado por el catch(), que mostraba el
+  // alert de "activadas" sin haber guardado ninguna suscripción real.
+  function urlBase64ToUint8Array(base64String) {
+    const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+    const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+    const rawData = window.atob(base64);
+    const outputArray = new Uint8Array(rawData.length);
+    for (let i = 0; i < rawData.length; ++i) {
+      outputArray[i] = rawData.charCodeAt(i);
+    }
+    return outputArray;
+  }
+
   function toggleNotifDrawer() {
     appState.mostrarDrawerNotifs = !appState.mostrarDrawerNotifs;
     if (appState.usuarioActual) {
@@ -1469,6 +1489,8 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('navRutina')?.addEventListener('click', async () => {
       appState.tabCliente = 'rutina';
       appState.diaActivoEntrenamiento = null;
+      appState.rutinaSeleccionadaId = null;
+      appState.diaSeleccionadoId = null;
       appState.mostrarDrawerNotifs = false;
       renderApp(); // feedback visual inmediato de cambio de tab
 
@@ -1481,6 +1503,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     document.getElementById('navMisRutinas')?.addEventListener('click', () => {
       appState.tabCliente = 'mis_rutinas';
+      appState.diaActivoEntrenamiento = null;
+      appState.rutinaSeleccionadaId = null;
+      appState.diaSeleccionadoId = null;
       appState.mostrarDrawerNotifs = false;
       renderApp();
     });
@@ -1515,7 +1540,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
     document.getElementById('btnHeaderHome')?.addEventListener('click', () => renderApp());
 
-    document.getElementById('btnEnablePush')?.addEventListener('click', () => {
+    document.getElementById('btnNotifBell')?.addEventListener('click', () => {
+      const pushConcedido = 'Notification' in window && Notification.permission === 'granted';
+
+      // Push ya activado -> la campana funciona como antes: abre el drawer
+      if (pushConcedido) {
+        toggleNotifDrawer();
+        return;
+      }
+
+      // Push NO activado todavía -> tocar la campana dispara el mismo flujo
+      // que antes tenía el botón de texto "Activar Push" (funcionalidad
+      // intacta, solo cambia el disparador visual).
       if ('Notification' in window) {
         Notification.requestPermission().then(permission => {
           if (permission === 'granted') {
@@ -1550,8 +1586,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
       }
     });
-
-    document.getElementById('btnNotifBell')?.addEventListener('click', toggleNotifDrawer);
 
     document.getElementById('btnCloseNotifs')?.addEventListener('click', () => {
       appState.mostrarDrawerNotifs = false;
