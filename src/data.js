@@ -117,6 +117,13 @@ class GymStore {
             return {
               ...loc,
               ...sbAlumno,
+              // password: la consulta a `profiles` (ver fetchFullStateFromSupabase)
+              // NO selecciona esta columna, así que sbAlumno.password siempre
+              // cae en el fallback "123" — nunca es el valor real. Si copiáramos
+              // sbAlumno tal cual pisaríamos la contraseña real guardada
+              // localmente con ese fallback en cada sync. Se conserva SIEMPRE
+              // el password local si existe.
+              password: loc.password !== undefined ? loc.password : sbAlumno.password,
               // rutinaActivaId: Supabase siempre lo manda en null (no se lee
               // de esa tabla); se conserva el valor local conocido si existe,
               // igual que hacía la lógica anterior.
@@ -140,7 +147,15 @@ class GymStore {
         if (freshData.profesores !== null) {
           this.data.profesores = freshData.profesores.map(sbProfesor => {
             const loc = this.data.profesores.find(p => p.dni === sbProfesor.dni || p.id === sbProfesor.id);
-            return loc ? { ...loc, ...sbProfesor } : sbProfesor;
+            if (!loc) return sbProfesor;
+            return {
+              ...loc,
+              ...sbProfesor,
+              // password: mismo motivo que en alumnos — la columna no viaja
+              // desde Supabase (ver fetchFullStateFromSupabase), sbProfesor.password
+              // es siempre el fallback "123". Se conserva el valor local real.
+              password: loc.password !== undefined ? loc.password : sbProfesor.password
+            };
           });
           huboCambios = true;
         }
