@@ -640,6 +640,30 @@ body {
 
 .pending-banner strong { color: #fff; }
 
+/* BANNER "INSTALAR APLICACIÓN" (beforeinstallprompt) */
+.install-pwa-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: linear-gradient(135deg, rgba(255, 46, 46, 0.14), rgba(20, 20, 26, 0.9));
+  border: 1px solid rgba(255, 46, 46, 0.35);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  margin: 0 16px 16px;
+}
+.install-pwa-text { min-width: 0; }
+.install-pwa-title { font-weight: 800; font-size: 0.92rem; color: #fff; }
+.install-pwa-subtitle { font-size: 0.78rem; color: var(--text-gray); margin-top: 2px; line-height: 1.4; }
+.install-pwa-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.install-pwa-actions .btn-sm { padding: 8px 14px; white-space: nowrap; }
+.install-pwa-actions .btn-icon { width: 32px; height: 32px; padding: 0; font-size: 0.85rem; }
+
+@media (max-width: 420px) {
+  .install-pwa-banner { flex-direction: column; align-items: stretch; margin: 0 10px 14px; }
+  .install-pwa-actions { justify-content: flex-end; }
+}
+
 /* FEATURE VIDEOS EXPLICATIVOS EN EJERCICIOS */
 .btn-video-demo {
   display: inline-flex; align-items: center; gap: 6px;

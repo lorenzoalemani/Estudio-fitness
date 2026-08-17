@@ -1,5 +1,38 @@
 // LÓGICA DE APLICACIÓN v4 - ESTUDIO FITNESS (WORKOUT LOGGER & WEB PUSH REAL)
 
+// --- INSTALACIÓN DE PWA (banner "Instalar aplicación" vía beforeinstallprompt) ---
+// Se define FUERA del DOMContentLoaded, en el nivel superior del script,
+// para no perder el evento si el navegador lo dispara antes de que termine
+// de cargar el resto de la página (puede pasar). No toca el registro del
+// Service Worker (eso sigue exactamente igual, más abajo) ni ningún otro
+// flujo: solo guarda el evento para poder dispararlo cuando el usuario
+// toque el botón.
+const INSTALL_DISMISS_KEY = 'estudio_fitness_install_dismissed_at';
+const INSTALL_DISMISS_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000; // 7 días
+
+window.deferredInstallPrompt = null;
+
+// display-mode:standalone cubre Android/Chrome/Edge/Desktop una vez instalada;
+// navigator.standalone es el equivalente legado de iOS Safari cuando la PWA
+// se agregó a la pantalla de inicio manualmente (ahí nunca va a existir
+// beforeinstallprompt, pero si ya está instalada tampoco hay que ofrecer nada).
+function estudioFitnessPwaYaInstalada() {
+  return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
+      || window.navigator.standalone === true;
+}
+
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault(); // evita el mini-banner nativo automático; lo mostramos nosotros
+  window.deferredInstallPrompt = e;
+  if (typeof window.renderApp === 'function') window.renderApp();
+});
+
+window.addEventListener('appinstalled', () => {
+  window.deferredInstallPrompt = null;
+  try { localStorage.removeItem(INSTALL_DISMISS_KEY); } catch (e) {}
+  if (typeof window.renderApp === 'function') window.renderApp();
+});
+
 document.addEventListener('DOMContentLoaded', () => {
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('./sw.js')
@@ -62,6 +95,64 @@ document.addEventListener('DOMContentLoaded', () => {
       renderTrainerDashboard();
     }
   }
+  // Expuesta para que los listeners de beforeinstallprompt/appinstalled
+  // (definidos arriba, fuera de este DOMContentLoaded) puedan refrescar el
+  // banner de instalación en cuanto cambie su disponibilidad.
+  window.renderApp = renderApp;
+
+  // --- BANNER "INSTALAR APLICACIÓN" ---
+  function debeOfrecerInstalacion() {
+    if (!window.deferredInstallPrompt) return false; // sin evento nativo disponible, no mostramos nada (requisito 7)
+    if (estudioFitnessPwaYaInstalada()) return false; // ya instalada (requisito 6)
+    try {
+      const dismissedAt = Number(localStorage.getItem(INSTALL_DISMISS_KEY) || 0);
+      if (dismissedAt && (Date.now() - dismissedAt) < INSTALL_DISMISS_COOLDOWN_MS) return false; // el usuario ya lo cerró hace poco (requisito 9)
+    } catch (e) { /* localStorage no disponible: no bloqueamos por esto */ }
+    return true;
+  }
+
+  function renderInstallBanner() {
+    if (!debeOfrecerInstalacion()) return '';
+    return `
+      <div class="install-pwa-banner" id="installPwaBanner">
+        <div class="install-pwa-text">
+          <div class="install-pwa-title">📱 Instalar Estudio Fitness</div>
+          <div class="install-pwa-subtitle">Accedé más rápido, como una app, sin pasar por el navegador.</div>
+        </div>
+        <div class="install-pwa-actions">
+          <button class="btn btn-primary btn-sm" id="btnInstallPwa">Instalar aplicación</button>
+          <button class="btn btn-secondary btn-icon" id="btnDismissInstallPwa" title="Cerrar">✕</button>
+        </div>
+      </div>
+    `;
+  }
+
+  function bindInstallBannerEvents() {
+    const btnInstall = document.getElementById('btnInstallPwa');
+    if (btnInstall) {
+      btnInstall.addEventListener('click', async () => {
+        const promptEvent = window.deferredInstallPrompt;
+        if (!promptEvent) { renderApp(); return; } // ya no está disponible (p.ej. se instaló desde otra pestaña)
+        btnInstall.disabled = true;
+        promptEvent.prompt();
+        try {
+          await promptEvent.userChoice; // se resuelve tanto si acepta como si rechaza el diálogo nativo
+        } catch (e) { /* usuario cerró el diálogo del sistema sin elegir */ }
+        // El evento beforeinstallprompt es de un solo uso: una vez mostrado el
+        // diálogo nativo, se descarta. Si aceptó, "appinstalled" además limpia
+        // el flag de "cerrado por el usuario" y oculta el banner (requisito 5).
+        window.deferredInstallPrompt = null;
+        renderApp();
+      });
+    }
+    const btnDismiss = document.getElementById('btnDismissInstallPwa');
+    if (btnDismiss) {
+      btnDismiss.addEventListener('click', () => {
+        try { localStorage.setItem(INSTALL_DISMISS_KEY, String(Date.now())); } catch (e) {}
+        renderApp();
+      });
+    }
+  }
 
   // --- HEADER COMPARTIDO CON ACTIVACIÓN EXPLÍCITA DE WEB PUSH ---
   function renderHeader() {
@@ -107,6 +198,7 @@ document.addEventListener('DOMContentLoaded', () => {
       </header>
 
       ${appState.mostrarDrawerNotifs ? renderNotifDrawer(notifs) : ''}
+      ${renderInstallBanner()}
     `;
   }
 
@@ -195,16 +287,9 @@ document.addEventListener('DOMContentLoaded', () => {
         <div style="margin-top:16px; border-top:1px solid var(--border-color); padding-top:14px">
           <button class="btn btn-secondary btn-sm" id="btnToggleRegister" style="width:100%">¿Eres alumno nuevo? Crear Cuenta 👤</button>
         </div>
-
-        <div class="demo-hints">
-          <div style="font-weight:800; color:#fff; margin-bottom:6px">🔐 Credenciales de prueba:</div>
-          <div>👤 <strong>Juan (Alumno Autorizado):</strong> DNI <code>12345678</code> | Pass: <code>123</code></div>
-          <div>⚠️ <strong>Lucas (Vence 24h):</strong> DNI <code>11223344</code> | Pass: <code>123</code></div>
-          <div>⚡ <strong>Prof. Carlos:</strong> DNI <code>99001122</code> | Pass: <code>123</code></div>
-          <div>⚡ <strong>Prof. Franco:</strong> DNI <code>88001122</code> | Pass: <code>123</code></div>
-        </div>
       </div>
     `;
+    bindInstallBannerEvents();
 
     document.getElementById('formLoginUnico').addEventListener('submit', (e) => {
       e.preventDefault();
@@ -300,6 +385,7 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>
       </div>
     `;
+    bindInstallBannerEvents();
 
     document.getElementById('btnBackToLogin')?.addEventListener('click', () => renderLoginScreen());
 
@@ -359,6 +445,7 @@ document.addEventListener('DOMContentLoaded', () => {
     `;
 
     bindHeaderEvents();
+    bindInstallBannerEvents();
     bindBottomNavEvents();
     bindMisRutinasEvents(alumno);
 
@@ -1036,6 +1123,7 @@ document.addEventListener('DOMContentLoaded', () => {
     `;
 
     bindHeaderEvents();
+    bindInstallBannerEvents();
     bindBottomNavEvents();
 
     const inputSearch = document.getElementById('inputSearchProf');
