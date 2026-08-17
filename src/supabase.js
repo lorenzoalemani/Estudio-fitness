@@ -72,7 +72,11 @@ class SupabaseEngine {
       //    detectar si el alumno fue autorizado en otro dispositivo.
       const [resAuthDnis, resProfiles, resLogs, resLogSets, resNotifs] = await Promise.all([
         this.client.from('authorized_dnis').select('*'),
-        this.client.from('profiles').select('id,dni,nombre,telefono,rol,estado_autorizacion,created_at'),
+        // puntos_total/racha_semanas/racha_ultima_semana: fuente de verdad del
+        // ranking (ver sql/patch_gestion_rutinas_y_puntos.sql). Se leen acá para
+        // que cada dispositivo muestre el mismo número, en vez del contador
+        // aislado que vivía antes solo en alumno.puntosTotal de localStorage.
+        this.client.from('profiles').select('id,dni,nombre,telefono,rol,estado_autorizacion,created_at,puntos_total,racha_semanas,racha_ultima_semana'),
         this.client.from('workout_logs').select('*'),
         this.client.from('workout_log_sets').select('*'),
         this.client.from('notifications').select('*')
@@ -88,7 +92,14 @@ class SupabaseEngine {
         telefono: a.telefono || "",
         estadoAutorizacion: a.estado_autorizacion,
         fechaRegistro: a.created_at ? a.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
-        rutinaActivaId: null
+        rutinaActivaId: null,
+        // Valor autoritativo desde Supabase. Puede venir undefined si la
+        // columna todavía no existe en producción (antes de correr el patch
+        // SQL) — en ese caso data.js conserva el valor local existente.
+        puntosTotal: (a.puntos_total !== null && a.puntos_total !== undefined) ? Number(a.puntos_total) : undefined,
+        rachaSemanal: (a.racha_semanas !== null && a.racha_semanas !== undefined)
+          ? { semanas: Number(a.racha_semanas), ultimaSemana: a.racha_ultima_semana || null }
+          : undefined
       }));
 
       const profesores = (resProfiles.data || []).filter(p => p.rol === 'profesor').map(p => ({
@@ -336,6 +347,67 @@ class SupabaseEngine {
     }
   }
 
+  // --- ACTIVAR/DESACTIVAR RUTINA: RPC segura (bypassea RLS de routines) ---
+  async cambiarEstadoRutinaEnSupabase(rutinaId, profesorId, nuevoEstado) {
+    if (!this.client) return { ok: false, error: 'cliente_no_inicializado' };
+    if (!window._sessionProfesorId) {
+      console.error('🚫 Bloqueado: intento de cambiar estado de rutina sin sesión de profesor activa.');
+      return { ok: false, error: 'no_autorizado_no_es_profesor' };
+    }
+    try {
+      const rutinaUuid   = this.ensureValidUUID(rutinaId);
+      const profesorUuid = this.ensureValidUUID(profesorId);
+      const { data: rpcData, error: rpcErr } = await this.client.rpc('cambiar_estado_rutina_profesor', {
+        p_rutina_id: rutinaUuid,
+        p_profesor_id: profesorUuid,
+        p_nuevo_estado: nuevoEstado
+      });
+      if (rpcErr) {
+        console.error('❌ RPC cambiar_estado_rutina_profesor falló:', rpcErr.message, rpcErr);
+        return { ok: false, error: rpcErr.message };
+      }
+      if (rpcData && rpcData.ok === false) {
+        console.error('❌ RPC cambiar_estado_rutina_profesor retornó error de negocio:', rpcData.error);
+        return { ok: false, error: rpcData.error };
+      }
+      console.log('✅ Estado de rutina cambiado atómicamente via RPC en Supabase DB.', rpcData);
+      return { ok: true, data: rpcData };
+    } catch (err) {
+      console.error('❌ Excepción en cambiarEstadoRutinaEnSupabase:', err);
+      return { ok: false, error: err.message };
+    }
+  }
+
+  // --- BORRAR RUTINA: RPC segura (bypassea RLS de routines) ---
+  async eliminarRutinaEnSupabase(rutinaId, profesorId) {
+    if (!this.client) return { ok: false, error: 'cliente_no_inicializado' };
+    if (!window._sessionProfesorId) {
+      console.error('🚫 Bloqueado: intento de borrar rutina sin sesión de profesor activa.');
+      return { ok: false, error: 'no_autorizado_no_es_profesor' };
+    }
+    try {
+      const rutinaUuid   = this.ensureValidUUID(rutinaId);
+      const profesorUuid = this.ensureValidUUID(profesorId);
+      const { data: rpcData, error: rpcErr } = await this.client.rpc('borrar_rutina_profesor', {
+        p_rutina_id: rutinaUuid,
+        p_profesor_id: profesorUuid
+      });
+      if (rpcErr) {
+        console.error('❌ RPC borrar_rutina_profesor falló:', rpcErr.message, rpcErr);
+        return { ok: false, error: rpcErr.message };
+      }
+      if (rpcData && rpcData.ok === false) {
+        console.error('❌ RPC borrar_rutina_profesor retornó error de negocio:', rpcData.error);
+        return { ok: false, error: rpcData.error };
+      }
+      console.log('✅ Rutina borrada atómicamente via RPC en Supabase DB.', rpcData);
+      return { ok: true, data: rpcData };
+    } catch (err) {
+      console.error('❌ Excepción en eliminarRutinaEnSupabase:', err);
+      return { ok: false, error: err.message };
+    }
+  }
+
   async guardarWorkoutLogEnSupabase(log) {
     if (!this.client) return;
     try {
@@ -374,6 +446,81 @@ class SupabaseEngine {
       console.log('✅ Entrenamiento real persistido en Supabase DB.', { logUuid, sets: log.sets.length });
     } catch (err) {
       console.error('❌ Excepción guardando entrenamiento real en Supabase DB:', err);
+    }
+  }
+
+  // --- EDITAR SERIES DE UN ENTRENAMIENTO YA GUARDADO (ventana de 2hs) ---
+  // RPC segura: valida server-side que el log sea del alumno y que no
+  // pasaron más de 2hs desde fecha_entrenamiento antes de reemplazar sets.
+  async editarWorkoutLogSetsEnSupabase(logId, alumnoId, setsLog, comentarioGeneral) {
+    if (!this.client) return { ok: false, error: 'cliente_no_inicializado' };
+    try {
+      const logUuid    = this.ensureValidUUID(logId);
+      const alumnoUuid = this.ensureValidUUID(alumnoId);
+
+      const setsPayload = (setsLog || []).map(s => ({
+        exercise_goal_id:  s.ejercicioId || null,
+        exercise_nombre:   s.ejercicioNombre,
+        set_numero:        s.setNumero,
+        reps_realizadas:   s.repsRealizadas,
+        peso_utilizado:    s.pesoUtilizado,
+        comentario_alumno: s.comentarioAlumno || null
+      }));
+
+      const { data: rpcData, error: rpcErr } = await this.client.rpc('editar_workout_log_sets_alumno', {
+        p_workout_log_id: logUuid,
+        p_alumno_id: alumnoUuid,
+        p_sets: setsPayload,
+        p_comentario_general: comentarioGeneral ?? null
+      });
+
+      if (rpcErr) {
+        console.error('❌ RPC editar_workout_log_sets_alumno falló:', rpcErr.message, rpcErr);
+        return { ok: false, error: rpcErr.message };
+      }
+      if (rpcData && rpcData.ok === false) {
+        console.error('❌ RPC editar_workout_log_sets_alumno retornó error de negocio:', rpcData.error);
+        return { ok: false, error: rpcData.error };
+      }
+      console.log('✅ Entrenamiento editado atómicamente via RPC en Supabase DB (ventana 2hs).', rpcData);
+      return { ok: true, data: rpcData };
+    } catch (err) {
+      console.error('❌ Excepción en editarWorkoutLogSetsEnSupabase:', err);
+      return { ok: false, error: err.message };
+    }
+  }
+
+  // --- PUNTOS/RANKING: RPC atómica que calcula y otorga puntos server-side ---
+  // Se llama una vez por cada entrenamiento recién guardado (después de que
+  // guardarWorkoutLogEnSupabase ya insertó log + sets). El servidor decide
+  // si este entrenamiento es el primero del día calendario (Argentina) del
+  // alumno — si no lo es, no otorga puntos (yaHuboEntrenamientoHoy: true),
+  // pero el entrenamiento ya quedó guardado en el historial de todas formas.
+  async registrarPuntosEntrenamientoEnSupabase(logId, alumnoId) {
+    if (!this.client) return { ok: false, error: 'cliente_no_inicializado' };
+    try {
+      const logUuid    = this.ensureValidUUID(logId);
+      const alumnoUuid = this.ensureValidUUID(alumnoId);
+
+      const { data: rpcData, error: rpcErr } = await this.client.rpc('registrar_puntos_entrenamiento_alumno', {
+        p_workout_log_id: logUuid,
+        p_alumno_id: alumnoUuid
+      });
+
+      if (rpcErr) {
+        console.error('❌ RPC registrar_puntos_entrenamiento_alumno falló:', rpcErr.message, rpcErr);
+        return { ok: false, error: rpcErr.message };
+      }
+      if (rpcData && rpcData.ok === false) {
+        console.error('❌ RPC registrar_puntos_entrenamiento_alumno retornó error de negocio:', rpcData.error);
+        return { ok: false, error: rpcData.error };
+      }
+      console.log('✅ Puntos registrados atómicamente via RPC en Supabase DB.', rpcData);
+      // rpcData: { ok, puntosGanados, bonusRacha, puntosTotal, yaHuboEntrenamientoHoy }
+      return { ok: true, ...rpcData };
+    } catch (err) {
+      console.error('❌ Excepción en registrarPuntosEntrenamientoEnSupabase:', err);
+      return { ok: false, error: err.message };
     }
   }
 

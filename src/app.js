@@ -67,6 +67,8 @@ document.addEventListener('DOMContentLoaded', () => {
     busquedaProfesor: '',
     modalActivo: null,
     alumnoSeleccionadoId: null,
+    rutinaAEliminarId: null, // rutina pendiente de confirmación de borrado (panel profesor)
+    logEnEdicionId: null,    // entrenamiento que el alumno está editando (ventana 2hs)
     mostrarDrawerNotifs: false,
     workoutDraftSets: {},       // Estado temporal del entrenamiento en progreso por serie
     historialProfesorLogs: null  // Caché async del historial del alumno visto por el profesor
@@ -436,10 +438,11 @@ document.addEventListener('DOMContentLoaded', () => {
         ) : ''}
 
         ${appState.tabCliente === 'ranking' ? renderRankingView() : ''}
-        ${appState.tabCliente === 'historial' ? renderHistorialAgrupado(historialEntrenamientos, store.data.rutinas) : ''}
+        ${appState.tabCliente === 'historial' ? renderHistorialAgrupado(historialEntrenamientos, store.data.rutinas, true) : ''}
       </main>
 
       ${(appState.modalActivo === 'crear_rutina_propia' || appState.modalActivo === 'editar_rutina_propia') ? renderModalFormularioRutina(appState.modalActivo) : ''}
+      ${appState.modalActivo === 'editar_entrenamiento' ? renderModalEditarEntrenamiento(alumno) : ''}
 
       ${renderBottomNav()}
     `;
@@ -448,6 +451,7 @@ document.addEventListener('DOMContentLoaded', () => {
     bindInstallBannerEvents();
     bindBottomNavEvents();
     bindMisRutinasEvents(alumno);
+    bindHistorialEvents(alumno);
 
     // Eventos de navegación por tarjetas de rutina (excluye las de "Mis Rutinas",
     // que tienen su propio binding en bindMisRutinasEvents para soportar Editar/Borrar)
@@ -637,6 +641,105 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     });
   }
+
+  // --- EDICIÓN DE ENTRENAMIENTO YA GUARDADO (ventana de 2hs, solo el propio alumno) ---
+  function bindHistorialEvents(alumno) {
+    document.querySelectorAll('.btn-editar-entrenamiento-click').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const logId = btn.dataset.logId;
+        const log = store.data.workoutLogs.find(w => w.id === logId);
+        if (!log) return;
+        appState.logEnEdicionId = logId;
+        appState.editDraftSets = JSON.parse(JSON.stringify(log.sets || []));
+        appState.editDraftComentario = log.comentarioGeneral || '';
+        appState.modalActivo = 'editar_entrenamiento';
+        renderApp();
+      });
+    });
+  }
+
+  function renderModalEditarEntrenamiento(alumno) {
+    const log = store.data.workoutLogs.find(w => w.id === appState.logEnEdicionId);
+    if (!log || !appState.editDraftSets) return '';
+
+    if (!store.puedeEditarseEntrenamiento(log)) {
+      return `
+        <div class="modal-overlay">
+          <div class="modal-content" style="max-width:420px">
+            <div class="modal-header">
+              <h3>⏰ Ventana de edición vencida</h3>
+              <button class="close-btn" id="btnCloseModal">&times;</button>
+            </div>
+            <p style="color:var(--text-gray); font-size:0.92rem">
+              Ya pasaron más de 2 horas desde que guardaste este entrenamiento, así que no se puede editar.
+            </p>
+          </div>
+        </div>
+      `;
+    }
+
+    // Agrupar por ejercicio, conservando el índice real en editDraftSets para los onchange
+    const ejMap = {};
+    appState.editDraftSets.forEach((s, idx) => {
+      if (!ejMap[s.ejercicioNombre]) ejMap[s.ejercicioNombre] = [];
+      ejMap[s.ejercicioNombre].push({ ...s, _idx: idx });
+    });
+
+    return `
+      <div class="modal-overlay">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3>✏️ Editar Entrenamiento: ${log.diaNombre}</h3>
+            <button class="close-btn" id="btnCloseModal">&times;</button>
+          </div>
+          <p style="color:var(--yellow-warning); font-size:0.8rem; margin-bottom:12px">
+            ⏰ Podés editar hasta 2 horas después de haber guardado el entrenamiento. Los puntos ya otorgados no cambian.
+          </p>
+
+          ${Object.entries(ejMap).map(([ejNombre, sets]) => `
+            <div class="exercise-block">
+              <div class="exercise-title" style="font-size:1rem; font-weight:900; color:#fff">${ejNombre}</div>
+              <div class="sets-table-header">
+                <div>SERIE</div>
+                <div>REPS</div>
+                <div>PESO</div>
+                <div>COMENTARIO POR SERIE</div>
+              </div>
+              ${sets.map(s => `
+                <div class="set-row">
+                  <div class="set-label">Serie ${s.setNumero}</div>
+                  <div><input type="number" class="set-input" value="${s.repsRealizadas}" onchange="window.updateEditSet(${s._idx}, 'repsRealizadas', this.value)"></div>
+                  <div><input type="text" class="set-input" value="${s.pesoUtilizado}" onchange="window.updateEditSet(${s._idx}, 'pesoUtilizado', this.value)"></div>
+                  <div><input type="text" class="set-input set-comment-input" value="${s.comentarioAlumno || ''}" onchange="window.updateEditSet(${s._idx}, 'comentarioAlumno', this.value)"></div>
+                </div>
+              `).join('')}
+            </div>
+          `).join('')}
+
+          <div class="exercise-block" style="border-color:var(--border-highlight)">
+            <label class="form-label" style="color:var(--red-primary)">💬 COMENTARIO GENERAL</label>
+            <textarea class="exercise-textarea" onchange="window.updateEditComentarioGeneral(this.value)">${appState.editDraftComentario || ''}</textarea>
+          </div>
+
+          <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:16px">
+            <button type="button" class="btn btn-secondary" id="btnCancelModal">Cancelar</button>
+            <button type="button" class="btn btn-primary" id="btnGuardarEdicionEntrenamiento">💾 Guardar Cambios</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  window.updateEditSet = (idx, field, val) => {
+    if (appState.editDraftSets && appState.editDraftSets[idx]) {
+      appState.editDraftSets[idx][field] = field === 'repsRealizadas' ? Number(val) : val;
+    }
+  };
+
+  window.updateEditComentarioGeneral = (val) => {
+    appState.editDraftComentario = val;
+  };
 
   // --- FEATURE RANKING: tabla de posiciones en tiempo real con medallas Top 3 ---
   function renderRankingView() {
@@ -877,7 +980,12 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // --- HISTORIAL AGRUPADO: Rutina → Semana → Día → Ejercicios → Series ---
-  function renderHistorialAgrupado(logs, rutinas) {
+  // permitirEdicion: SOLO true cuando el alumno ve su PROPIO historial
+  // (renderClientDashboard). El historial que el profesor ve de un alumno
+  // (renderModalHistorialAlumno) llama esta misma función sin el flag,
+  // así que nunca muestra el botón "Editar entrenamiento" — esa edición es
+  // exclusiva del alumno dueño del registro, dentro de la ventana de 2hs.
+  function renderHistorialAgrupado(logs, rutinas, permitirEdicion = false) {
     if (!logs || logs.length === 0) {
       return `<div style="text-align:center; color:var(--text-gray); padding:40px 20px">
         <div style="font-size:2.5rem; margin-bottom:10px">📜</div>
@@ -980,7 +1088,12 @@ document.addEventListener('DOMContentLoaded', () => {
                               ${new Date(log.fecha).toLocaleString('es-AR', { weekday:'short', day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' })}
                             </div>
                           </div>
-                          <span class="badge badge-active">Completado</span>
+                          <div style="display:flex; align-items:center; gap:8px">
+                            <span class="badge badge-active">Completado</span>
+                            ${permitirEdicion && store.puedeEditarseEntrenamiento(log) ? `
+                              <button class="btn btn-secondary btn-sm btn-editar-entrenamiento-click" data-log-id="${log.id}" style="border-color:var(--yellow-warning); color:var(--yellow-warning); padding:4px 10px; font-size:0.75rem">✏️ Editar entrenamiento</button>
+                            ` : ''}
+                          </div>
                         </div>
 
                         ${log.comentarioGeneral ? `
@@ -1092,15 +1205,24 @@ document.addEventListener('DOMContentLoaded', () => {
                 </div>
 
                 <div style="background:rgba(0,0,0,0.3); padding:10px; border-radius:8px; font-size:0.85rem; color:var(--text-gray); margin-bottom:12px">
-                  ${rutinasAlumno.length > 0 ? rutinasAlumno.map(r => `
-                    <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.06); padding:6px 0">
+                  ${rutinasAlumno.length > 0 ? rutinasAlumno.map(r => {
+                    const estaDesactivada = r.estado === 'desactivada';
+                    return `
+                    <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.06); padding:6px 0; gap:8px; flex-wrap:wrap">
                       <div>
-                        <div style="color:#fff; font-weight:700">💪 ${r.titulo}</div>
+                        <div style="color:#fff; font-weight:700">💪 ${r.titulo} ${estaDesactivada ? '<span class="badge badge-role" style="margin-left:4px">Desactivada</span>' : ''}</div>
                         <div style="font-size:0.72rem; color:var(--text-muted)">Vence: ${r.fechaVencimiento} | ${r.dias ? r.dias.length : 0} días</div>
                       </div>
-                      <button class="btn btn-secondary btn-sm btn-editar-rutina-click" data-alumno-id="${alumno.id}" data-rutina-id="${r.id}" style="border-color:var(--yellow-warning); color:var(--yellow-warning); padding:4px 10px; font-size:0.78rem">✏️ Editar</button>
+                      <div style="display:flex; gap:6px; flex-wrap:wrap">
+                        <button class="btn btn-secondary btn-sm btn-editar-rutina-click" data-alumno-id="${alumno.id}" data-rutina-id="${r.id}" style="border-color:var(--yellow-warning); color:var(--yellow-warning); padding:4px 10px; font-size:0.78rem">✏️ Editar</button>
+                        <button class="btn btn-secondary btn-sm btn-toggle-estado-rutina-click" data-alumno-id="${alumno.id}" data-rutina-id="${r.id}" data-estado-actual="${r.estado}" style="border-color:var(--blue-info,#3b82f6); color:var(--blue-info,#3b82f6); padding:4px 10px; font-size:0.78rem">
+                          ${estaDesactivada ? '▶️ Activar' : '⏸️ Desactivar'}
+                        </button>
+                        <button class="btn btn-secondary btn-sm btn-borrar-rutina-click" data-alumno-id="${alumno.id}" data-rutina-id="${r.id}" style="border-color:var(--red-primary); color:var(--red-primary); padding:4px 10px; font-size:0.78rem">🗑️ Borrar</button>
+                      </div>
                     </div>
-                  `).join('') : `
+                  `;
+                  }).join('') : `
                     <div>⚠️ Sin rutinas creadas aún.</div>
                   `}
                 </div>
@@ -1118,6 +1240,7 @@ document.addEventListener('DOMContentLoaded', () => {
       ${appState.modalActivo === 'nuevo_alumno' ? renderModalNuevoAlumno() : ''}
       ${(appState.modalActivo === 'crear_rutina' || appState.modalActivo === 'editar_rutina') ? renderModalFormularioRutina(appState.modalActivo) : ''}
       ${appState.modalActivo === 'historial_alumno' ? renderModalHistorialAlumno() : ''}
+      ${appState.modalActivo === 'confirmar_borrado_rutina' ? renderModalConfirmarBorradoRutina() : ''}
 
       ${renderBottomNav()}
     `;
@@ -1171,6 +1294,23 @@ document.addEventListener('DOMContentLoaded', () => {
           appState.rutinaEnEdicionId = null;
           appState.modalActivo = 'crear_rutina';
           initFormBuilderForNew();
+          renderApp();
+        } else if (e.target.classList.contains('btn-toggle-estado-rutina-click')) {
+          e.stopPropagation();
+          const rId = e.target.dataset.rutinaId;
+          const estadoActual = e.target.dataset.estadoActual;
+          const nuevoEstado = estadoActual === 'desactivada' ? 'activa' : 'desactivada';
+          const profesorId = window._sessionProfesorId || appState.usuarioActual.data.id;
+          e.target.disabled = true;
+          const resultado = await store.cambiarEstadoRutina(rId, profesorId, nuevoEstado);
+          if (!resultado || resultado.ok !== true) {
+            alert("❌ No se pudo cambiar el estado de la rutina: " + ((resultado && resultado.error) || "error desconocido"));
+          }
+          renderApp();
+        } else if (e.target.classList.contains('btn-borrar-rutina-click')) {
+          e.stopPropagation();
+          appState.rutinaAEliminarId = e.target.dataset.rutinaId;
+          appState.modalActivo = 'confirmar_borrado_rutina';
           renderApp();
         } else {
           const rutina = store.getRutinaActiva(alumnoId);
@@ -1311,6 +1451,29 @@ document.addEventListener('DOMContentLoaded', () => {
                </div>`
             : renderHistorialAgrupado(historialLogs, store.data.rutinas)
           }
+        </div>
+      </div>
+    `;
+  }
+
+  function renderModalConfirmarBorradoRutina() {
+    const rutina = store.getRutinaPorId(appState.rutinaAEliminarId);
+    if (!rutina) return '';
+    return `
+      <div class="modal-overlay">
+        <div class="modal-content" style="max-width:420px">
+          <div class="modal-header">
+            <h3>🗑️ Borrar Rutina</h3>
+            <button class="close-btn" id="btnCloseModal">&times;</button>
+          </div>
+          <p style="color:var(--text-gray); font-size:0.92rem; line-height:1.5">
+            ¿Seguro que querés borrar <strong style="color:#fff">"${rutina.titulo}"</strong>?
+            Esta acción no se puede deshacer. El historial de entrenamientos ya guardado del alumno no se borra.
+          </p>
+          <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:20px">
+            <button type="button" class="btn btn-secondary" id="btnCancelModal">Cancelar</button>
+            <button type="button" class="btn btn-primary" id="btnConfirmarBorradoRutina" style="background:var(--red-primary)">Sí, Borrar 🗑️</button>
+          </div>
         </div>
       </div>
     `;
@@ -1709,7 +1872,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
 
-    document.getElementById('btnFinishWorkout')?.addEventListener('click', () => {
+    document.getElementById('btnFinishWorkout')?.addEventListener('click', async (e) => {
       const dia = appState.diaActivoEntrenamiento;
       const alumno = appState.usuarioActual.data;
       const rutinaActiva = store.getRutinaPorId(appState.rutinaSeleccionadaId) || store.getRutinaActiva(alumno.id);
@@ -1729,7 +1892,15 @@ document.addEventListener('DOMContentLoaded', () => {
         });
       });
 
-      const logGuardado = store.guardarEntrenamientoReal({
+      // guardarEntrenamientoReal es async: guarda local de forma optimista y
+      // espera la confirmación autoritativa del servidor (RPC de puntos) antes
+      // de mostrar el mensaje final, así el alumno nunca ve un número de
+      // puntos que el servidor va a corregir un segundo después.
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      btn.textContent = '⏳ Guardando...';
+
+      const logGuardado = await store.guardarEntrenamientoReal({
         alumnoId:         alumno.id,
         rutinaId:         rutinaActiva ? rutinaActiva.id : 'rut-default',
         diaId:            dia.id,
@@ -1741,14 +1912,57 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const puntosGanados = Math.round((logGuardado?.puntos || 0));
       const bonusTexto = logGuardado?.bonusRacha ? ` (incluye +${logGuardado.bonusRacha} 🔥 bonus por racha semanal)` : '';
-      alert(`🏆 ¡Entrenamiento completado y guardado en tu historial!\n+${puntosGanados} puntos ganados${bonusTexto}`);
+      const mensajePuntos = logGuardado?.yaHuboEntrenamientoHoy
+        ? `Ya sumaste puntos hoy con otro entrenamiento — este quedó guardado en tu historial, pero no otorga puntos adicionales (solo se otorgan puntos una vez por día).`
+        : `+${puntosGanados} puntos ganados${bonusTexto}`;
+      alert(`🏆 ¡Entrenamiento completado y guardado en tu historial!\n${mensajePuntos}`);
       appState.diaActivoEntrenamiento = null;
       appState.tabCliente = 'historial';
       renderApp();
     });
 
-    document.getElementById('btnCloseModal')?.addEventListener('click', () => { appState.modalActivo = null; renderApp(); });
-    document.getElementById('btnCancelModal')?.addEventListener('click', () => { appState.modalActivo = null; renderApp(); });
+    const cerrarModalGenerico = () => {
+      appState.modalActivo = null;
+      appState.rutinaAEliminarId = null;
+      appState.logEnEdicionId = null;
+      appState.editDraftSets = null;
+      appState.editDraftComentario = '';
+      renderApp();
+    };
+    document.getElementById('btnCloseModal')?.addEventListener('click', cerrarModalGenerico);
+    document.getElementById('btnCancelModal')?.addEventListener('click', cerrarModalGenerico);
+
+    document.getElementById('btnGuardarEdicionEntrenamiento')?.addEventListener('click', async () => {
+      const alumno = appState.usuarioActual.data;
+      try {
+        const resultado = await store.editarEntrenamientoReciente({
+          logId: appState.logEnEdicionId,
+          alumnoId: alumno.id,
+          setsLog: appState.editDraftSets,
+          comentarioGeneral: appState.editDraftComentario
+        });
+        if (resultado && resultado.ok) {
+          alert("✅ Entrenamiento actualizado correctamente.");
+        } else {
+          alert("❌ No se pudo guardar la edición: " + ((resultado && resultado.error) || "error desconocido"));
+        }
+      } catch (err) {
+        alert("❌ Error: " + err.message);
+      }
+      cerrarModalGenerico();
+    });
+
+    document.getElementById('btnConfirmarBorradoRutina')?.addEventListener('click', async () => {
+      const rId = appState.rutinaAEliminarId;
+      const profesorId = window._sessionProfesorId || appState.usuarioActual.data.id;
+      const resultado = await store.eliminarRutina(rId, profesorId);
+      appState.modalActivo = null;
+      appState.rutinaAEliminarId = null;
+      if (!resultado || resultado.ok !== true) {
+        alert("❌ No se pudo borrar la rutina: " + ((resultado && resultado.error) || "error desconocido"));
+      }
+      renderApp();
+    });
 
     const formNuevo = document.getElementById('formNuevoAlumno');
     if (formNuevo) {

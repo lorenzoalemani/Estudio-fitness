@@ -106,6 +106,14 @@ class GymStore {
               loc.nombre = sbAlumno.nombre || loc.nombre;
               loc.telefono = sbAlumno.telefono || loc.telefono;
               if (sbAlumno.rutinaActivaId) loc.rutinaActivaId = sbAlumno.rutinaActivaId;
+              // Puntos/Ranking: profiles.puntos_total (Supabase) es la fuente de
+              // verdad. Se sobreescribe el contador local con el valor real del
+              // servidor en cada sync, para que todos los dispositivos muestren
+              // el mismo número. Si la columna todavía no existe en producción
+              // (antes de correr el patch SQL), sbAlumno.puntosTotal viene
+              // undefined y se conserva el valor local sin tocarlo.
+              if (sbAlumno.puntosTotal !== undefined) loc.puntosTotal = sbAlumno.puntosTotal;
+              if (sbAlumno.rachaSemanal !== undefined) loc.rachaSemanal = sbAlumno.rachaSemanal;
             } else {
               this.data.alumnos.push(sbAlumno);
             }
@@ -401,8 +409,15 @@ class GymStore {
       .sort((a, b) => new Date(b.fechaInicio || 0) - new Date(a.fechaInicio || 0))[0] || null;
   }
 
+  // Historial = todas las rutinas del alumno que NO están activas ahora
+  // mismo (desactivada, completada o expirada). Antes filtraba por
+  // "distinta de rutinaActivaId", lo cual dejaba afuera del historial a
+  // cualquier rutina vieja cuyo id todavía coincidiera con rutinaActivaId
+  // por datos desactualizados, y de paso metía en el historial rutinas
+  // activas que el alumno nunca marcó como tal. Filtrar por estado real
+  // es correcto en los dos sentidos.
   getHistorialRutinas(alumnoId) {
-    return this.data.rutinas.filter(r => r.alumnoId === alumnoId && r.id !== this.getAlumnoPorId(alumnoId)?.rutinaActivaId);
+    return this.data.rutinas.filter(r => r.alumnoId === alumnoId && r.estado !== 'activa');
   }
 
   getHistorialEntrenamientosReales(alumnoId) {
@@ -542,6 +557,63 @@ class GymStore {
     return { ok: true, data: rutina };
   }
 
+  // --- ACTIVAR/DESACTIVAR RUTINA ASIGNADA POR EL PROFESOR ---
+  // No confundir con eliminarRutinaPropia/editarRutinaPropia (rutinas
+  // 100% locales del alumno): esto es para rutinas asignadas por un
+  // profesor, con la misma lógica de "esperar confirmación real del
+  // servidor y revertir en memoria si falla" que editarRutinaExistente.
+  async cambiarEstadoRutina(rutinaId, profesorId, nuevoEstado) {
+    const rutina = this.getRutinaPorId(rutinaId);
+    if (!rutina) throw new Error("La rutina no fue encontrada.");
+    if (nuevoEstado !== 'activa' && nuevoEstado !== 'desactivada') {
+      throw new Error("Estado inválido.");
+    }
+
+    const estadoOriginal = rutina.estado;
+    rutina.estado = nuevoEstado;
+
+    if (window.supabaseEngine) {
+      const resultado = await window.supabaseEngine.cambiarEstadoRutinaEnSupabase(rutinaId, profesorId, nuevoEstado);
+      if (!resultado || resultado.ok !== true) {
+        rutina.estado = estadoOriginal;
+        return { ok: false, error: (resultado && resultado.error) || 'error_desconocido' };
+      }
+    }
+
+    // Si se desactiva la rutina que el alumno tenía marcada como activa,
+    // se le quita esa marca (getRutinaActiva ya no la devolvería igual,
+    // pero mantenemos rutinaActivaId consistente con el estado real).
+    if (nuevoEstado === 'desactivada') {
+      const alumno = this.getAlumnoPorId(rutina.alumnoId);
+      if (alumno && alumno.rutinaActivaId === rutinaId) alumno.rutinaActivaId = null;
+    }
+
+    this.saveData();
+    return { ok: true, data: rutina };
+  }
+
+  // --- BORRAR RUTINA ASIGNADA POR EL PROFESOR ---
+  async eliminarRutina(rutinaId, profesorId) {
+    const rutina = this.getRutinaPorId(rutinaId);
+    if (!rutina) throw new Error("La rutina no fue encontrada.");
+
+    if (window.supabaseEngine) {
+      const resultado = await window.supabaseEngine.eliminarRutinaEnSupabase(rutinaId, profesorId);
+      if (!resultado || resultado.ok !== true) {
+        return { ok: false, error: (resultado && resultado.error) || 'error_desconocido' };
+      }
+    }
+
+    const idx = this.data.rutinas.findIndex(r => r.id === rutinaId);
+    if (idx !== -1) this.data.rutinas.splice(idx, 1);
+
+    const alumno = this.getAlumnoPorId(rutina.alumnoId);
+    if (alumno && alumno.rutinaActivaId === rutinaId) alumno.rutinaActivaId = null;
+
+    this.saveData();
+    return { ok: true };
+  }
+
   // --- CREAR/EDITAR/ELIMINAR RUTINA PROPIA (AUTO-GESTIÓN DEL ALUMNO) ---
   // Diseño intencional: las rutinas propias son 100% locales (LocalStorage) y
   // NUNCA se escriben en Supabase, para respetar el Fix 3 (bloqueo de
@@ -653,20 +725,56 @@ class GymStore {
       .map((a, idx) => ({ ...a, posicion: idx + 1 }));
   }
 
+  // Ventana de 2hs para poder editar un entrenamiento ya guardado.
+  puedeEditarseEntrenamiento(log) {
+    if (!log || !log.fecha) return false;
+    const transcurridoMs = Date.now() - new Date(log.fecha).getTime();
+    return transcurridoMs >= 0 && transcurridoMs <= 2 * 60 * 60 * 1000;
+  }
+
+  // Devuelve true si ya existe, ENTRE LOS DATOS QUE TENEMOS LOCALMENTE, un
+  // entrenamiento completado del alumno en el mismo día calendario (hora
+  // local del dispositivo) que fechaISO. Es la versión offline/optimista
+  // de la regla "el primer entrenamiento del día otorga los puntos": el
+  // servidor (RPC registrar_puntos_entrenamiento_alumno) es quien decide
+  // de forma autoritativa y atómica en zona horaria Argentina — esto solo
+  // se usa para no mostrarle al alumno una estimación de puntos que el
+  // servidor casi seguro va a corregir a 0 apenas haya conexión.
+  _yaHayEntrenamientoHoyLocal(alumnoId, fechaISO) {
+    const diaCal = new Date(fechaISO);
+    const y = diaCal.getFullYear(), m = diaCal.getMonth(), d = diaCal.getDate();
+    return this.data.workoutLogs.some(w => {
+      if (w.alumnoId !== alumnoId || w.estado !== 'completado') return false;
+      const f = new Date(w.fecha);
+      return f.getFullYear() === y && f.getMonth() === m && f.getDate() === d;
+    });
+  }
+
   // --- GUARDADO DE SESIÓN DE ENTRENAMIENTO REAL POR SERIES Y COMENTARIO GENERAL ---
-  guardarEntrenamientoReal({ alumnoId, rutinaId, diaId, diaNombre, diaNumero, setsLog, comentarioGeneral = "" }) {
+  // Async: guarda localmente de forma optimista (para que la UI responda al
+  // instante incluso sin red) y, si hay conexión, corrige puntos/racha con
+  // el valor AUTORITATIVO que devuelve la RPC registrar_puntos_entrenamiento_alumno
+  // (servidor decide, en zona horaria Argentina, si este es el primer
+  // entrenamiento del día — la única fuente de verdad real ante múltiples
+  // dispositivos compitiendo casi al mismo tiempo).
+  async guardarEntrenamientoReal({ alumnoId, rutinaId, diaId, diaNombre, diaNumero, setsLog, comentarioGeneral = "" }) {
     // UUID nativo desde el inicio: mismo ID en localStorage y en Supabase
     const logId = (window.crypto && window.crypto.randomUUID)
       ? window.crypto.randomUUID()
       : ("log-" + Date.now());
 
     const fechaISO = new Date().toISOString();
-
-    // --- SISTEMA DE PUNTUACIÓN Y RANKING ---
     const alumno = this.getAlumnoPorId(alumnoId);
+
+    // --- ESTIMACIÓN LOCAL (optimista, puede quedar sobreescrita por el servidor) ---
     const puntosBase = this.calcularPuntosSesion(setsLog);
-    const bonusRacha = alumno ? this.actualizarRachaYSumarPuntos(alumno, fechaISO, puntosBase) : 0;
-    const puntosSesion = puntosBase + bonusRacha;
+    const esPrimerEntrenamientoDelDiaLocal = alumno ? !this._yaHayEntrenamientoHoyLocal(alumnoId, fechaISO) : false;
+    let bonusRacha = 0;
+    let puntosSesion = 0;
+    if (alumno && esPrimerEntrenamientoDelDiaLocal) {
+      bonusRacha = this.actualizarRachaYSumarPuntos(alumno, fechaISO, puntosBase);
+      puntosSesion = puntosBase + bonusRacha;
+    }
 
     const nuevoLog = {
       id: logId,
@@ -680,14 +788,11 @@ class GymStore {
       comentarioGeneral: comentarioGeneral || "",
       sets: setsLog,
       puntos: puntosSesion,
-      bonusRacha
+      bonusRacha,
+      puntosConfirmadosPorServidor: false
     };
 
     this.data.workoutLogs.unshift(nuevoLog);
-
-    if (window.supabaseEngine) {
-      window.supabaseEngine.guardarWorkoutLogEnSupabase(nuevoLog);
-    }
 
     if (alumno) {
       this.crearNotificacion({
@@ -699,7 +804,55 @@ class GymStore {
     }
 
     this.saveData();
-    return nuevoLog;
+
+    // --- CONFIRMACIÓN AUTORITATIVA DEL SERVIDOR ---
+    let resultadoPuntos = null;
+    if (window.supabaseEngine) {
+      await window.supabaseEngine.guardarWorkoutLogEnSupabase(nuevoLog);
+      resultadoPuntos = await window.supabaseEngine.registrarPuntosEntrenamientoEnSupabase(logId, alumnoId);
+
+      if (resultadoPuntos && resultadoPuntos.ok && alumno) {
+        // El servidor manda: se pisa la estimación local (incluyendo el caso
+        // "ya había otro entrenamiento hoy" → puntosGanados/bonusRacha en 0).
+        nuevoLog.puntos = Number(resultadoPuntos.puntosGanados) || 0;
+        nuevoLog.bonusRacha = Number(resultadoPuntos.bonusRacha) || 0;
+        nuevoLog.puntosConfirmadosPorServidor = true;
+        alumno.puntosTotal = Number(resultadoPuntos.puntosTotal) || 0;
+        this.saveData();
+      }
+    }
+
+    const yaHuboEntrenamientoHoy = (resultadoPuntos && resultadoPuntos.ok)
+      ? !!resultadoPuntos.yaHuboEntrenamientoHoy
+      : !esPrimerEntrenamientoDelDiaLocal;
+
+    return { ...nuevoLog, yaHuboEntrenamientoHoy };
+  }
+
+  // --- EDITAR ENTRENAMIENTO YA GUARDADO (solo dentro de la ventana de 2hs) ---
+  // No recalcula ni toca puntos: quedan fijados en el momento del primer
+  // guardado, tal como se decidió para el sistema de puntos/ranking.
+  async editarEntrenamientoReciente({ logId, alumnoId, setsLog, comentarioGeneral }) {
+    const log = this.data.workoutLogs.find(w => w.id === logId);
+    if (!log) throw new Error("Entrenamiento no encontrado.");
+    if (log.alumnoId !== alumnoId) throw new Error("No tenés permiso para editar este entrenamiento.");
+    if (!this.puedeEditarseEntrenamiento(log)) {
+      throw new Error("Ya pasaron más de 2 horas desde que se guardó este entrenamiento, no se puede editar.");
+    }
+
+    if (window.supabaseEngine) {
+      const resultado = await window.supabaseEngine.editarWorkoutLogSetsEnSupabase(logId, alumnoId, setsLog, comentarioGeneral);
+      if (!resultado || resultado.ok !== true) {
+        return { ok: false, error: (resultado && resultado.error) || 'error_desconocido' };
+      }
+    }
+
+    log.sets = setsLog;
+    if (comentarioGeneral !== undefined && comentarioGeneral !== null) {
+      log.comentarioGeneral = comentarioGeneral;
+    }
+    this.saveData();
+    return { ok: true, data: log };
   }
 
   crearNotificacion({ destinatarioRol, alumnoId, mensaje, rutaDestino = "rutina", rutinaId = null }) {
