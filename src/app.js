@@ -293,12 +293,27 @@ document.addEventListener('DOMContentLoaded', () => {
     `;
     bindInstallBannerEvents();
 
-    document.getElementById('formLoginUnico').addEventListener('submit', (e) => {
+    let loginEnCurso = false;
+    document.getElementById('formLoginUnico').addEventListener('submit', async (e) => {
       e.preventDefault();
+      if (loginEnCurso) return; // evita doble submit mientras se sincroniza con Supabase
       const dni = document.getElementById('inputDni').value;
       const pass = document.getElementById('inputPass').value;
 
-      const res = store.login(dni, pass);
+      const submitBtn = e.target.querySelector('button[type="submit"]');
+      loginEnCurso = true;
+      if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Verificando...'; }
+
+      let res;
+      try {
+        // login() ahora espera la sincronización con Supabase antes de
+        // validar credenciales (ver comentario en data.js), por eso el await.
+        res = await store.login(dni, pass);
+      } finally {
+        loginEnCurso = false;
+        if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Iniciar Sesión 🚀'; }
+      }
+
       if (res) {
         appState.usuarioActual = res;
 

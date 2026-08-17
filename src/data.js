@@ -93,36 +93,74 @@ class GymStore {
       if (freshData) {
         let huboCambios = false;
 
-        if (freshData.dnisAutorizados && freshData.dnisAutorizados.length > 0) {
+        // NOTA GENERAL: a partir de acá, cada campo de freshData es un array
+        // (posiblemente VACÍO — snapshot real de Supabase) o `null` (no se
+        // consultó, o la consulta falló). Se chequea `!== null`, nunca
+        // `.length > 0`, para no confundir "no hay nada" con "no se pudo
+        // consultar" — ver comentario en fetchFullStateFromSupabase().
+
+        if (freshData.dnisAutorizados !== null) {
           this.data.dnisAutorizados = freshData.dnisAutorizados;
           huboCambios = true;
         }
 
-        if (freshData.alumnos && freshData.alumnos.length > 0) {
-          freshData.alumnos.forEach(sbAlumno => {
+        // ALUMNOS: Supabase es la fuente de verdad. Reconciliación completa:
+        // se reconstruye this.data.alumnos a partir del snapshot de Supabase
+        // (agrega los nuevos, actualiza los existentes) y, como resultado,
+        // cualquier alumno local que ya NO está en el snapshot queda
+        // automáticamente afuera (podado) — ya no sobrevive un alumno
+        // eliminado en Supabase solo porque seguía en localStorage.
+        if (freshData.alumnos !== null) {
+          this.data.alumnos = freshData.alumnos.map(sbAlumno => {
             const loc = this.data.alumnos.find(a => a.dni === sbAlumno.dni || a.id === sbAlumno.id);
-            if (loc) {
-              loc.estadoAutorizacion = sbAlumno.estadoAutorizacion || loc.estadoAutorizacion;
-              loc.nombre = sbAlumno.nombre || loc.nombre;
-              loc.telefono = sbAlumno.telefono || loc.telefono;
-              if (sbAlumno.rutinaActivaId) loc.rutinaActivaId = sbAlumno.rutinaActivaId;
-              // Puntos/Ranking: profiles.puntos_total (Supabase) es la fuente de
-              // verdad. Se sobreescribe el contador local con el valor real del
-              // servidor en cada sync, para que todos los dispositivos muestren
-              // el mismo número. Si la columna todavía no existe en producción
+            if (!loc) return sbAlumno;
+            return {
+              ...loc,
+              ...sbAlumno,
+              // rutinaActivaId: Supabase siempre lo manda en null (no se lee
+              // de esa tabla); se conserva el valor local conocido si existe,
+              // igual que hacía la lógica anterior.
+              rutinaActivaId: sbAlumno.rutinaActivaId || loc.rutinaActivaId,
+              // Puntos/Ranking: profiles.puntos_total (Supabase) es la fuente
+              // de verdad. Si la columna todavía no existe en producción
               // (antes de correr el patch SQL), sbAlumno.puntosTotal viene
               // undefined y se conserva el valor local sin tocarlo.
-              if (sbAlumno.puntosTotal !== undefined) loc.puntosTotal = sbAlumno.puntosTotal;
-              if (sbAlumno.rachaSemanal !== undefined) loc.rachaSemanal = sbAlumno.rachaSemanal;
-            } else {
-              this.data.alumnos.push(sbAlumno);
-            }
+              puntosTotal: sbAlumno.puntosTotal !== undefined ? sbAlumno.puntosTotal : loc.puntosTotal,
+              rachaSemanal: sbAlumno.rachaSemanal !== undefined ? sbAlumno.rachaSemanal : loc.rachaSemanal
+            };
           });
           huboCambios = true;
         }
 
-        // Rutinas: solo cuando se obtuvieron via RPC (alumnoId presente)
-        if (freshData.rutinas && freshData.rutinas.length > 0) {
+        // PROFESORES: antes NO se sincronizaba nunca (freshData.profesores se
+        // calculaba en supabase.js pero jamás se leía acá), por lo que un
+        // profesor eliminado en Supabase seguía viviendo para siempre en
+        // localStorage y podía loguearse con esas credenciales. Mismo
+        // criterio de reconciliación completa que alumnos.
+        if (freshData.profesores !== null) {
+          this.data.profesores = freshData.profesores.map(sbProfesor => {
+            const loc = this.data.profesores.find(p => p.dni === sbProfesor.dni || p.id === sbProfesor.id);
+            return loc ? { ...loc, ...sbProfesor } : sbProfesor;
+          });
+          huboCambios = true;
+        }
+
+        // RUTINAS: solo se consultaron (via RPC) las del alumnoId de ESTA
+        // llamada, así que la reconciliación debe limitarse estrictamente a
+        // las rutinas de ese alumno — nunca tocar rutinas de otros alumnos
+        // que no formaron parte de esta consulta.
+        // Excepción importante: las rutinas "propias" (esPropia: true,
+        // auto-gestionadas por el alumno) son 100% locales por diseño y
+        // NUNCA se escriben ni se leen de Supabase — no deben podarse solo
+        // porque no aparecen en el snapshot de la RPC.
+        if (alumnoId && freshData.rutinas !== null) {
+          const idsFrescos = new Set(freshData.rutinas.map(r => r.id));
+          this.data.rutinas = this.data.rutinas.filter(r => {
+            if (r.alumnoId !== alumnoId) return true; // no es de este alumno: no tocar
+            if (r.esPropia) return true; // rutina propia local: nunca se poda
+            return idsFrescos.has(r.id); // rutina asignada por profesor: podar si ya no existe en Supabase
+          });
+
           freshData.rutinas.forEach(sbRutina => {
             const idx = this.data.rutinas.findIndex(r => r.id === sbRutina.id);
             if (idx >= 0) {
@@ -132,7 +170,7 @@ class GymStore {
             }
 
             // Actualizar rutinaActivaId en el perfil local del alumno si es activa
-            if (alumnoId && sbRutina.estado === 'activa') {
+            if (sbRutina.estado === 'activa') {
               const alumno = this.data.alumnos.find(a => a.id === alumnoId || a.id === sbRutina.alumnoId);
               if (alumno && !alumno.rutinaActivaId) {
                 alumno.rutinaActivaId = sbRutina.id;
@@ -142,7 +180,7 @@ class GymStore {
           huboCambios = true;
         }
 
-        if (freshData.workoutLogs && freshData.workoutLogs.length > 0) {
+        if (freshData.workoutLogs !== null) {
           freshData.workoutLogs.forEach(sbLog => {
             const idx = this.data.workoutLogs.findIndex(w => w.id === sbLog.id);
             if (idx >= 0) {
@@ -154,7 +192,7 @@ class GymStore {
           huboCambios = true;
         }
 
-        if (freshData.notificaciones && freshData.notificaciones.length > 0) {
+        if (freshData.notificaciones !== null) {
           this.data.notificaciones = freshData.notificaciones;
           huboCambios = true;
         }
@@ -179,8 +217,10 @@ class GymStore {
   // Condición de seguridad: si la consulta de un alumno puntual falla (error
   // de red, RPC, o promesa rechazada), esa falla se ignora por completo y NO
   // borra ni pisa las rutinas locales existentes — ni las de ese alumno ni
-  // las de ningún otro. Solo se actualizan las rutinas que sí llegaron ok.
-  // No modifica _syncSeq/_authSyncSeq (no comparte su lógica de descarte).
+  // las de ningún otro. Solo se reconcilian las rutinas de los alumnos cuya
+  // consulta sí llegó ok (resultado.ok === true), incluyendo poda si esa
+  // respuesta vino vacía. No modifica _syncSeq/_authSyncSeq (no comparte su
+  // lógica de descarte).
   async syncRutinasProfesor() {
     if (!window.supabaseEngine) return;
 
@@ -193,21 +233,34 @@ class GymStore {
 
     let huboCambios = false;
 
-    resultados.forEach(r => {
+    resultados.forEach((r, i) => {
       // Promesa rechazada o resultado ok:false -> se ignora, no se toca this.data.
       if (r.status !== 'fulfilled') return;
       const resultado = r.value;
       if (!resultado || resultado.ok !== true) return;
 
-      (resultado.rutinas || []).forEach(sbRutina => {
+      const alumnoId = alumnosConocidos[i].id;
+      const rutinasFrescas = resultado.rutinas || [];
+      const idsFrescos = new Set(rutinasFrescas.map(rt => rt.id));
+
+      // Poda: de las rutinas locales de ESTE alumno (nunca de otros, y nunca
+      // las "propias" auto-gestionadas, que son locales por diseño), eliminar
+      // las que ya no están en el snapshot fresco de Supabase.
+      this.data.rutinas = this.data.rutinas.filter(rt => {
+        if (rt.alumnoId !== alumnoId) return true;
+        if (rt.esPropia) return true;
+        return idsFrescos.has(rt.id);
+      });
+
+      rutinasFrescas.forEach(sbRutina => {
         const idx = this.data.rutinas.findIndex(rt => rt.id === sbRutina.id);
         if (idx >= 0) {
           this.data.rutinas[idx] = sbRutina;
         } else {
           this.data.rutinas.push(sbRutina);
         }
-        huboCambios = true;
       });
+      huboCambios = true;
     });
 
     if (huboCambios) {
@@ -288,18 +341,39 @@ class GymStore {
   }
 
   // --- AUTENTICACIÓN Y AUTORIZACIÓN POR DNI ---
-  login(dni, password) {
+  // Async a propósito: la secuencia deseada es (1) sincronizar con Supabase,
+  // (2) actualizar el estado local, (3) recién ahí validar credenciales.
+  // Antes se disparaba syncWithSupabase() sin esperarlo (fire-and-forget) y
+  // se validaba en el mismo tick contra this.data.profesores/alumnos, que
+  // podían venir de una versión vieja de localStorage — una cuenta borrada
+  // en Supabase pero todavía cacheada localmente podía loguearse igual.
+  //
+  // Limitación técnica a tener en cuenta: no conocemos el rol/id del usuario
+  // ANTES de identificarlo por dni+password, así que este await es a
+  // syncWithSupabase() SIN alumnoId (la sync "liviana": profiles + dnis, sin
+  // rutinas vía RPC — igual que ya se usaba en otros puntos de entrada). Es
+  // suficiente para este propósito porque profesores/alumnos (los datos que
+  // el login necesita) sí se traen en esa sync liviana; las rutinas del
+  // alumno se siguen trayendo después del login, como ya hacía app.js.
+  //
+  // syncWithSupabase() nunca rechaza (atrapa sus propios errores) y no hace
+  // nada si no hay window.supabaseEngine (offline/no inicializado), así que
+  // este await no puede trabar el login ni romper el funcionamiento offline:
+  // si Supabase no responde, simplemente se valida contra el último estado
+  // local conocido, igual que antes.
+  async login(dni, password) {
     const cleanDni = String(dni).trim();
     const cleanPass = String(password).trim();
 
-    // Intentar sincronización previa
-    this.syncWithSupabase();
+    // 1. Sincronizar con Supabase y esperar a que termine.
+    await this.syncWithSupabase();
 
-    // 1. Buscar en Profesores
+    // 2. Validar credenciales contra el estado YA actualizado.
+    // 2a. Buscar en Profesores
     const profesor = this.data.profesores.find(p => p.dni === cleanDni && p.password === cleanPass);
     if (profesor) return { rol: 'profesor', data: profesor };
 
-    // 2. Buscar en Alumnos
+    // 2b. Buscar en Alumnos
     const alumno = this.data.alumnos.find(a => a.dni === cleanDni && a.password === cleanPass);
     if (alumno) {
       return { rol: 'alumno', data: alumno };

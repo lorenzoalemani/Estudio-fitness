@@ -82,37 +82,52 @@ class SupabaseEngine {
         this.client.from('notifications').select('*')
       ]);
 
-      const dnisAutorizados = (resAuthDnis.data || []).map(d => ({ dni: d.dni, nombre: d.nombre }));
+      // IMPORTANTE: distinguimos "consulta falló" (error !== null → no podemos
+      // confiar en el resultado, no debe usarse para reconciliar/podar estado
+      // local) de "consulta exitosa pero sin filas" ([] legítimo → SÍ debe
+      // usarse para reconciliar, incluso vaciando la colección local si
+      // corresponde). Antes, `(res.data || [])` conflaba ambos casos: un error
+      // silencioso se comportaba igual que un vacío legítimo.
+      const dnisAutorizados = resAuthDnis.error
+        ? null
+        : (resAuthDnis.data || []).map(d => ({ dni: d.dni, nombre: d.nombre }));
 
-      const alumnos = (resProfiles.data || []).filter(p => p.rol === 'alumno').map(a => ({
-        id: a.id,
-        dni: a.dni,
-        password: a.password || "123",
-        nombre: a.nombre,
-        telefono: a.telefono || "",
-        estadoAutorizacion: a.estado_autorizacion,
-        fechaRegistro: a.created_at ? a.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
-        rutinaActivaId: null,
-        // Valor autoritativo desde Supabase. Puede venir undefined si la
-        // columna todavía no existe en producción (antes de correr el patch
-        // SQL) — en ese caso data.js conserva el valor local existente.
-        puntosTotal: (a.puntos_total !== null && a.puntos_total !== undefined) ? Number(a.puntos_total) : undefined,
-        rachaSemanal: (a.racha_semanas !== null && a.racha_semanas !== undefined)
-          ? { semanas: Number(a.racha_semanas), ultimaSemana: a.racha_ultima_semana || null }
-          : undefined
-      }));
+      const alumnos = resProfiles.error
+        ? null
+        : (resProfiles.data || []).filter(p => p.rol === 'alumno').map(a => ({
+            id: a.id,
+            dni: a.dni,
+            password: a.password || "123",
+            nombre: a.nombre,
+            telefono: a.telefono || "",
+            estadoAutorizacion: a.estado_autorizacion,
+            fechaRegistro: a.created_at ? a.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
+            rutinaActivaId: null,
+            // Valor autoritativo desde Supabase. Puede venir undefined si la
+            // columna todavía no existe en producción (antes de correr el patch
+            // SQL) — en ese caso data.js conserva el valor local existente.
+            puntosTotal: (a.puntos_total !== null && a.puntos_total !== undefined) ? Number(a.puntos_total) : undefined,
+            rachaSemanal: (a.racha_semanas !== null && a.racha_semanas !== undefined)
+              ? { semanas: Number(a.racha_semanas), ultimaSemana: a.racha_ultima_semana || null }
+              : undefined
+          }));
 
-      const profesores = (resProfiles.data || []).filter(p => p.rol === 'profesor').map(p => ({
-        id: p.id,
-        dni: p.dni,
-        password: p.password || "123",
-        nombre: p.nombre,
-        rol: "profesor"
-      }));
+      const profesores = resProfiles.error
+        ? null
+        : (resProfiles.data || []).filter(p => p.rol === 'profesor').map(p => ({
+            id: p.id,
+            dni: p.dni,
+            password: p.password || "123",
+            nombre: p.nombre,
+            rol: "profesor"
+          }));
 
       // 2. Rutinas: solo via RPC segura cuando hay alumnoId conocido.
-      //    Si es profesor o no hay alumnoId, las rutinas se omiten (usa localStorage).
-      let rutinas = [];
+      //    Si es profesor o no hay alumnoId, no se consulta nada → `null`
+      //    (distinto de "consultamos y no hay rutinas", que sería `[]`).
+      //    Si la RPC falla, también queda en `null` para no pisar/podar el
+      //    estado local con un resultado que no pudimos verificar.
+      let rutinas = null;
       if (alumnoId) {
         const alumnoUuid = this.ensureValidUUID(alumnoId);
         const { data: rpcData, error: rpcErr } = await this.client.rpc('obtener_rutinas_alumno', {
@@ -139,35 +154,43 @@ class SupabaseEngine {
         });
       });
 
-      const workoutLogs = (resLogs.data || []).map(l => ({
-        id: l.id,
-        alumnoId: l.alumno_id,
-        rutinaId: l.routine_id,
-        diaId: l.dia_id || "dia-1",
-        diaNombre: l.dia_nombre,
-        fecha: l.fecha_entrenamiento,
-        estado: l.estado,
-        comentarioGeneral: l.comentario_general || "",
-        sets: setsByLog[l.id] || []
-      }));
+      const workoutLogs = resLogs.error
+        ? null
+        : (resLogs.data || []).map(l => ({
+            id: l.id,
+            alumnoId: l.alumno_id,
+            rutinaId: l.routine_id,
+            diaId: l.dia_id || "dia-1",
+            diaNombre: l.dia_nombre,
+            fecha: l.fecha_entrenamiento,
+            estado: l.estado,
+            comentarioGeneral: l.comentario_general || "",
+            sets: setsByLog[l.id] || []
+          }));
 
-      const notificaciones = (resNotifs.data || []).map(n => ({
-        id: n.id,
-        destinatarioRol: n.destinatario_rol,
-        alumnoId: n.alumno_id,
-        mensaje: n.mensaje,
-        rutaDestino: n.ruta_destino,
-        fecha: n.created_at,
-        leido: n.leido
-      }));
+      const notificaciones = resNotifs.error
+        ? null
+        : (resNotifs.data || []).map(n => ({
+            id: n.id,
+            destinatarioRol: n.destinatario_rol,
+            alumnoId: n.alumno_id,
+            mensaje: n.mensaje,
+            rutaDestino: n.ruta_destino,
+            fecha: n.created_at,
+            leido: n.leido
+          }));
 
+      // A partir de acá cada campo es: un array (posiblemente vacío = snapshot
+      // válido) o `null` (no se consultó o la consulta falló → no tocar/podar
+      // el estado local para ese campo). data.js debe chequear `!== null`,
+      // NO `.length > 0`, para no confundir "vacío real" con "sin datos".
       return {
-        dnisAutorizados: dnisAutorizados.length > 0 ? dnisAutorizados : null,
-        alumnos: alumnos.length > 0 ? alumnos : null,
-        profesores: profesores.length > 0 ? profesores : null,
-        rutinas: rutinas.length > 0 ? rutinas : null,
-        workoutLogs: workoutLogs.length > 0 ? workoutLogs : null,
-        notificaciones: notificaciones.length > 0 ? notificaciones : null
+        dnisAutorizados,
+        alumnos,
+        profesores,
+        rutinas,
+        workoutLogs,
+        notificaciones
       };
     } catch (e) {
       console.warn("⚠️ Error obteniendo datos de Supabase:", e);
