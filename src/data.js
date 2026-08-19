@@ -119,10 +119,9 @@ class GymStore {
               ...sbAlumno,
               // password: la consulta a `profiles` (ver fetchFullStateFromSupabase)
               // NO selecciona esta columna, así que sbAlumno.password siempre
-              // cae en el fallback "123" — nunca es el valor real. Si copiáramos
-              // sbAlumno tal cual pisaríamos la contraseña real guardada
-              // localmente con ese fallback en cada sync. Se conserva SIEMPRE
-              // el password local si existe.
+              // es null (el fallback). Si copiáramos sbAlumno tal cual
+              // pisaríamos la contraseña real guardada localmente con null en
+              // cada sync. Se conserva SIEMPRE el password local si existe.
               password: loc.password !== undefined ? loc.password : sbAlumno.password,
               // rutinaActivaId: Supabase siempre lo manda en null (no se lee
               // de esa tabla); se conserva el valor local conocido si existe,
@@ -153,7 +152,7 @@ class GymStore {
               ...sbProfesor,
               // password: mismo motivo que en alumnos — la columna no viaja
               // desde Supabase (ver fetchFullStateFromSupabase), sbProfesor.password
-              // es siempre el fallback "123". Se conserva el valor local real.
+              // es siempre null. Se conserva el valor local real.
               password: loc.password !== undefined ? loc.password : sbProfesor.password
             };
           });
@@ -389,7 +388,7 @@ class GymStore {
     if (profesor) return { rol: 'profesor', data: profesor };
 
     // 2b. Buscar en Alumnos
-    const alumno = this.data.alumnos.find(a => a.dni === cleanDni && a.password === cleanPass);
+    const alumno = this.data.alumnos.find(a => a.dni === cleanDni && a.password !== null && a.password === cleanPass);
     if (alumno) {
       return { rol: 'alumno', data: alumno };
     }
@@ -399,10 +398,35 @@ class GymStore {
 
   registrarseAlumno({ dni, password, nombre, telefono }) {
     const cleanDni = String(dni).trim();
-    if (this.data.alumnos.some(a => a.dni === cleanDni)) {
+    const cleanPass = String(password).trim();
+
+    const existente = this.data.alumnos.find(a => a.dni === cleanDni);
+
+    if (existente) {
+      // Caso B: alumno precreado/autorizado por el profesor (password === null
+      // significa que el registro está incompleto — el alumno aún no eligió su
+      // contraseña). Se completa la cuenta con los datos que el alumno acaba de
+      // proporcionar en el formulario de registro.
+      if (existente.password === null) {
+        existente.password = cleanPass;
+        existente.nombre = nombre.trim();
+        existente.telefono = telefono ? telefono.trim() : (existente.telefono || "");
+
+        // Persistir perfil en Supabase DB (INSERT — el perfil puede no existir
+        // aún en la tabla profiles si solo se creó localmente por el profesor).
+        if (window.supabaseEngine) {
+          window.supabaseEngine.registrarPerfilEnSupabase(existente);
+        }
+
+        this.saveData();
+        return existente;
+      }
+
+      // El alumno ya tiene contraseña real → ya completó su registro anteriormente.
       throw new Error("Ya existe una cuenta creada con ese DNI.");
     }
 
+    // Caso A: DNI nuevo — crear alumno normalmente.
     // Verificar si el DNI fue autorizado previamente por el Gimnasio
     const estaAutorizado = this.data.dnisAutorizados.some(d => d.dni === cleanDni);
     const generatedId = (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() : ("al-" + Date.now());
@@ -410,7 +434,7 @@ class GymStore {
     const nuevoAlumno = {
       id: generatedId,
       dni: cleanDni,
-      password: String(password).trim(),
+      password: cleanPass,
       nombre: nombre.trim(),
       telefono: telefono ? telefono.trim() : "",
       estadoAutorizacion: estaAutorizado ? 'autorizado' : 'pendiente',
@@ -451,7 +475,7 @@ class GymStore {
       alumno = {
         id: newId,
         dni: cleanDni,
-        password: "123",
+        password: null,
         nombre: nombre.trim(),
         telefono: telefono ? telefono.trim() : "",
         estadoAutorizacion: 'autorizado',

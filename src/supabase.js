@@ -97,7 +97,7 @@ class SupabaseEngine {
         : (resProfiles.data || []).filter(p => p.rol === 'alumno').map(a => ({
             id: a.id,
             dni: a.dni,
-            password: a.password || "123",
+            password: a.password || null,
             nombre: a.nombre,
             telefono: a.telefono || "",
             estadoAutorizacion: a.estado_autorizacion,
@@ -117,7 +117,7 @@ class SupabaseEngine {
         : (resProfiles.data || []).filter(p => p.rol === 'profesor').map(p => ({
             id: p.id,
             dni: p.dni,
-            password: p.password || "123",
+            password: p.password || null,
             nombre: p.nombre,
             rol: "profesor"
           }));
