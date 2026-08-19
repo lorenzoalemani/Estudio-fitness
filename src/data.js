@@ -409,11 +409,12 @@ class GymStore {
 
           // Vincular en la DB (fire-and-forget: si falla, el perfil local ya
           // tiene el authUserId y la próxima sync lo re-intentará via RPC).
+          // authUserId localmente se usa para sesión, pero las RPCs usan auth.uid() interno.
           if (rol === 'profesor') {
-            engine.vincularPerfilProfesor(authUserId, cleanDni)
+            engine.vincularPerfilProfesor(cleanDni)
               .then(r => { if (!r.ok) console.warn('⚠️ vincularPerfilProfesor falló (no crítico):', r.error); });
           } else {
-            engine.vincularPerfilAlumno(authUserId, cleanDni)
+            engine.vincularPerfilAlumno(cleanDni, perfil.telefono || '')
               .then(r => { if (!r.ok) console.warn('⚠️ vincularPerfilAlumno falló (no crítico):', r.error); });
           }
         }
@@ -473,17 +474,31 @@ class GymStore {
         this.saveData();
 
         // Intentar crear cuenta en Supabase Auth y vincular (no bloquea el flujo).
+        console.log('REGISTER DEBUG supabaseEngine:', !!window.supabaseEngine);
+        console.log('REGISTER DEBUG client:', !!window.supabaseEngine?.client);
         if (window.supabaseEngine) {
           try {
-            const authRes = await window.supabaseEngine.authSignUp(cleanDni, 'alumno', cleanPass);
-            if (authRes.ok && authRes.user) {
-              existente.authUserId = authRes.user.id;
-              this.saveData();
-              window.supabaseEngine.vincularPerfilAlumno(authRes.user.id, cleanDni)
-                .then(r => { if (!r.ok) console.warn('⚠️ vincularPerfilAlumno (caso B) falló (no crítico):', r.error); });
-              console.log('✅ authSignUp OK (caso B alumno precreado) → authUserId:', authRes.user.id);
+            // 1. Verificar datos (DNI + Teléfono) antes de Auth
+            const verifyRes = await window.supabaseEngine.verificarDatosActivacionAlumno(cleanDni, telefono);
+            if (verifyRes.ok) {
+              // 2. Crear Auth user
+              const authRes = await window.supabaseEngine.authSignUp(cleanDni, 'alumno', cleanPass);
+              if (authRes.ok && authRes.user) {
+                // 3. Vincular perfil (AWAIT)
+                const linkRes = await window.supabaseEngine.vincularPerfilAlumno(cleanDni, existente.telefono || '');
+                if (linkRes.ok) {
+                  // 4. Solo se considera exitoso si la RPC funcionó
+                  existente.authUserId = authRes.user.id;
+                  this.saveData();
+                  console.log('✅ authSignUp y vinculación OK (caso B alumno precreado) → authUserId:', authRes.user.id);
+                } else {
+                  console.warn('⚠️ authSignUp OK pero vincularPerfilAlumno (caso B) falló:', linkRes.error);
+                }
+              } else {
+                console.log('ℹ️ authSignUp no OK (caso B) — se usará contraseña legacy:', authRes.error);
+              }
             } else {
-              console.log('ℹ️ authSignUp no OK (caso B) — se usará contraseña legacy:', authRes.error);
+               console.log('ℹ️ verificarDatosActivacionAlumno falló — no se creará cuenta Auth:', verifyRes.error);
             }
           } catch (e) {
             console.warn('⚠️ authSignUp excepción (caso B, no crítico):', e);
@@ -523,15 +538,20 @@ class GymStore {
     this.saveData();
 
     // Intentar crear cuenta en Supabase Auth y vincular (no bloquea el flujo).
+    console.log('REGISTER DEBUG supabaseEngine:', !!window.supabaseEngine);
+    console.log('REGISTER DEBUG client:', !!window.supabaseEngine?.client);
     if (window.supabaseEngine) {
       try {
         const authRes = await window.supabaseEngine.authSignUp(cleanDni, 'alumno', cleanPass);
         if (authRes.ok && authRes.user) {
-          nuevoAlumno.authUserId = authRes.user.id;
-          this.saveData();
-          window.supabaseEngine.vincularPerfilAlumno(authRes.user.id, cleanDni)
-            .then(r => { if (!r.ok) console.warn('⚠️ vincularPerfilAlumno (caso A) falló (no crítico):', r.error); });
-          console.log('✅ authSignUp OK (caso A alumno nuevo) → authUserId:', authRes.user.id);
+          const linkRes = await window.supabaseEngine.vincularPerfilAlumno(cleanDni, nuevoAlumno.telefono || '');
+          if (linkRes.ok) {
+            nuevoAlumno.authUserId = authRes.user.id;
+            this.saveData();
+            console.log('✅ authSignUp y vinculación OK (caso A alumno nuevo) → authUserId:', authRes.user.id);
+          } else {
+            console.warn('⚠️ authSignUp OK pero vincularPerfilAlumno (caso A) falló:', linkRes.error);
+          }
         } else {
           console.log('ℹ️ authSignUp no OK (caso A) — se usará contraseña legacy:', authRes.error);
         }

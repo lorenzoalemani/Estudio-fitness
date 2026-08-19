@@ -728,29 +728,36 @@ class SupabaseEngine {
   // =========================================================================
 
   // Genera el email interno derivado de DNI+rol.
-  // Formato: "<dni>-<rol>@estudiofitnessinternal.com"
+  // Formato requerido: "dni_alumno_DNI@estudiofitness.app"
   // Este email nunca se muestra al usuario; es solo la clave de Auth.
   getInternalEmail(dni, rol) {
-    return `${String(dni).trim()}-${rol}@estudiofitnessinternal.com`;
+    return `dni_${rol}_${String(dni).trim()}@estudiofitness.app`;
   }
 
   // Crea una cuenta de Supabase Auth para dni+rol con la password dada.
   // Retorna { ok, user, session } o { ok: false, error }.
   // No altera ningún dato de perfil ni contraseña legacy.
   async authSignUp(dni, rol, password) {
+    console.log('AUTH DEBUG engine:', window.supabaseEngine);
+    console.log('AUTH DEBUG client:', window.supabaseEngine?.client);
+    console.log('AUTH DEBUG signup iniciado:', dni, rol);
+
     if (!this.client) return { ok: false, error: 'cliente_no_inicializado' };
     try {
       const email = this.getInternalEmail(dni, rol);
       const { data, error } = await this.client.auth.signUp({ email, password });
+
+      console.log('AUTH DEBUG signup resultado:', data, error);
+
       if (error) {
-        console.warn('⚠️ authSignUp error:', error.message);
-        return { ok: false, error: error.message };
+        console.warn('⚠️ authSignUp error detallado:', error);
+        return { ok: false, error: error };
       }
       console.log('✅ authSignUp OK para', email, '→ user.id:', data.user?.id);
       return { ok: true, user: data.user, session: data.session };
     } catch (err) {
       console.warn('⚠️ Excepción en authSignUp:', err);
-      return { ok: false, error: err.message };
+      return { ok: false, error: err };
     }
   }
 
@@ -799,15 +806,15 @@ class SupabaseEngine {
     }
   }
 
-  // RPC: verifica que el DNI exista como alumno autorizado y que el nombre
-  // coincida con el que tiene registrado el profesor. Usada antes de completar
-  // el registro de un alumno precreado. Retorna { ok, data } o { ok: false, error }.
-  async verificarDatosActivacionAlumno(dni, nombre) {
+  // RPC: verifica que el DNI exista como alumno autorizado y que el teléfono
+  // coincida. Usada antes de completar el registro de un alumno precreado.
+  // Retorna { ok, data } o { ok: false, error }.
+  async verificarDatosActivacionAlumno(dni, telefono) {
     if (!this.client) return { ok: false, error: 'cliente_no_inicializado' };
     try {
       const { data, error } = await this.client.rpc('verificar_datos_activacion_alumno', {
         p_dni: String(dni).trim(),
-        p_nombre: String(nombre).trim()
+        p_telefono: String(telefono || '').trim()
       });
       if (error) {
         console.warn('⚠️ RPC verificar_datos_activacion_alumno error:', error.message);
@@ -820,15 +827,15 @@ class SupabaseEngine {
     }
   }
 
-  // RPC: vincula un auth_user_id de Supabase Auth al perfil de alumno
-  // identificado por DNI. Solo setea profiles.auth_user_id — no altera
-  // profiles.id ni ninguna contraseña.
-  async vincularPerfilAlumno(authUserId, dni) {
+  // RPC: vincula el usuario de Supabase Auth actualmente autenticado al perfil de alumno
+  // identificado por DNI. Usa auth.uid() internamente, por lo que no necesita p_auth_user_id.
+  // Solo setea profiles.auth_user_id — no altera profiles.id ni ninguna contraseña.
+  async vincularPerfilAlumno(dni, telefono) {
     if (!this.client) return { ok: false, error: 'cliente_no_inicializado' };
     try {
       const { data, error } = await this.client.rpc('vincular_perfil_alumno_a_auth_user', {
-        p_auth_user_id: authUserId,
-        p_dni: String(dni).trim()
+        p_dni: String(dni).trim(),
+        p_telefono_verificacion: String(telefono || '').trim()
       });
       if (error) {
         console.warn('⚠️ RPC vincular_perfil_alumno_a_auth_user error:', error.message);
@@ -842,14 +849,13 @@ class SupabaseEngine {
     }
   }
 
-  // RPC: vincula un auth_user_id de Supabase Auth al perfil de profesor
-  // identificado por DNI. Solo setea profiles.auth_user_id — no altera
-  // profiles.id ni ninguna contraseña.
-  async vincularPerfilProfesor(authUserId, dni) {
+  // RPC: vincula el usuario de Supabase Auth actualmente autenticado al perfil de profesor
+  // identificado por DNI. Usa auth.uid() internamente, por lo que no necesita p_auth_user_id.
+  // Solo setea profiles.auth_user_id — no altera profiles.id ni ninguna contraseña.
+  async vincularPerfilProfesor(dni) {
     if (!this.client) return { ok: false, error: 'cliente_no_inicializado' };
     try {
       const { data, error } = await this.client.rpc('vincular_perfil_profesor_a_auth_user', {
-        p_auth_user_id: authUserId,
         p_dni: String(dni).trim()
       });
       if (error) {
