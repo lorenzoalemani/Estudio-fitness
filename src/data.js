@@ -123,6 +123,10 @@ class GymStore {
               // pisaríamos la contraseña real guardada localmente con null en
               // cada sync. Se conserva SIEMPRE el password local si existe.
               password: loc.password !== undefined ? loc.password : sbAlumno.password,
+              // authUserId: si Supabase ya lo tiene (cuenta vinculada), toma el
+              // valor de Supabase. Si Supabase devuelve null/undefined (cuenta
+              // todavía no vinculada), se conserva el que ya había en local.
+              authUserId: sbAlumno.authUserId !== undefined ? sbAlumno.authUserId : loc.authUserId,
               // rutinaActivaId: Supabase siempre lo manda en null (no se lee
               // de esa tabla); se conserva el valor local conocido si existe,
               // igual que hacía la lógica anterior.
@@ -153,7 +157,11 @@ class GymStore {
               // password: mismo motivo que en alumnos — la columna no viaja
               // desde Supabase (ver fetchFullStateFromSupabase), sbProfesor.password
               // es siempre null. Se conserva el valor local real.
-              password: loc.password !== undefined ? loc.password : sbProfesor.password
+              password: loc.password !== undefined ? loc.password : sbProfesor.password,
+              // authUserId: si Supabase ya lo tiene (cuenta vinculada), toma el
+              // valor de Supabase. Si Supabase devuelve null/undefined (todavía
+              // no vinculado), se conserva el que ya había en local.
+              authUserId: sbProfesor.authUserId !== undefined ? sbProfesor.authUserId : loc.authUserId
             };
           });
           huboCambios = true;
@@ -357,24 +365,18 @@ class GymStore {
   // --- AUTENTICACIÓN Y AUTORIZACIÓN POR DNI ---
   // Async a propósito: la secuencia deseada es (1) sincronizar con Supabase,
   // (2) actualizar el estado local, (3) recién ahí validar credenciales.
-  // Antes se disparaba syncWithSupabase() sin esperarlo (fire-and-forget) y
-  // se validaba en el mismo tick contra this.data.profesores/alumnos, que
-  // podían venir de una versión vieja de localStorage — una cuenta borrada
-  // en Supabase pero todavía cacheada localmente podía loguearse igual.
   //
-  // Limitación técnica a tener en cuenta: no conocemos el rol/id del usuario
-  // ANTES de identificarlo por dni+password, así que este await es a
-  // syncWithSupabase() SIN alumnoId (la sync "liviana": profiles + dnis, sin
-  // rutinas vía RPC — igual que ya se usaba en otros puntos de entrada). Es
-  // suficiente para este propósito porque profesores/alumnos (los datos que
-  // el login necesita) sí se traen en esa sync liviana; las rutinas del
-  // alumno se siguen trayendo después del login, como ya hacía app.js.
+  // --- SUPABASE AUTH (Etapa 1) ---
+  // Después de identificar el rol por DNI, se intenta authSignIn contra
+  // Supabase Auth. Si tiene éxito, se registra el authUserId en el perfil
+  // local y se llama a la RPC de vinculación para persistirlo en la DB.
+  // Si Supabase Auth falla (cuenta todavía no creada), se cae al flujo
+  // legacy de validación por contraseña, que sigue intacto.
+  // La contraseña legacy NUNCA se borra en esta etapa.
   //
   // syncWithSupabase() nunca rechaza (atrapa sus propios errores) y no hace
   // nada si no hay window.supabaseEngine (offline/no inicializado), así que
-  // este await no puede trabar el login ni romper el funcionamiento offline:
-  // si Supabase no responde, simplemente se valida contra el último estado
-  // local conocido, igual que antes.
+  // este await no puede trabar el login ni romper el funcionamiento offline.
   async login(dni, password) {
     const cleanDni = String(dni).trim();
     const cleanPass = String(password).trim();
@@ -382,21 +384,71 @@ class GymStore {
     // 1. Sincronizar con Supabase y esperar a que termine.
     await this.syncWithSupabase();
 
-    // 2. Validar credenciales contra el estado YA actualizado.
-    // 2a. Buscar en Profesores
-    const profesor = this.data.profesores.find(p => p.dni === cleanDni && p.password === cleanPass);
-    if (profesor) return { rol: 'profesor', data: profesor };
+    // 2. Detectar rol por DNI (necesario para generar el email interno de Auth).
+    const profesor = this.data.profesores.find(p => p.dni === cleanDni);
+    const alumno   = this.data.alumnos.find(a => a.dni === cleanDni);
 
-    // 2b. Buscar en Alumnos
-    const alumno = this.data.alumnos.find(a => a.dni === cleanDni && a.password !== null && a.password === cleanPass);
-    if (alumno) {
-      return { rol: 'alumno', data: alumno };
+    // 3. Intentar Supabase Auth si hay motor disponible y el rol es conocido.
+    //    El resultado de Supabase Auth NO reemplaza la validación de contraseña
+    //    legacy en esta etapa: solo agrega el authUserId al perfil.
+    const engine = window.supabaseEngine;
+    if (engine && (profesor || alumno)) {
+      const rol = profesor ? 'profesor' : 'alumno';
+      const perfil = profesor || alumno;
+      const authRes = await engine.authSignIn(cleanDni, rol, cleanPass);
+
+      if (authRes.ok && authRes.user) {
+        // Supabase Auth validó la contraseña correctamente.
+        const authUserId = authRes.user.id;
+        console.log(`🔑 Supabase Auth OK (${rol} ${cleanDni}) → authUserId: ${authUserId}`);
+
+        // Persistir authUserId en el perfil local si no lo tenía ya.
+        if (!perfil.authUserId) {
+          perfil.authUserId = authUserId;
+          this.saveData();
+
+          // Vincular en la DB (fire-and-forget: si falla, el perfil local ya
+          // tiene el authUserId y la próxima sync lo re-intentará via RPC).
+          if (rol === 'profesor') {
+            engine.vincularPerfilProfesor(authUserId, cleanDni)
+              .then(r => { if (!r.ok) console.warn('⚠️ vincularPerfilProfesor falló (no crítico):', r.error); });
+          } else {
+            engine.vincularPerfilAlumno(authUserId, cleanDni)
+              .then(r => { if (!r.ok) console.warn('⚠️ vincularPerfilAlumno falló (no crítico):', r.error); });
+          }
+        }
+
+        // Retornar sesión usando el perfil local ya actualizado (que tiene
+        // la contraseña legacy intacta).
+        if (profesor) return { rol: 'profesor', data: perfil };
+        if (alumno)   return { rol: 'alumno',   data: perfil };
+      }
+      // authSignIn devolvió ok:false → la cuenta Supabase Auth todavía no
+      // existe o la contraseña no coincide. Caemos al flujo legacy.
+      console.log(`ℹ️ authSignIn no tuvo éxito para ${rol} ${cleanDni} → usando flujo legacy.`);
+    }
+
+    // 4. Flujo legacy intacto — validación por DNI + contraseña en local.
+    // 4a. Buscar en Profesores
+    const profesorLegacy = this.data.profesores.find(p => p.dni === cleanDni && p.password === cleanPass);
+    if (profesorLegacy) return { rol: 'profesor', data: profesorLegacy };
+
+    // 4b. Buscar en Alumnos
+    const alumnoLegacy = this.data.alumnos.find(a => a.dni === cleanDni && a.password !== null && a.password === cleanPass);
+    if (alumnoLegacy) {
+      return { rol: 'alumno', data: alumnoLegacy };
     }
 
     return null;
   }
 
-  registrarseAlumno({ dni, password, nombre, telefono }) {
+  // Convirtida a async en Etapa 1 de migración: después de registrar el
+  // alumno localmente y en Supabase DB (profiles), se intenta crear la
+  // cuenta en Supabase Auth (authSignUp) y vincularla. Si authSignUp
+  // falla, el registro local/DB queda intacto y el alumno puede seguir
+  // usando la contraseña legacy para ingresar.
+  // La contraseña legacy NUNCA se borra en esta etapa.
+  async registrarseAlumno({ dni, password, nombre, telefono }) {
     const cleanDni = String(dni).trim();
     const cleanPass = String(password).trim();
 
@@ -419,6 +471,25 @@ class GymStore {
         }
 
         this.saveData();
+
+        // Intentar crear cuenta en Supabase Auth y vincular (no bloquea el flujo).
+        if (window.supabaseEngine) {
+          try {
+            const authRes = await window.supabaseEngine.authSignUp(cleanDni, 'alumno', cleanPass);
+            if (authRes.ok && authRes.user) {
+              existente.authUserId = authRes.user.id;
+              this.saveData();
+              window.supabaseEngine.vincularPerfilAlumno(authRes.user.id, cleanDni)
+                .then(r => { if (!r.ok) console.warn('⚠️ vincularPerfilAlumno (caso B) falló (no crítico):', r.error); });
+              console.log('✅ authSignUp OK (caso B alumno precreado) → authUserId:', authRes.user.id);
+            } else {
+              console.log('ℹ️ authSignUp no OK (caso B) — se usará contraseña legacy:', authRes.error);
+            }
+          } catch (e) {
+            console.warn('⚠️ authSignUp excepción (caso B, no crítico):', e);
+          }
+        }
+
         return existente;
       }
 
@@ -450,6 +521,25 @@ class GymStore {
     }
 
     this.saveData();
+
+    // Intentar crear cuenta en Supabase Auth y vincular (no bloquea el flujo).
+    if (window.supabaseEngine) {
+      try {
+        const authRes = await window.supabaseEngine.authSignUp(cleanDni, 'alumno', cleanPass);
+        if (authRes.ok && authRes.user) {
+          nuevoAlumno.authUserId = authRes.user.id;
+          this.saveData();
+          window.supabaseEngine.vincularPerfilAlumno(authRes.user.id, cleanDni)
+            .then(r => { if (!r.ok) console.warn('⚠️ vincularPerfilAlumno (caso A) falló (no crítico):', r.error); });
+          console.log('✅ authSignUp OK (caso A alumno nuevo) → authUserId:', authRes.user.id);
+        } else {
+          console.log('ℹ️ authSignUp no OK (caso A) — se usará contraseña legacy:', authRes.error);
+        }
+      } catch (e) {
+        console.warn('⚠️ authSignUp excepción (caso A, no crítico):', e);
+      }
+    }
+
     return nuevoAlumno;
   }
 

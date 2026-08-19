@@ -406,19 +406,27 @@ document.addEventListener('DOMContentLoaded', () => {
 
     document.getElementById('btnBackToLogin')?.addEventListener('click', () => renderLoginScreen());
 
-    document.getElementById('formRegisterAlumno')?.addEventListener('submit', (e) => {
+    document.getElementById('formRegisterAlumno')?.addEventListener('submit', async (e) => {
       e.preventDefault();
+      const submitBtn = e.target.querySelector('button[type="submit"]');
+      if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Registrando...'; }
       try {
         const dni = document.getElementById('regDni').value;
         const pass = document.getElementById('regPass').value;
         const nombre = document.getElementById('regNombre').value;
         const tel = document.getElementById('regTel').value;
 
-        const alumno = store.registrarseAlumno({ dni, password: pass, nombre, telefono: tel });
+        // registrarseAlumno es async en Etapa 1: intenta authSignUp después
+        // del registro local. El await es necesario para que la UI no avance
+        // antes de que el intento de Supabase Auth termine (aunque no sea bloqueante
+        // para el perfil local, sí debe resolverse antes de renderApp).
+        const alumno = await store.registrarseAlumno({ dni, password: pass, nombre, telefono: tel });
         appState.usuarioActual = { rol: 'alumno', data: alumno };
         renderApp();
       } catch (err) {
         alert("❌ Error: " + err.message);
+      } finally {
+        if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Crear mi Cuenta 📝'; }
       }
     });
   }
@@ -1799,7 +1807,9 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function bindHeaderEvents() {
-    document.getElementById('btnLogout')?.addEventListener('click', () => {
+    document.getElementById('btnLogout')?.addEventListener('click', async () => {
+      // Cerrar sesión en Supabase Auth (fire-and-forget: si falla, la sesión
+      // local se limpia igual y el usuario queda deslogueado en la app).
       // A propósito NO se llama a reg.pushManager.getSubscription().unsubscribe()
       // acá. La suscripción física del navegador es del dispositivo, no de la
       // sesión de la app: si la desuscribiéramos en cada logout, el próximo
@@ -1809,7 +1819,13 @@ document.addEventListener('DOMContentLoaded', () => {
       // (ver SQL), el problema de "queda asociado al usuario viejo" se
       // resuelve en el próximo login+activación sin necesidad de desuscribir
       // acá. Solo se limpia el estado de sesión de la app.
+      if (window.supabaseEngine) {
+        window.supabaseEngine.authSignOut(); // no se espera (fire-and-forget)
+      }
+      window._sessionAlumnoId  = null;
+      window._sessionProfesorId = null;
       appState.usuarioActual = null;
+      appState.historialProfesorLogs = null;
       renderApp();
     });
 
@@ -2020,5 +2036,76 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  renderApp();
+  // --- RECUPERAR SESIÓN DE SUPABASE AUTH AL INICIO (Etapa 1) ---
+  // Se ejecuta como IIFE async para poder usar await antes del primer renderApp().
+  // Si Supabase Auth tiene una sesión activa (JWT válido en localStorage del
+  // navegador), se intenta recuperar el perfil local correspondiente por
+  // authUserId = session.user.id. Si se encuentra, se restaura appState y
+  // window._session* exactamente como haría un login() exitoso. Si no hay
+  // sesión, o el perfil no existe localmente todavía (todavía sin vincular),
+  // se arranca en la pantalla de login sin mostrar ningún error.
+  // Este bloque no modifica ni borra ninguna contraseña legacy.
+  (async () => {
+    try {
+      if (window.supabaseEngine) {
+        // Esperar que el store tenga datos básicos (la sync inicial diferida
+        // del constructor de GymStore ya se programó con setTimeout 400ms;
+        // aquí no la esperamos explícitamente para no bloquear el arranque,
+        // pero usamos lo que ya hay en localStorage + lo que Supabase Auth
+        // puede darnos en el token).
+        const session = await window.supabaseEngine.authGetSession();
+        if (session && session.user) {
+          const authUid = session.user.id;
+          console.log('🔑 Sesión Supabase Auth encontrada al inicio → authUserId:', authUid);
+
+          // Buscar perfil local por authUserId (ya puede estar en localStorage
+          // si el usuario se logueó antes y guardamos el campo).
+          const perfilProfesor = store.data.profesores.find(p => p.authUserId === authUid);
+          const perfilAlumno   = !perfilProfesor
+            ? store.data.alumnos.find(a => a.authUserId === authUid)
+            : null;
+
+          if (perfilProfesor) {
+            appState.usuarioActual = { rol: 'profesor', data: perfilProfesor };
+            window._sessionProfesorId = perfilProfesor.id;
+            window._sessionAlumnoId   = null;
+            console.log('✅ Sesión restaurada como PROFESOR:', perfilProfesor.nombre);
+            // Sincronizar rutinas del profesor en segundo plano
+            setTimeout(() => gymStore.syncRutinasProfesor(), 400);
+          } else if (perfilAlumno) {
+            appState.usuarioActual = { rol: 'alumno', data: perfilAlumno };
+            window._sessionAlumnoId   = perfilAlumno.id;
+            window._sessionProfesorId = null;
+            console.log('✅ Sesión restaurada como ALUMNO:', perfilAlumno.nombre);
+            // Sincronizar rutinas e historial del alumno en segundo plano
+            setTimeout(async () => {
+              await gymStore.syncWithSupabase(perfilAlumno.id);
+              if (window.supabaseEngine) {
+                const sbLogs = await window.supabaseEngine.obtenerHistorialDesdeSupabase(perfilAlumno.id);
+                if (sbLogs && sbLogs.length > 0) {
+                  sbLogs.forEach(sbLog => {
+                    const idx = gymStore.data.workoutLogs.findIndex(w => w.id === sbLog.id);
+                    if (idx >= 0) gymStore.data.workoutLogs[idx] = sbLog;
+                    else gymStore.data.workoutLogs.push(sbLog);
+                  });
+                  gymStore.saveData();
+                  window.dispatchEvent(new CustomEvent('gym_store_updated'));
+                }
+              }
+            }, 400);
+          } else {
+            // Hay sesión Auth pero el perfil aún no está vinculado localmente.
+            // Esto puede pasar si el usuario limpia localStorage pero la sesión
+            // de Auth sigue válida. En ese caso arrancamos en login para que
+            // el usuario ingrese sus credenciales y la vinculación se complete.
+            console.log('ℹ️ Sesión Auth encontrada pero perfil no vinculado localmente → ir a login.');
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('⚠️ Error al recuperar sesión inicial de Supabase Auth (no crítico):', e);
+    }
+
+    renderApp();
+  })();
 });

@@ -76,7 +76,7 @@ class SupabaseEngine {
         // ranking (ver sql/patch_gestion_rutinas_y_puntos.sql). Se leen acá para
         // que cada dispositivo muestre el mismo número, en vez del contador
         // aislado que vivía antes solo en alumno.puntosTotal de localStorage.
-        this.client.from('profiles').select('id,dni,nombre,telefono,rol,estado_autorizacion,created_at,puntos_total,racha_semanas,racha_ultima_semana'),
+        this.client.from('profiles').select('id,dni,nombre,telefono,rol,estado_autorizacion,created_at,puntos_total,racha_semanas,racha_ultima_semana,auth_user_id'),
         this.client.from('workout_logs').select('*'),
         this.client.from('workout_log_sets').select('*'),
         this.client.from('notifications').select('*')
@@ -103,6 +103,10 @@ class SupabaseEngine {
             estadoAutorizacion: a.estado_autorizacion,
             fechaRegistro: a.created_at ? a.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
             rutinaActivaId: null,
+            // auth_user_id: UUID de Supabase Auth. Puede ser null si la cuenta
+            // todavía no fue vinculada (Etapa 1 de migración). Se preserva
+            // undefined si la columna no existe aún en producción.
+            authUserId: a.auth_user_id !== undefined ? (a.auth_user_id || null) : undefined,
             // Valor autoritativo desde Supabase. Puede venir undefined si la
             // columna todavía no existe en producción (antes de correr el patch
             // SQL) — en ese caso data.js conserva el valor local existente.
@@ -119,7 +123,10 @@ class SupabaseEngine {
             dni: p.dni,
             password: p.password || null,
             nombre: p.nombre,
-            rol: "profesor"
+            rol: "profesor",
+            // auth_user_id: UUID de Supabase Auth. Puede ser null si todavía
+            // no fue vinculado (Etapa 1 de migración).
+            authUserId: p.auth_user_id !== undefined ? (p.auth_user_id || null) : undefined
           }));
 
       // 2. Rutinas: solo via RPC segura cuando hay alumnoId conocido.
@@ -711,6 +718,149 @@ class SupabaseEngine {
       }
     } catch (err) {
       console.error("❌ Error al enviar notificación push al alumno:", err);
+    }
+  }
+
+  // =========================================================================
+  // --- SUPABASE AUTH — ETAPA 1: autenticación real con fallback legacy ---
+  // Los métodos de abajo NO borran contraseñas ni modifican profiles.id.
+  // auth_user_id es el único vínculo nuevo con Supabase Auth.
+  // =========================================================================
+
+  // Genera el email interno derivado de DNI+rol.
+  // Formato: "<dni>-<rol>@estudiofitnessinternal.com"
+  // Este email nunca se muestra al usuario; es solo la clave de Auth.
+  getInternalEmail(dni, rol) {
+    return `${String(dni).trim()}-${rol}@estudiofitnessinternal.com`;
+  }
+
+  // Crea una cuenta de Supabase Auth para dni+rol con la password dada.
+  // Retorna { ok, user, session } o { ok: false, error }.
+  // No altera ningún dato de perfil ni contraseña legacy.
+  async authSignUp(dni, rol, password) {
+    if (!this.client) return { ok: false, error: 'cliente_no_inicializado' };
+    try {
+      const email = this.getInternalEmail(dni, rol);
+      const { data, error } = await this.client.auth.signUp({ email, password });
+      if (error) {
+        console.warn('⚠️ authSignUp error:', error.message);
+        return { ok: false, error: error.message };
+      }
+      console.log('✅ authSignUp OK para', email, '→ user.id:', data.user?.id);
+      return { ok: true, user: data.user, session: data.session };
+    } catch (err) {
+      console.warn('⚠️ Excepción en authSignUp:', err);
+      return { ok: false, error: err.message };
+    }
+  }
+
+  // Inicia sesión en Supabase Auth para dni+rol con la password dada.
+  // Retorna { ok, user, session } o { ok: false, error }.
+  // No valida contra passwords legacy ni altera ningún campo local.
+  async authSignIn(dni, rol, password) {
+    if (!this.client) return { ok: false, error: 'cliente_no_inicializado' };
+    try {
+      const email = this.getInternalEmail(dni, rol);
+      const { data, error } = await this.client.auth.signInWithPassword({ email, password });
+      if (error) {
+        console.warn('⚠️ authSignIn error:', error.message);
+        return { ok: false, error: error.message };
+      }
+      console.log('✅ authSignIn OK para', email, '→ user.id:', data.user?.id);
+      return { ok: true, user: data.user, session: data.session };
+    } catch (err) {
+      console.warn('⚠️ Excepción en authSignIn:', err);
+      return { ok: false, error: err.message };
+    }
+  }
+
+  // Cierra la sesión activa de Supabase Auth.
+  // No borra localStorage ni contraseñas legacy.
+  async authSignOut() {
+    if (!this.client) return;
+    try {
+      await this.client.auth.signOut();
+      console.log('🔒 Sesión Supabase Auth cerrada.');
+    } catch (e) {
+      console.warn('⚠️ Error al cerrar sesión Supabase Auth:', e);
+    }
+  }
+
+  // Devuelve la sesión activa de Supabase Auth, o null si no hay ninguna.
+  // Usado al iniciar la app para restaurar sesión persistente.
+  async authGetSession() {
+    if (!this.client) return null;
+    try {
+      const { data: { session } } = await this.client.auth.getSession();
+      return session || null;
+    } catch (e) {
+      console.warn('⚠️ Error obteniendo sesión Supabase Auth:', e);
+      return null;
+    }
+  }
+
+  // RPC: verifica que el DNI exista como alumno autorizado y que el nombre
+  // coincida con el que tiene registrado el profesor. Usada antes de completar
+  // el registro de un alumno precreado. Retorna { ok, data } o { ok: false, error }.
+  async verificarDatosActivacionAlumno(dni, nombre) {
+    if (!this.client) return { ok: false, error: 'cliente_no_inicializado' };
+    try {
+      const { data, error } = await this.client.rpc('verificar_datos_activacion_alumno', {
+        p_dni: String(dni).trim(),
+        p_nombre: String(nombre).trim()
+      });
+      if (error) {
+        console.warn('⚠️ RPC verificar_datos_activacion_alumno error:', error.message);
+        return { ok: false, error: error.message };
+      }
+      return { ok: true, data };
+    } catch (err) {
+      console.warn('⚠️ Excepción en verificarDatosActivacionAlumno:', err);
+      return { ok: false, error: err.message };
+    }
+  }
+
+  // RPC: vincula un auth_user_id de Supabase Auth al perfil de alumno
+  // identificado por DNI. Solo setea profiles.auth_user_id — no altera
+  // profiles.id ni ninguna contraseña.
+  async vincularPerfilAlumno(authUserId, dni) {
+    if (!this.client) return { ok: false, error: 'cliente_no_inicializado' };
+    try {
+      const { data, error } = await this.client.rpc('vincular_perfil_alumno_a_auth_user', {
+        p_auth_user_id: authUserId,
+        p_dni: String(dni).trim()
+      });
+      if (error) {
+        console.warn('⚠️ RPC vincular_perfil_alumno_a_auth_user error:', error.message);
+        return { ok: false, error: error.message };
+      }
+      console.log('✅ RPC vincular_perfil_alumno_a_auth_user OK → auth_user_id seteado en profiles.');
+      return { ok: true, data };
+    } catch (err) {
+      console.warn('⚠️ Excepción en vincularPerfilAlumno:', err);
+      return { ok: false, error: err.message };
+    }
+  }
+
+  // RPC: vincula un auth_user_id de Supabase Auth al perfil de profesor
+  // identificado por DNI. Solo setea profiles.auth_user_id — no altera
+  // profiles.id ni ninguna contraseña.
+  async vincularPerfilProfesor(authUserId, dni) {
+    if (!this.client) return { ok: false, error: 'cliente_no_inicializado' };
+    try {
+      const { data, error } = await this.client.rpc('vincular_perfil_profesor_a_auth_user', {
+        p_auth_user_id: authUserId,
+        p_dni: String(dni).trim()
+      });
+      if (error) {
+        console.warn('⚠️ RPC vincular_perfil_profesor_a_auth_user error:', error.message);
+        return { ok: false, error: error.message };
+      }
+      console.log('✅ RPC vincular_perfil_profesor_a_auth_user OK → auth_user_id seteado en profiles.');
+      return { ok: true, data };
+    } catch (err) {
+      console.warn('⚠️ Excepción en vincularPerfilProfesor:', err);
+      return { ok: false, error: err.message };
     }
   }
 }
