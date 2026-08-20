@@ -861,6 +861,27 @@ class SupabaseEngine {
   // RPC: vincula el usuario de Supabase Auth actualmente autenticado al perfil de profesor
   // identificado por DNI. Usa auth.uid() internamente, por lo que no necesita p_auth_user_id.
   // Solo setea profiles.auth_user_id — no altera profiles.id ni ninguna contraseña.
+  // --- RANKING PÚBLICO ---
+  // Llama a la RPC get_ranking_publico() (SECURITY DEFINER), que ignora RLS
+  // y devuelve ÚNICAMENTE las 5 columnas públicas de los alumnos activos.
+  // La RPC solo puede ejecutarla el rol `authenticated` (anon tiene REVOKE).
+  // El resultado se guarda en this.data.rankingCache (solo en memoria —
+  // saveData() lo excluye de localStorage, ver comentario en data.js).
+  async fetchRankingPublico() {
+    if (!this.client) return { ok: false, error: 'no_client' };
+    try {
+      const { data: rankingData, error: rpcErr } = await this.client.rpc('get_ranking_publico');
+      if (rpcErr) {
+        console.warn('⚠️ RPC get_ranking_publico falló:', rpcErr.message);
+        return { ok: false, error: rpcErr.message };
+      }
+      return { ok: true, data: rankingData || [] };
+    } catch (e) {
+      console.warn('⚠️ Excepción en fetchRankingPublico:', e);
+      return { ok: false, error: e.message };
+    }
+  }
+
   async vincularPerfilProfesor(dni) {
     if (!this.client) return { ok: false, error: 'cliente_no_inicializado' };
     try {

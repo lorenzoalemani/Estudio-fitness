@@ -33,6 +33,10 @@ const DEFAULT_DATA = {
 class GymStore {
   constructor() {
     this.data = this.loadData();
+    // rankingCache vive SOLO en memoria: se puebla desde la RPC get_ranking_publico()
+    // en cada sync y se elimina explícitamente antes de serializar a localStorage
+    // (ver saveData()). Arrancar siempre desde [] para no servir datos rancios.
+    this.data.rankingCache = [];
     this._syncSeq = 0; // Token de secuencia para descartar respuestas de sync fuera de orden
     this._authSyncSeq = 0; // Token de secuencia EXCLUSIVO de syncs con alumnoId (autenticadas).
     // Una sync sin alumnoId (más liviana, no trae rutinas) nunca debe poder
@@ -48,143 +52,32 @@ class GymStore {
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored) {
         const parsed = JSON.parse(stored);
-
-        // --- MIGRACIÓN CONSERVADORA ---
-        // Si los datos vienen del formato viejo (arrays globales de alumnos/
-        // profesores), se cargan COMPLETOS en memoria para que la sesión activa
-        // no pierda funcionalidad. La próxima llamada a saveData() aplicará el
-        // filtro nuevo y dejará de persistir datos de otros usuarios.
-        //
-        // Si los datos ya vienen del formato nuevo (con sesionActual y sin
-        // arrays globales), se reconstruyen los arrays en memoria vacíos.
-        if (parsed._formatoSeguro) {
-          // Formato nuevo: reconstruir arrays en memoria desde sesionActual
-          const sa = parsed.sesionActual;
-          const memData = {
-            profesores: [],
-            alumnos: [],
-            dnisAutorizados: [],
-            rutinas: parsed.rutinas || [],
-            workoutLogs: parsed.workoutLogs || [],
-            notificaciones: parsed.notificaciones || [],
-            _formatoSeguro: true
-          };
-          // Restaurar el perfil del usuario logueado al array correspondiente
-          if (sa) {
-            if (sa.rol === 'profesor') {
-              memData.profesores.push(sa);
-            } else if (sa.rol === 'alumno') {
-              memData.alumnos.push(sa);
-            }
-            memData.sesionActual = sa;
-          }
-          return memData;
-        }
-
-        // Formato viejo: cargar todo en memoria (migración conservadora).
-        // NO se descarta nada — el store opera normalmente con los arrays
-        // completos durante esta sesión. La próxima saveData() aplicará el
-        // filtro y dejará de persistir datos de otros usuarios.
-        // Se agrega el flag de identificación para la próxima carga.
-        parsed._formatoSeguro = false; // marca que hay datos legacy en memoria
+        // rankingCache nunca debe venir de localStorage: contiene datos de
+        // otros usuarios (nombres/puntos) que no deben persistir localmente.
+        // Si llegara (por algún bug previo), se elimina de inmediato para que
+        // el constructor lo reinicialice como [] y lo pueble desde la RPC.
+        if (parsed.rankingCache !== undefined) delete parsed.rankingCache;
         return parsed;
       }
     } catch (e) {
       console.warn("Error LocalStorage:", e);
     }
-    // Primera instalación: arrancar con DEFAULT_DATA (incluye al profesor
-    // hardcodeado para la migración legacy, sin password en la estructura
-    // nueva porque saveData filtra).
-    const initial = JSON.parse(JSON.stringify(DEFAULT_DATA));
-    this._persistFiltered(initial);
-    return initial;
-  }
-
-  // Persiste en localStorage SOLO los datos del usuario logueado actual.
-  // Los arrays globales (alumnos, profesores, dnisAutorizados) NUNCA se
-  // escriben a disco — viven exclusivamente en memoria durante la sesión.
-  //
-  // Qué se persiste:
-  //   sesionActual: perfil mínimo del usuario logueado (sin password, sin
-  //                 datos de otros usuarios). Es solo un caché de interfaz,
-  //                 NO una medida de seguridad.
-  //   rutinas:      solo las del usuario logueado (propias + asignadas).
-  //   workoutLogs:  solo los del usuario logueado.
-  //   notificaciones: solo las del usuario logueado.
-  //
-  // Qué NO se persiste:
-  //   alumnos[], profesores[], dnisAutorizados[] — datos globales de otros.
-  //   password de cualquier usuario.
-  _persistFiltered(data) {
-    try {
-      // Determinar el usuario logueado actual
-      const userId = window._sessionAlumnoId || window._sessionProfesorId || null;
-      const userRol = window._sessionProfesorId ? 'profesor' : (window._sessionAlumnoId ? 'alumno' : null);
-
-      // Construir sesionActual: perfil mínimo sin password ni datos sensibles
-      let sesionActual = null;
-      if (userId && userRol === 'profesor') {
-        const prof = (data.profesores || []).find(p => p.id === userId);
-        if (prof) {
-          sesionActual = {
-            id: prof.id,
-            dni: prof.dni,
-            nombre: prof.nombre,
-            rol: 'profesor',
-            authUserId: prof.authUserId || null
-            // NO incluir: password, datos administrativos
-          };
-        }
-      } else if (userId && userRol === 'alumno') {
-        const al = (data.alumnos || []).find(a => a.id === userId);
-        if (al) {
-          sesionActual = {
-            id: al.id,
-            dni: al.dni,
-            nombre: al.nombre,
-            rol: 'alumno',
-            telefono: al.telefono || '',
-            estadoAutorizacion: al.estadoAutorizacion || 'pendiente',
-            authUserId: al.authUserId || null,
-            puntosTotal: al.puntosTotal || 0,
-            rachaSemanal: al.rachaSemanal || null,
-            rutinaActivaId: al.rutinaActivaId || null
-            // NO incluir: password, datos de otros usuarios
-          };
-        }
-      }
-
-      // Filtrar rutinas, logs y notificaciones al usuario logueado
-      const userRutinas = userId
-        ? (data.rutinas || []).filter(r =>
-            r.alumnoId === userId || r.alumnoCreadorId === userId || r.profesorId === userId)
-        : [];
-      const userLogs = userId
-        ? (data.workoutLogs || []).filter(w => w.alumnoId === userId)
-        : [];
-      const userNotifs = userId
-        ? (data.notificaciones || []).filter(n =>
-            (n.alumnoId === userId) ||
-            (userRol === 'profesor' && n.destinatarioRol === 'profesor'))
-        : [];
-
-      const toSave = {
-        _formatoSeguro: true,
-        sesionActual,
-        rutinas: userRutinas,
-        workoutLogs: userLogs,
-        notificaciones: userNotifs
-      };
-
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
-    } catch (e) {
-      console.error("Error guardando LocalStorage:", e);
-    }
+    this.saveData(DEFAULT_DATA);
+    return DEFAULT_DATA;
   }
 
   saveData(newData) {
     this.data = newData || this.data;
-    this._persistFiltered(this.data);
+    try {
+      // rankingCache contiene datos de otros usuarios (nombres/puntos del
+      // ranking público) y no debe persistirse en localStorage. Se hace una
+      // copia shallow excluyendo esa clave antes de serializar, para que
+      // this.data.rankingCache siga vivo en memoria pero nunca llegue al disco.
+      const { rankingCache: _omitido, ...toStore } = this.data;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(toStore));
+    } catch (e) {
+      console.error("Error guardando LocalStorage:", e);
+    }
     window.dispatchEvent(new CustomEvent('gym_store_updated'));
   }
 
@@ -369,6 +262,21 @@ class GymStore {
         if (huboCambios) {
           console.log("🟢 Sincronizado exitosamente con Supabase DB (Fuente de Verdad).");
           this.saveData();
+        }
+
+        // Ranking: se actualiza en cada sync exitosa (con o sin cambios de
+        // negocio), porque cualquier sync puede ocurrir tras un nuevo entrenamiento
+        // de cualquier otro alumno. La RPC get_ranking_publico() (SECURITY DEFINER)
+        // ignora RLS y devuelve solo las 5 columnas públicas. Si falla (offline,
+        // usuario no authenticated, etc.) se conserva el rankingCache anterior
+        // sin alterar nada — el ranking simplemente queda con los datos del
+        // último sync exitoso.
+        if (window.supabaseEngine) {
+          const rankingFresco = await window.supabaseEngine.fetchRankingPublico();
+          if (rankingFresco && rankingFresco.ok) {
+            this.data.rankingCache = rankingFresco.data || [];
+            console.log(`🏆 Ranking actualizado: ${this.data.rankingCache.length} alumno(s).`);
+          }
         }
       }
     } catch (err) {
@@ -1160,12 +1068,27 @@ class GymStore {
     return bonusRacha;
   }
 
-  // --- RANKING EN TIEMPO REAL (Top alumnos por puntos acumulados) ---
+  // --- RANKING PÚBLICO (fuente: RPC get_ranking_publico vía Supabase) ---
+  // rankingCache se puebla en cada syncWithSupabase() y vive SOLO en memoria
+  // — nunca se serializa a localStorage (ver saveData() y loadData()).
+  // Los datos vienen de la RPC (SECURITY DEFINER, ignora RLS) y contienen
+  // únicamente las 5 columnas públicas: id, nombre, puntos_total,
+  // racha_semanas, racha_ultima_semana. Sin DNI, teléfono ni datos privados.
+  // La conversión snake_case → camelCase es necesaria porque renderRankingView()
+  // en app.js espera puntosTotal / rachaSemanal.semanas / rachaSemanal.ultimaSemana.
   getRanking() {
-    return [...this.data.alumnos]
-      .filter(a => (a.puntosTotal || 0) > 0 || a.estadoAutorizacion === 'autorizado')
-      .sort((a, b) => (b.puntosTotal || 0) - (a.puntosTotal || 0))
-      .map((a, idx) => ({ ...a, posicion: idx + 1 }));
+    if (!this.data.rankingCache || this.data.rankingCache.length === 0) {
+      return [];
+    }
+    return this.data.rankingCache.map((r, idx) => ({
+      id: r.id,
+      nombre: r.nombre,
+      puntosTotal: Number(r.puntos_total) || 0,
+      rachaSemanal: (r.racha_semanas || r.racha_ultima_semana)
+        ? { semanas: Number(r.racha_semanas) || 0, ultimaSemana: r.racha_ultima_semana || null }
+        : undefined,
+      posicion: idx + 1
+    }));
   }
 
   // Ventana de 2hs para poder editar un entrenamiento ya guardado.
