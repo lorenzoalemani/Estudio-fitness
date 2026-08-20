@@ -71,6 +71,7 @@ document.addEventListener('DOMContentLoaded', () => {
     logEnEdicionId: null,    // entrenamiento que el alumno está editando (ventana 2hs)
     mostrarDrawerNotifs: false,
     workoutDraftSets: {},       // Estado temporal del entrenamiento en progreso por serie
+    borradorEntrenamientoDetectado: null, // borrador recuperado de localStorage, pendiente de confirmar Continuar/Descartar
     historialProfesorLogs: null  // Caché async del historial del alumno visto por el profesor
   };
 
@@ -321,6 +322,9 @@ document.addEventListener('DOMContentLoaded', () => {
           // --- SESIÓN ALUMNO ---
           window._sessionAlumnoId = res.data.id;
           window._sessionProfesorId = null;
+          // Detectar si hay un borrador de entrenamiento sin terminar que
+          // pertenezca a ESTE alumno (getBorradorPropio verifica ownerId).
+          appState.borradorEntrenamientoDetectado = getBorradorPropio();
           // Sincronizar rutinas e historial vía RPC después del login
           setTimeout(async () => {
             await gymStore.syncWithSupabase(res.data.id);
@@ -466,6 +470,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       ${(appState.modalActivo === 'crear_rutina_propia' || appState.modalActivo === 'editar_rutina_propia') ? renderModalFormularioRutina(appState.modalActivo) : ''}
       ${appState.modalActivo === 'editar_entrenamiento' ? renderModalEditarEntrenamiento(alumno) : ''}
+      ${appState.borradorEntrenamientoDetectado ? renderModalRecuperarBorrador() : ''}
 
       ${renderBottomNav()}
     `;
@@ -475,6 +480,7 @@ document.addEventListener('DOMContentLoaded', () => {
     bindBottomNavEvents();
     bindMisRutinasEvents(alumno);
     bindHistorialEvents(alumno);
+    bindBorradorEntrenamientoEvents();
 
     // Eventos de navegación por tarjetas de rutina (excluye las de "Mis Rutinas",
     // que tienen su propio binding en bindMisRutinasEvents para soportar Editar/Borrar)
@@ -764,6 +770,48 @@ document.addEventListener('DOMContentLoaded', () => {
     appState.editDraftComentario = val;
   };
 
+  // --- MODAL: recuperar entrenamiento sin terminar (borrador local) ---
+  function renderModalRecuperarBorrador() {
+    const draft = appState.borradorEntrenamientoDetectado;
+    if (!draft) return '';
+    return `
+      <div class="modal-overlay">
+        <div class="modal-content" style="max-width:420px">
+          <div class="modal-header">
+            <h3>💪 Entrenamiento sin terminar</h3>
+          </div>
+          <p style="color:var(--text-gray); font-size:0.92rem; line-height:1.5">
+            Tenés un entrenamiento sin terminar: <strong style="color:#fff">${draft.diaActivoEntrenamiento?.nombre || ''}</strong>. ¿Querés continuar donde lo dejaste?
+          </p>
+          <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:20px">
+            <button type="button" class="btn btn-secondary" id="btnDescartarBorrador">Descartar</button>
+            <button type="button" class="btn btn-primary" id="btnContinuarBorrador">Continuar ▶</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function bindBorradorEntrenamientoEvents() {
+    document.getElementById('btnContinuarBorrador')?.addEventListener('click', () => {
+      const draft = appState.borradorEntrenamientoDetectado;
+      if (!draft) return;
+      appState.rutinaSeleccionadaId = draft.rutinaSeleccionadaId || null;
+      appState.tabCliente = draft.tabCliente || 'rutina';
+      appState.diaActivoEntrenamiento = draft.diaActivoEntrenamiento;
+      appState.workoutDraftSets = draft.workoutDraftSets || {};
+      appState.workoutGeneralComment = draft.workoutGeneralComment || '';
+      appState.borradorEntrenamientoDetectado = null;
+      renderApp();
+    });
+
+    document.getElementById('btnDescartarBorrador')?.addEventListener('click', () => {
+      clearWorkoutDraft();
+      appState.borradorEntrenamientoDetectado = null;
+      renderApp();
+    });
+  }
+
   // --- FEATURE RANKING: tabla de posiciones en tiempo real con medallas Top 3 ---
   function renderRankingView() {
     const ranking = store.getRanking();
@@ -897,6 +945,70 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // MODULO DE ENTRENAMIENTO EN VIVO: REGISTRO DE SERIES (OBJETIVO VS REAL)
+
+  // --- BORRADOR DE ENTRENAMIENTO EN CURSO: persistencia local anti-pérdida ---
+  // Clave INDEPENDIENTE de estudio_fitness_db_v4 (el store global) y de
+  // cualquier copia de alumnos/profesores — acá SOLO vive el entrenamiento
+  // que el alumno está completando en este momento, y únicamente mientras
+  // lo está completando. No se toca syncWithSupabase() ni RLS para esto.
+  const WORKOUT_DRAFT_KEY = 'estudio_fitness_draft_v4';
+
+  function getCurrentAlumnoId() {
+    return (appState.usuarioActual && appState.usuarioActual.rol === 'alumno' && appState.usuarioActual.data)
+      ? appState.usuarioActual.data.id
+      : null;
+  }
+
+  // Guarda el borrador completo (día activo + series + comentario) cada vez
+  // que cambia algo. Se etiqueta con ownerId = alumno.id logueado en ESE
+  // momento, para poder verificar más tarde que el borrador le pertenece a
+  // quien lo está por recuperar.
+  function persistWorkoutDraft() {
+    const alumnoId = getCurrentAlumnoId();
+    if (!alumnoId || !appState.diaActivoEntrenamiento) return;
+    try {
+      const draft = {
+        ownerId: alumnoId,
+        rutinaSeleccionadaId: appState.rutinaSeleccionadaId || null,
+        tabCliente: appState.tabCliente,
+        diaActivoEntrenamiento: appState.diaActivoEntrenamiento,
+        workoutDraftSets: appState.workoutDraftSets,
+        workoutGeneralComment: appState.workoutGeneralComment || '',
+        savedAt: new Date().toISOString()
+      };
+      localStorage.setItem(WORKOUT_DRAFT_KEY, JSON.stringify(draft));
+    } catch (e) {
+      console.warn('⚠️ No se pudo guardar el borrador de entrenamiento:', e);
+    }
+  }
+
+  // Borra el borrador SOLO si pertenece al alumno actualmente logueado (o si
+  // no hay forma de determinar dueño, por seguridad igual se borra al hacer
+  // logout explícito — ver bindHeaderEvents). Nunca borra a ciegas el
+  // borrador de otro usuario que todavía no volvió a entrar.
+  function clearWorkoutDraft() {
+    try { localStorage.removeItem(WORKOUT_DRAFT_KEY); } catch (e) {}
+  }
+
+  // Devuelve el borrador guardado ÚNICAMENTE si su ownerId coincide con el
+  // alumno actualmente logueado. Si pertenece a otro alumno (por ejemplo,
+  // otro usuario que entrenó antes en este mismo dispositivo y no llegó a
+  // terminar), se ignora por completo — nunca se muestra ni se borra el
+  // borrador ajeno, así el dueño real todavía puede recuperarlo cuando
+  // vuelva a loguearse él.
+  function getBorradorPropio() {
+    try {
+      const raw = localStorage.getItem(WORKOUT_DRAFT_KEY);
+      if (!raw) return null;
+      const draft = JSON.parse(raw);
+      const alumnoId = getCurrentAlumnoId();
+      if (!alumnoId || !draft || draft.ownerId !== alumnoId) return null;
+      return draft;
+    } catch (e) {
+      return null;
+    }
+  }
+
   function initWorkoutDraft(diaObj) {
     appState.workoutDraftSets = {};
     appState.workoutGeneralComment = '';
@@ -911,6 +1023,10 @@ document.addEventListener('DOMContentLoaded', () => {
         }))
       };
     });
+    // Guarda inmediatamente el borrador recién iniciado (antes de que el
+    // alumno edite nada), para cubrir el caso de que la app se cierre
+    // apenas empezado el entrenamiento.
+    persistWorkoutDraft();
   }
 
   function renderWorkoutSession() {
@@ -982,11 +1098,13 @@ document.addEventListener('DOMContentLoaded', () => {
   window.updateDraftSet = (ejId, setIdx, field, val) => {
     if (appState.workoutDraftSets[ejId]) {
       appState.workoutDraftSets[ejId].sets[setIdx][field] = field === 'reps' ? Number(val) : val;
+      persistWorkoutDraft();
     }
   };
 
   window.updateGeneralComment = (val) => {
     appState.workoutGeneralComment = val;
+    persistWorkoutDraft();
   };
 
   // Extrae el día calendario (YYYY-MM-DD) de un ISO string usando la ZONA HORARIA LOCAL
@@ -1822,14 +1940,14 @@ document.addEventListener('DOMContentLoaded', () => {
       if (window.supabaseEngine) {
         window.supabaseEngine.authSignOut(); // no se espera (fire-and-forget)
       }
+      // Borrador de entrenamiento: se elimina en logout SOLO si pertenece al
+      // alumno que se está desloguéando ahora mismo (nunca el de otro usuario).
+      const borradorPropioAlCerrarSesion = getBorradorPropio();
+      if (borradorPropioAlCerrarSesion) clearWorkoutDraft();
       window._sessionAlumnoId  = null;
       window._sessionProfesorId = null;
       appState.usuarioActual = null;
       appState.historialProfesorLogs = null;
-      // Limpiar localStorage: persistir estado vacío sin datos del usuario
-      // que cerró sesión. _persistFiltered detecta userId=null y escribe
-      // sesionActual: null con arrays vacíos.
-      store.saveData();
       renderApp();
     });
 
@@ -1902,6 +2020,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     document.getElementById('btnCancelWorkout')?.addEventListener('click', () => {
       if (confirm("¿Deseas cancelar la sesión de entrenamiento actual?")) {
+        clearWorkoutDraft();
         appState.diaActivoEntrenamiento = null;
         renderApp();
       }
@@ -1951,6 +2070,7 @@ document.addEventListener('DOMContentLoaded', () => {
         ? `Ya sumaste puntos hoy con otro entrenamiento — este quedó guardado en tu historial, pero no otorga puntos adicionales (solo se otorgan puntos una vez por día).`
         : `+${puntosGanados} puntos ganados${bonusTexto}`;
       alert(`🏆 ¡Entrenamiento completado y guardado en tu historial!\n${mensajePuntos}`);
+      clearWorkoutDraft();
       appState.diaActivoEntrenamiento = null;
       appState.tabCliente = 'historial';
       renderApp();
@@ -2081,6 +2201,10 @@ document.addEventListener('DOMContentLoaded', () => {
             window._sessionAlumnoId   = perfilAlumno.id;
             window._sessionProfesorId = null;
             console.log('✅ Sesión restaurada como ALUMNO:', perfilAlumno.nombre);
+            // Detectar borrador de entrenamiento sin terminar de este alumno
+            // (nunca el de otro usuario — getBorradorPropio verifica ownerId
+            // contra el alumno recién restaurado).
+            appState.borradorEntrenamientoDetectado = getBorradorPropio();
             // Sincronizar rutinas e historial del alumno en segundo plano
             setTimeout(async () => {
               await gymStore.syncWithSupabase(perfilAlumno.id);
