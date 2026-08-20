@@ -110,24 +110,32 @@ class GymStore {
       if (freshData) {
         let huboCambios = false;
 
-        // --- GUARDIA: sesión Auth activa durante la reconciliación de profiles ---
+        // --- GUARDIA: no confundir "vacío legítimo" con "RLS bloqueó todo" ---
         // El SELECT de `profiles` puede devolver `[]` sin error tanto cuando
         // "no hay ningún perfil" como cuando RLS bloqueó todo por falta de
         // sesión Auth activa (por ejemplo, justo después de un logout). Sin
         // esta guardia, ese `[]` reemplazaba this.data.alumnos/profesores por
-        // arrays vacíos y el siguiente login no encontraba ningún perfil.
-        // Por eso, antes de aplicar la reconciliación de alumnos/profesores,
-        // se verifica explícitamente si hay sesión Auth: si NO la hay, esos
-        // dos arrays locales se preservan tal cual están (no se tocan). El
-        // resto de las colecciones (dnisAutorizados, rutinas, workoutLogs,
-        // notificaciones) no depende de esta guardia.
-        let sesionAuthActiva = false;
-        try {
-          sesionAuthActiva = !!(window.supabaseEngine && await window.supabaseEngine.authGetSession());
-        } catch (e) {
-          sesionAuthActiva = false;
+        // arrays vacíos y el login dejaba de encontrar cualquier perfil.
+        //
+        // IMPORTANTE: NO se usa authGetSession() para esto. authGetSession()
+        // devuelve null también en el flujo normal de login (login() llama a
+        // syncWithSupabase() ANTES de authSignIn()), así que usarlo como
+        // condición bloqueaba incluso el primer login legítimo de una app
+        // recién abierta, sin haber sesión Auth todavía.
+        //
+        // Heurística en su lugar: en este sistema siempre existe al menos un
+        // profesor (OCTAVIO_ID, ver DEFAULT_DATA), así que un snapshot real de
+        // Supabase JAMÁS trae alumnos Y profesores vacíos al mismo tiempo. Si
+        // eso ocurre, es la señal de que RLS filtró todo por falta de sesión
+        // (o por algún corte de red parcial) y no debe usarse para podar el
+        // estado local. Si viene CUALQUIER dato (alumnos o profesores no
+        // vacíos), se reconcilia normalmente, haya o no sesión Auth activa.
+        const ambosVaciosSimultaneamente =
+          freshData.alumnos !== null && freshData.profesores !== null &&
+          freshData.alumnos.length === 0 && freshData.profesores.length === 0;
+        if (ambosVaciosSimultaneamente) {
+          console.log('⏭️ [sync] profiles trajo alumnos Y profesores vacíos a la vez (posible RLS sin sesión) → NO se reconcilian this.data.alumnos/this.data.profesores, se preserva el estado local.');
         }
-        console.log(`🔐 [sync] Sesión Auth ${sesionAuthActiva ? 'PRESENTE' : 'AUSENTE'} al reconciliar profiles (alumnoId param: ${alumnoId || 'null'}).`);
 
         // NOTA GENERAL: a partir de acá, cada campo de freshData es un array
         // (posiblemente VACÍO — snapshot real de Supabase) o `null` (no se
@@ -146,8 +154,8 @@ class GymStore {
         // cualquier alumno local que ya NO está en el snapshot queda
         // automáticamente afuera (podado) — ya no sobrevive un alumno
         // eliminado en Supabase solo porque seguía en localStorage.
-        if (freshData.alumnos !== null && !sesionAuthActiva) {
-          console.log(`⏭️ [sync] Sesión Auth ausente y profiles trajo ${freshData.alumnos.length} alumno(s) → NO se reconcilia this.data.alumnos (se preserva el estado local para no vaciarlo por RLS).`);
+        if (freshData.alumnos !== null && ambosVaciosSimultaneamente) {
+          // no reconciliar — ver guardia arriba
         } else if (freshData.alumnos !== null) {
           this.data.alumnos = freshData.alumnos.map(sbAlumno => {
             const loc = this.data.alumnos.find(a => a.dni === sbAlumno.dni || a.id === sbAlumno.id);
@@ -193,8 +201,8 @@ class GymStore {
         // profesor eliminado en Supabase seguía viviendo para siempre en
         // localStorage y podía loguearse con esas credenciales. Mismo
         // criterio de reconciliación completa que alumnos.
-        if (freshData.profesores !== null && !sesionAuthActiva) {
-          console.log(`⏭️ [sync] Sesión Auth ausente y profiles trajo ${freshData.profesores.length} profesor(es) → NO se reconcilia this.data.profesores (se preserva el estado local para no vaciarlo por RLS).`);
+        if (freshData.profesores !== null && ambosVaciosSimultaneamente) {
+          // no reconciliar — ver guardia arriba
         } else if (freshData.profesores !== null) {
           this.data.profesores = freshData.profesores.map(sbProfesor => {
             const loc = this.data.profesores.find(p => p.dni === sbProfesor.dni || p.id === sbProfesor.id);
