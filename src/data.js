@@ -114,30 +114,38 @@ class GymStore {
           this.data.alumnos = freshData.alumnos.map(sbAlumno => {
             const loc = this.data.alumnos.find(a => a.dni === sbAlumno.dni || a.id === sbAlumno.id);
             if (!loc) return sbAlumno;
-            return {
+
+            // authUserId resuelto: Supabase es la fuente de verdad si lo tiene;
+            // si no lo tiene, se conserva el valor local.
+            const resolvedAuthUserId = sbAlumno.authUserId !== undefined
+              ? sbAlumno.authUserId
+              : loc.authUserId;
+
+            const merged = {
               ...loc,
               ...sbAlumno,
-              // password: la consulta a `profiles` (ver fetchFullStateFromSupabase)
-              // NO selecciona esta columna, así que sbAlumno.password siempre
-              // es null (el fallback). Si copiáramos sbAlumno tal cual
-              // pisaríamos la contraseña real guardada localmente con null en
-              // cada sync. Se conserva SIEMPRE el password local si existe.
-              password: loc.password !== undefined ? loc.password : sbAlumno.password,
-              // authUserId: si Supabase ya lo tiene (cuenta vinculada), toma el
-              // valor de Supabase. Si Supabase devuelve null/undefined (cuenta
-              // todavía no vinculada), se conserva el que ya había en local.
-              authUserId: sbAlumno.authUserId !== undefined ? sbAlumno.authUserId : loc.authUserId,
-              // rutinaActivaId: Supabase siempre lo manda en null (no se lee
-              // de esa tabla); se conserva el valor local conocido si existe,
-              // igual que hacía la lógica anterior.
+              authUserId: resolvedAuthUserId,
               rutinaActivaId: sbAlumno.rutinaActivaId || loc.rutinaActivaId,
-              // Puntos/Ranking: profiles.puntos_total (Supabase) es la fuente
-              // de verdad. Si la columna todavía no existe en producción
-              // (antes de correr el patch SQL), sbAlumno.puntosTotal viene
-              // undefined y se conserva el valor local sin tocarlo.
               puntosTotal: sbAlumno.puntosTotal !== undefined ? sbAlumno.puntosTotal : loc.puntosTotal,
               rachaSemanal: sbAlumno.rachaSemanal !== undefined ? sbAlumno.rachaSemanal : loc.rachaSemanal
             };
+
+            if (resolvedAuthUserId) {
+              // Perfil migrado a Supabase Auth: eliminar contraseña legacy del
+              // localStorage. La contraseña solo debe vivir en Supabase Auth,
+              // nunca en el estado local una vez que la cuenta está vinculada.
+              delete merged.password;
+            } else {
+              // Perfil todavía no migrado: preservar la contraseña legacy para
+              // que el flujo de fallback y la migración en el próximo login
+              // sigan funcionando. NUNCA eliminarla antes de confirmar el vínculo.
+              merged.password = loc.password !== undefined ? loc.password : undefined;
+              if (merged.password === undefined) {
+                delete merged.password;
+              }
+            }
+
+            return merged;
           });
           huboCambios = true;
         }
@@ -151,18 +159,33 @@ class GymStore {
           this.data.profesores = freshData.profesores.map(sbProfesor => {
             const loc = this.data.profesores.find(p => p.dni === sbProfesor.dni || p.id === sbProfesor.id);
             if (!loc) return sbProfesor;
-            return {
+
+            const resolvedAuthUserId = sbProfesor.authUserId !== undefined
+              ? sbProfesor.authUserId
+              : loc.authUserId;
+
+            const merged = {
               ...loc,
               ...sbProfesor,
-              // password: mismo motivo que en alumnos — la columna no viaja
-              // desde Supabase (ver fetchFullStateFromSupabase), sbProfesor.password
-              // es siempre null. Se conserva el valor local real.
-              password: loc.password !== undefined ? loc.password : sbProfesor.password,
-              // authUserId: si Supabase ya lo tiene (cuenta vinculada), toma el
-              // valor de Supabase. Si Supabase devuelve null/undefined (todavía
-              // no vinculado), se conserva el que ya había en local.
-              authUserId: sbProfesor.authUserId !== undefined ? sbProfesor.authUserId : loc.authUserId
+              authUserId: resolvedAuthUserId
             };
+
+            if (resolvedAuthUserId) {
+              // Profesor migrado a Supabase Auth: eliminar contraseña legacy.
+              // Incluye la eliminación de "octagym2000" del localStorage una vez
+              // que el profesor quede efectivamente vinculado.
+              delete merged.password;
+            } else {
+              // Profesor todavía no migrado: preservar la contraseña legacy
+              // (incluida "octagym2000" del DEFAULT_DATA) para que el fallback
+              // y la migración en el próximo login sigan funcionando.
+              merged.password = loc.password !== undefined ? loc.password : undefined;
+              if (merged.password === undefined) {
+                delete merged.password;
+              }
+            }
+
+            return merged;
           });
           huboCambios = true;
         }
@@ -430,25 +453,84 @@ class GymStore {
     }
 
     // 4. Flujo legacy intacto — validación por DNI + contraseña en local.
+    // Si el usuario valida por legacy (cuenta Auth todavía no creada), se
+    // intenta la migración automática a Supabase Auth en este mismo instante.
+    // La contraseña solo existe en memoria durante esta función: nunca se
+    // imprime, nunca se escribe en un log, nunca se persiste de nuevo.
+
     // 4a. Buscar en Profesores
     const profesorLegacy = this.data.profesores.find(p => p.dni === cleanDni && p.password === cleanPass);
-    if (profesorLegacy) return { rol: 'profesor', data: profesorLegacy };
+    if (profesorLegacy) {
+      // Migración automática: intentar crear cuenta Auth con la contraseña que
+      // el usuario acaba de tipear (está en memoria, nunca se guarda de nuevo).
+      if (engine) {
+        this._intentarMigracionLegacy(profesorLegacy, 'profesor', cleanDni, cleanPass, engine);
+      }
+      return { rol: 'profesor', data: profesorLegacy };
+    }
 
     // 4b. Buscar en Alumnos
     const alumnoLegacy = this.data.alumnos.find(a => a.dni === cleanDni && a.password !== null && a.password === cleanPass);
     if (alumnoLegacy) {
+      if (engine) {
+        this._intentarMigracionLegacy(alumnoLegacy, 'alumno', cleanDni, cleanPass, engine);
+      }
       return { rol: 'alumno', data: alumnoLegacy };
     }
 
     return null;
   }
 
-  // Convirtida a async en Etapa 1 de migración: después de registrar el
-  // alumno localmente y en Supabase DB (profiles), se intenta crear la
-  // cuenta en Supabase Auth (authSignUp) y vincularla. Si authSignUp
-  // falla, el registro local/DB queda intacto y el alumno puede seguir
-  // usando la contraseña legacy para ingresar.
-  // La contraseña legacy NUNCA se borra en esta etapa.
+  // Migración automática de usuario legacy a Supabase Auth.
+  // Se llama en background (fire-and-forget desde login()) cuando un usuario
+  // entra por fallback legacy. La contraseña solo vive en esta función.
+  // Si TODA la cadena tiene éxito, elimina el password del objeto local.
+  // Si CUALQUIER paso falla, el password se preserva y el usuario puede
+  // seguir usando el fallback en el próximo login.
+  // NUNCA imprime la contraseña en ningún log.
+  async _intentarMigracionLegacy(perfil, rol, dni, password, engine) {
+    try {
+      console.log(`🔄 Iniciando migración legacy → Supabase Auth para ${rol} ${dni}`);
+
+      // 1. Crear cuenta en Supabase Auth
+      const authRes = await engine.authSignUp(dni, rol, password);
+      if (!authRes.ok || !authRes.user) {
+        console.log(`ℹ️ Migración legacy: authSignUp no OK para ${rol} ${dni}:`, authRes.error);
+        return; // Preservar password legacy — no se migra en este intento
+      }
+
+      // 2. Vincular perfil en la DB via RPC
+      let linkRes;
+      if (rol === 'profesor') {
+        linkRes = await engine.vincularPerfilProfesor(dni);
+      } else {
+        linkRes = await engine.vincularPerfilAlumno(dni, perfil.telefono || '');
+      }
+
+      if (!linkRes.ok) {
+        console.warn(`⚠️ Migración legacy: vincular${rol === 'profesor' ? 'Profesor' : 'Alumno'} falló para ${dni}:`, linkRes.error);
+        return; // No eliminar password — la migración no se completó
+      }
+
+      // 3. Éxito total: confirmar authUserId y eliminar password del localStorage
+      const authUserId = authRes.user.id;
+      perfil.authUserId = authUserId;
+      // Eliminar el password del objeto local: la contraseña ya vive en Supabase Auth
+      delete perfil.password;
+      this.saveData();
+
+      console.log(`✅ Migración legacy completa para ${rol} ${dni} → authUserId: ${authUserId}. Password eliminado del localStorage.`);
+    } catch (e) {
+      console.warn(`⚠️ Excepción en migración legacy para ${rol} ${dni} (no crítico — password preservado):`, e);
+    }
+  }
+
+  // ETAPA 2 — registrarseAlumno: Supabase Auth es la fuente de autenticación.
+  // La contraseña solo vive en memoria durante esta función. Nunca se imprime.
+  // Si Auth+RPC tienen éxito: se guarda authUserId, sin password en localStorage.
+  // Si Auth falla (offline, error): se guarda password temporalmente como fallback
+  // legacy para que el usuario pueda entrar. La migración se completará en el
+  // próximo login exitoso via _intentarMigracionLegacy().
   async registrarseAlumno({ dni, password, nombre, telefono }) {
     const cleanDni = String(dni).trim();
     const cleanPass = String(password).trim();
@@ -456,71 +538,78 @@ class GymStore {
     const existente = this.data.alumnos.find(a => a.dni === cleanDni);
 
     if (existente) {
-      // Caso B: alumno precreado/autorizado por el profesor (password === null
-      // significa que el registro está incompleto — el alumno aún no eligió su
-      // contraseña). Se completa la cuenta con los datos que el alumno acaba de
-      // proporcionar en el formulario de registro.
-      if (existente.password === null) {
-        existente.password = cleanPass;
+      // Caso B: alumno precreado por el profesor.
+      // Nuevo criterio: no tiene authUserId Y no tiene password (registro incompleto).
+      // Un alumno con authUserId ya está migrado; con password ya completó el registro.
+      if (!existente.authUserId && existente.password === null) {
         existente.nombre = nombre.trim();
         existente.telefono = telefono ? telefono.trim() : (existente.telefono || "");
+        // NO guardar password en el objeto todavía — solo en memoria (cleanPass).
 
-        // Persistir perfil en Supabase DB (INSERT — el perfil puede no existir
-        // aún en la tabla profiles si solo se creó localmente por el profesor).
+        // Persistir perfil en Supabase DB sin password (columna no existe).
         if (window.supabaseEngine) {
           window.supabaseEngine.registrarPerfilEnSupabase(existente);
         }
 
-        this.saveData();
-
-        // Intentar crear cuenta en Supabase Auth y vincular (no bloquea el flujo).
         console.log('REGISTER DEBUG supabaseEngine:', !!window.supabaseEngine);
         console.log('REGISTER DEBUG client:', !!window.supabaseEngine?.client);
+
+        let authExitoso = false;
         if (window.supabaseEngine) {
           try {
             // 1. Verificar datos (DNI + Teléfono) antes de Auth
             const verifyRes = await window.supabaseEngine.verificarDatosActivacionAlumno(cleanDni, telefono);
             if (verifyRes.ok) {
-              // 2. Crear Auth user
+              // 2. Crear Auth user (contraseña solo en memoria, nunca se guarda)
               const authRes = await window.supabaseEngine.authSignUp(cleanDni, 'alumno', cleanPass);
               if (authRes.ok && authRes.user) {
                 // 3. Vincular perfil (AWAIT)
                 const linkRes = await window.supabaseEngine.vincularPerfilAlumno(cleanDni, existente.telefono || '');
                 if (linkRes.ok) {
-                  // 4. Solo se considera exitoso si la RPC funcionó
+                  // 4. Éxito total: guardar authUserId SIN password
                   existente.authUserId = authRes.user.id;
-                  this.saveData();
-                  console.log('✅ authSignUp y vinculación OK (caso B alumno precreado) → authUserId:', authRes.user.id);
+                  authExitoso = true;
+                  console.log('✅ Registro Auth OK (caso B precreado) → authUserId:', authRes.user.id, '| password NO guardado en localStorage.');
                 } else {
-                  console.warn('⚠️ authSignUp OK pero vincularPerfilAlumno (caso B) falló:', linkRes.error);
+                  console.warn('⚠️ Registro: authSignUp OK pero vincularPerfilAlumno (caso B) falló:', linkRes.error);
                 }
               } else {
-                console.log('ℹ️ authSignUp no OK (caso B) — se usará contraseña legacy:', authRes.error);
+                console.log('ℹ️ Registro: authSignUp no OK (caso B):', authRes.error);
               }
             } else {
-               console.log('ℹ️ verificarDatosActivacionAlumno falló — no se creará cuenta Auth:', verifyRes.error);
+              console.log('ℹ️ Registro: verificarDatosActivacionAlumno falló (caso B):', verifyRes.error);
             }
           } catch (e) {
-            console.warn('⚠️ authSignUp excepción (caso B, no crítico):', e);
+            console.warn('⚠️ Registro: excepción en Auth (caso B, no crítico):', e);
           }
         }
 
+        if (!authExitoso) {
+          // Fallback: guardar password temporalmente para que el usuario pueda entrar.
+          // Se migrará automáticamente en el próximo login exitoso.
+          existente.password = cleanPass;
+          console.log('ℹ️ Registro: Auth no disponible — password guardado temporalmente como fallback legacy.');
+        }
+
+        this.saveData();
         return existente;
       }
 
-      // El alumno ya tiene contraseña real → ya completó su registro anteriormente.
+      // El alumno ya tiene authUserId o ya tiene password → ya completó su registro.
+      if (existente.authUserId) {
+        throw new Error("Esta cuenta ya fue activada. Usá el inicio de sesión.");
+      }
       throw new Error("Ya existe una cuenta creada con ese DNI.");
     }
 
-    // Caso A: DNI nuevo — crear alumno normalmente.
-    // Verificar si el DNI fue autorizado previamente por el Gimnasio
+    // Caso A: DNI nuevo.
     const estaAutorizado = this.data.dnisAutorizados.some(d => d.dni === cleanDni);
     const generatedId = (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() : ("al-" + Date.now());
 
+    // NO incluir password en el objeto — solo en memoria durante authSignUp.
     const nuevoAlumno = {
       id: generatedId,
       dni: cleanDni,
-      password: cleanPass,
       nombre: nombre.trim(),
       telefono: telefono ? telefono.trim() : "",
       estadoAutorizacion: estaAutorizado ? 'autorizado' : 'pendiente',
@@ -530,16 +619,15 @@ class GymStore {
 
     this.data.alumnos.push(nuevoAlumno);
 
-    // Persistir nuevo perfil en Supabase DB
+    // Persistir nuevo perfil en Supabase DB (sin password)
     if (window.supabaseEngine) {
       window.supabaseEngine.registrarPerfilEnSupabase(nuevoAlumno);
     }
 
-    this.saveData();
-
-    // Intentar crear cuenta en Supabase Auth y vincular (no bloquea el flujo).
     console.log('REGISTER DEBUG supabaseEngine:', !!window.supabaseEngine);
     console.log('REGISTER DEBUG client:', !!window.supabaseEngine?.client);
+
+    let authExitosoA = false;
     if (window.supabaseEngine) {
       try {
         const authRes = await window.supabaseEngine.authSignUp(cleanDni, 'alumno', cleanPass);
@@ -547,19 +635,27 @@ class GymStore {
           const linkRes = await window.supabaseEngine.vincularPerfilAlumno(cleanDni, nuevoAlumno.telefono || '');
           if (linkRes.ok) {
             nuevoAlumno.authUserId = authRes.user.id;
-            this.saveData();
-            console.log('✅ authSignUp y vinculación OK (caso A alumno nuevo) → authUserId:', authRes.user.id);
+            authExitosoA = true;
+            console.log('✅ Registro Auth OK (caso A nuevo) → authUserId:', authRes.user.id, '| password NO guardado en localStorage.');
           } else {
-            console.warn('⚠️ authSignUp OK pero vincularPerfilAlumno (caso A) falló:', linkRes.error);
+            console.warn('⚠️ Registro: authSignUp OK pero vincularPerfilAlumno (caso A) falló:', linkRes.error);
           }
         } else {
-          console.log('ℹ️ authSignUp no OK (caso A) — se usará contraseña legacy:', authRes.error);
+          console.log('ℹ️ Registro: authSignUp no OK (caso A):', authRes.error);
         }
       } catch (e) {
-        console.warn('⚠️ authSignUp excepción (caso A, no crítico):', e);
+        console.warn('⚠️ Registro: excepción en Auth (caso A, no crítico):', e);
       }
     }
 
+    if (!authExitosoA) {
+      // Fallback: guardar password temporalmente para que el usuario pueda entrar.
+      // Se migrará automáticamente en el próximo login exitoso.
+      nuevoAlumno.password = cleanPass;
+      console.log('ℹ️ Registro: Auth no disponible — password guardado temporalmente como fallback legacy.');
+    }
+
+    this.saveData();
     return nuevoAlumno;
   }
 

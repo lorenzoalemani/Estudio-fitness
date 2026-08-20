@@ -97,7 +97,12 @@ class SupabaseEngine {
         : (resProfiles.data || []).filter(p => p.rol === 'alumno').map(a => ({
             id: a.id,
             dni: a.dni,
-            password: a.password || null,
+            // password: NUNCA se lee desde Supabase (columna no existe en profiles).
+            // Los passwords legacy viven exclusivamente en localStorage y son
+            // preservados por syncWithSupabase() durante la reconciliación.
+            // No incluir esta propiedad aquí evita que sbAlumno.password sea null
+            // (en lugar de undefined), lo que cortocircuitaría la lógica de
+            // preservación en syncWithSupabase().
             nombre: a.nombre,
             telefono: a.telefono || "",
             estadoAutorizacion: a.estado_autorizacion,
@@ -121,7 +126,11 @@ class SupabaseEngine {
         : (resProfiles.data || []).filter(p => p.rol === 'profesor').map(p => ({
             id: p.id,
             dni: p.dni,
-            password: p.password || null,
+            // password: NUNCA se lee desde Supabase (columna no existe en profiles).
+            // La contraseña hardcodeada del profesor ("octagym2000") vive en
+            // DEFAULT_DATA y se conserva en localStorage hasta que sea migrado
+            // a Supabase Auth. syncWithSupabase() la preserva durante la
+            // reconciliación siempre que authUserId no esté confirmado.
             nombre: p.nombre,
             rol: "profesor",
             // auth_user_id: UUID de Supabase Auth. Puede ser null si todavía
