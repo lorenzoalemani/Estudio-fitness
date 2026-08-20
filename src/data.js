@@ -46,21 +46,145 @@ class GymStore {
   loadData() {
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) return JSON.parse(stored);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+
+        // --- MIGRACIÓN CONSERVADORA ---
+        // Si los datos vienen del formato viejo (arrays globales de alumnos/
+        // profesores), se cargan COMPLETOS en memoria para que la sesión activa
+        // no pierda funcionalidad. La próxima llamada a saveData() aplicará el
+        // filtro nuevo y dejará de persistir datos de otros usuarios.
+        //
+        // Si los datos ya vienen del formato nuevo (con sesionActual y sin
+        // arrays globales), se reconstruyen los arrays en memoria vacíos.
+        if (parsed._formatoSeguro) {
+          // Formato nuevo: reconstruir arrays en memoria desde sesionActual
+          const sa = parsed.sesionActual;
+          const memData = {
+            profesores: [],
+            alumnos: [],
+            dnisAutorizados: [],
+            rutinas: parsed.rutinas || [],
+            workoutLogs: parsed.workoutLogs || [],
+            notificaciones: parsed.notificaciones || [],
+            _formatoSeguro: true
+          };
+          // Restaurar el perfil del usuario logueado al array correspondiente
+          if (sa) {
+            if (sa.rol === 'profesor') {
+              memData.profesores.push(sa);
+            } else if (sa.rol === 'alumno') {
+              memData.alumnos.push(sa);
+            }
+            memData.sesionActual = sa;
+          }
+          return memData;
+        }
+
+        // Formato viejo: cargar todo en memoria (migración conservadora).
+        // NO se descarta nada — el store opera normalmente con los arrays
+        // completos durante esta sesión. La próxima saveData() aplicará el
+        // filtro y dejará de persistir datos de otros usuarios.
+        // Se agrega el flag de identificación para la próxima carga.
+        parsed._formatoSeguro = false; // marca que hay datos legacy en memoria
+        return parsed;
+      }
     } catch (e) {
       console.warn("Error LocalStorage:", e);
     }
-    this.saveData(DEFAULT_DATA);
-    return DEFAULT_DATA;
+    // Primera instalación: arrancar con DEFAULT_DATA (incluye al profesor
+    // hardcodeado para la migración legacy, sin password en la estructura
+    // nueva porque saveData filtra).
+    const initial = JSON.parse(JSON.stringify(DEFAULT_DATA));
+    this._persistFiltered(initial);
+    return initial;
+  }
+
+  // Persiste en localStorage SOLO los datos del usuario logueado actual.
+  // Los arrays globales (alumnos, profesores, dnisAutorizados) NUNCA se
+  // escriben a disco — viven exclusivamente en memoria durante la sesión.
+  //
+  // Qué se persiste:
+  //   sesionActual: perfil mínimo del usuario logueado (sin password, sin
+  //                 datos de otros usuarios). Es solo un caché de interfaz,
+  //                 NO una medida de seguridad.
+  //   rutinas:      solo las del usuario logueado (propias + asignadas).
+  //   workoutLogs:  solo los del usuario logueado.
+  //   notificaciones: solo las del usuario logueado.
+  //
+  // Qué NO se persiste:
+  //   alumnos[], profesores[], dnisAutorizados[] — datos globales de otros.
+  //   password de cualquier usuario.
+  _persistFiltered(data) {
+    try {
+      // Determinar el usuario logueado actual
+      const userId = window._sessionAlumnoId || window._sessionProfesorId || null;
+      const userRol = window._sessionProfesorId ? 'profesor' : (window._sessionAlumnoId ? 'alumno' : null);
+
+      // Construir sesionActual: perfil mínimo sin password ni datos sensibles
+      let sesionActual = null;
+      if (userId && userRol === 'profesor') {
+        const prof = (data.profesores || []).find(p => p.id === userId);
+        if (prof) {
+          sesionActual = {
+            id: prof.id,
+            dni: prof.dni,
+            nombre: prof.nombre,
+            rol: 'profesor',
+            authUserId: prof.authUserId || null
+            // NO incluir: password, datos administrativos
+          };
+        }
+      } else if (userId && userRol === 'alumno') {
+        const al = (data.alumnos || []).find(a => a.id === userId);
+        if (al) {
+          sesionActual = {
+            id: al.id,
+            dni: al.dni,
+            nombre: al.nombre,
+            rol: 'alumno',
+            telefono: al.telefono || '',
+            estadoAutorizacion: al.estadoAutorizacion || 'pendiente',
+            authUserId: al.authUserId || null,
+            puntosTotal: al.puntosTotal || 0,
+            rachaSemanal: al.rachaSemanal || null,
+            rutinaActivaId: al.rutinaActivaId || null
+            // NO incluir: password, datos de otros usuarios
+          };
+        }
+      }
+
+      // Filtrar rutinas, logs y notificaciones al usuario logueado
+      const userRutinas = userId
+        ? (data.rutinas || []).filter(r =>
+            r.alumnoId === userId || r.alumnoCreadorId === userId || r.profesorId === userId)
+        : [];
+      const userLogs = userId
+        ? (data.workoutLogs || []).filter(w => w.alumnoId === userId)
+        : [];
+      const userNotifs = userId
+        ? (data.notificaciones || []).filter(n =>
+            (n.alumnoId === userId) ||
+            (userRol === 'profesor' && n.destinatarioRol === 'profesor'))
+        : [];
+
+      const toSave = {
+        _formatoSeguro: true,
+        sesionActual,
+        rutinas: userRutinas,
+        workoutLogs: userLogs,
+        notificaciones: userNotifs
+      };
+
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
+    } catch (e) {
+      console.error("Error guardando LocalStorage:", e);
+    }
   }
 
   saveData(newData) {
     this.data = newData || this.data;
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(this.data));
-    } catch (e) {
-      console.error("Error guardando LocalStorage:", e);
-    }
+    this._persistFiltered(this.data);
     window.dispatchEvent(new CustomEvent('gym_store_updated'));
   }
 

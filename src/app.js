@@ -1826,6 +1826,10 @@ document.addEventListener('DOMContentLoaded', () => {
       window._sessionProfesorId = null;
       appState.usuarioActual = null;
       appState.historialProfesorLogs = null;
+      // Limpiar localStorage: persistir estado vacío sin datos del usuario
+      // que cerró sesión. _persistFiltered detecta userId=null y escribe
+      // sesionActual: null con arrays vacíos.
+      store.saveData();
       renderApp();
     });
 
