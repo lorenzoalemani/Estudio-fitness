@@ -775,16 +775,45 @@ class SupabaseEngine {
   // No valida contra passwords legacy ni altera ningún campo local.
   async authSignIn(dni, rol, password) {
     if (!this.client) return { ok: false, error: 'cliente_no_inicializado' };
+    // INSTRUMENTACIÓN TEMPORAL: AUTH SIGNIN START
+    const email = this.getInternalEmail(dni, rol);
+    console.log('=== SUPABASE AUTH SIGNIN START ===', {
+      dni,
+      rol,
+      emailGenerado: email
+    });
+    // FIN INSTRUMENTACIÓN
     try {
-      const email = this.getInternalEmail(dni, rol);
       const { data, error } = await this.client.auth.signInWithPassword({ email, password });
       if (error) {
+        // INSTRUMENTACIÓN TEMPORAL: AUTH SIGNIN ERROR
+        console.log('=== SUPABASE AUTH SIGNIN RESULT ===', {
+          ok: false,
+          errorCode: error.code ?? null,
+          errorMessage: error.message ?? null,
+          errorStatus: error.status ?? null
+        });
+        // FIN INSTRUMENTACIÓN
         console.warn('⚠️ authSignIn error:', error.message);
         return { ok: false, error: error.message };
       }
       console.log('✅ authSignIn OK para', email, '→ user.id:', data.user?.id);
+      // INSTRUMENTACIÓN TEMPORAL: AUTH SIGNIN SUCCESS
+      console.log('=== SUPABASE AUTH SIGNIN RESULT ===', {
+        ok: true,
+        userId: data.user?.id ?? null
+      });
+      // FIN INSTRUMENTACIÓN
       return { ok: true, user: data.user, session: data.session };
     } catch (err) {
+      // INSTRUMENTACIÓN TEMPORAL: AUTH SIGNIN EXCEPTION
+      console.log('=== SUPABASE AUTH SIGNIN RESULT ===', {
+        ok: false,
+        errorCode: 'exception',
+        errorMessage: err.message ?? String(err),
+        errorStatus: null
+      });
+      // FIN INSTRUMENTACIÓN
       console.warn('⚠️ Excepción en authSignIn:', err);
       return { ok: false, error: err.message };
     }
@@ -794,11 +823,20 @@ class SupabaseEngine {
   // No borra localStorage ni contraseñas legacy.
   async authSignOut() {
     if (!this.client) return;
+    // INSTRUMENTACIÓN TEMPORAL: AUTH SIGNOUT START
+    console.log('=== AUTH SIGNOUT START ===', {});
+    // FIN INSTRUMENTACIÓN
     try {
       await this.client.auth.signOut();
       console.log('🔒 Sesión Supabase Auth cerrada.');
+      // INSTRUMENTACIÓN TEMPORAL: AUTH SIGNOUT RESULT
+      console.log('=== AUTH SIGNOUT RESULT ===', { ok: true, error: null });
+      // FIN INSTRUMENTACIÓN
     } catch (e) {
       console.warn('⚠️ Error al cerrar sesión Supabase Auth:', e);
+      // INSTRUMENTACIÓN TEMPORAL: AUTH SIGNOUT RESULT
+      console.log('=== AUTH SIGNOUT RESULT ===', { ok: false, error: e.message ?? String(e) });
+      // FIN INSTRUMENTACIÓN
     }
   }
 

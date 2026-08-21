@@ -43,6 +43,7 @@ class GymStore {
     // invalidar la respuesta de una sync CON alumnoId (la que sí trae rutinas),
     // aunque haya arrancado después y termine antes. Por eso se comparan por
     // separado: cada tipo de llamada solo puede ser "pisada" por otra de su mismo tipo.
+    this._syncCounter = 0; // INSTRUMENTACIÓN TEMPORAL: contador de syncs
     this.listenSupabaseRealtime();
     this.checkExpirationsAndNotify();
   }
@@ -83,6 +84,15 @@ class GymStore {
 
   async syncWithSupabase(alumnoId) {
     if (!window.supabaseEngine) return;
+    // INSTRUMENTACIÓN TEMPORAL: SYNC START
+    const syncId = ++this._syncCounter;
+    const authSession = window.supabaseEngine?.client?.auth?.getSession ? 'checking...' : 'no client';
+    console.log(`=== SYNC #${syncId} START ===`, {
+      alumnoId: alumnoId ?? null,
+      authSessionExists: 'check via getSession' // se verifica en FETCH RESULT
+    });
+    // FIN INSTRUMENTACIÓN
+
     // Token de secuencia: si mientras esta llamada está en vuelo se dispara
     // otra sync más nueva, la respuesta de ESTA llamada se descarta al volver,
     // para que nunca "gane" una respuesta vieja sobre una más reciente.
@@ -97,6 +107,20 @@ class GymStore {
       // Si hay alumnoId, la RPC obtener_rutinas_alumno obtendrá sus rutinas.
       // Si no hay alumnoId (profesor), solo se sincronizan profiles y dnis.
       const freshData = await window.supabaseEngine.fetchFullStateFromSupabase(alumnoId || null);
+
+      // INSTRUMENTACIÓN TEMPORAL: SYNC FETCH RESULT
+      let sessionExists = false;
+      try {
+        const { data: { session } } = await window.supabaseEngine.client.auth.getSession();
+        sessionExists = !!session;
+      } catch (e) { sessionExists = false; }
+      console.log(`=== SYNC #${syncId} FETCH RESULT ===`, {
+        alumnos: freshData?.alumnos?.length ?? 'null',
+        profesores: freshData?.profesores?.length ?? 'null',
+        ambosVacios: (freshData?.alumnos?.length === 0 && freshData?.profesores?.length === 0) ?? 'n/a',
+        authSessionExists: sessionExists
+      });
+      // FIN INSTRUMENTACIÓN
 
       const isStale = isAuthSync
         ? (authRequestToken !== this._authSyncSeq)
@@ -313,6 +337,12 @@ class GymStore {
     } catch (err) {
       console.warn("⚠️ Error en syncWithSupabase:", err);
     }
+    // INSTRUMENTACIÓN TEMPORAL: SYNC END
+    console.log(`=== SYNC #${syncId} END ===`, {
+      alumnosFinal: this.data.alumnos?.length ?? 0,
+      profesoresFinal: this.data.profesores?.length ?? 0
+    });
+    // FIN INSTRUMENTACIÓN
   }
 
   // --- RUTINAS DEL PROFESOR (PUNTO C) ---
@@ -467,8 +497,48 @@ class GymStore {
     const cleanDni = String(dni).trim();
     const cleanPass = String(password).trim();
 
+    // --- INSTRUMENTACIÓN TEMPORAL: LOGIN START ---
+    const alumnoPreSync = this.data.alumnos?.find(a => a.dni === cleanDni);
+    const profesorPreSync = this.data.profesores?.find(p => p.dni === cleanDni);
+    console.log('=== LOGIN START ===', {
+      dni: cleanDni,
+      alumnosCount: this.data.alumnos?.length ?? 0,
+      profesoresCount: this.data.profesores?.length ?? 0,
+      alumnoPerfil: alumnoPreSync ? {
+        existe: true,
+        authUserId: alumnoPreSync.authUserId ?? null,
+        hasPassword: 'password' in alumnoPreSync && alumnoPreSync.password !== undefined
+      } : { existe: false },
+      profesorPerfil: profesorPreSync ? {
+        existe: true,
+        authUserId: profesorPreSync.authUserId ?? null,
+        hasPassword: 'password' in profesorPreSync && profesorPreSync.password !== undefined
+      } : { existe: false }
+    });
+    // --- FIN INSTRUMENTACIÓN ---
+
     // 1. Sincronizar con Supabase y esperar a que termine.
     await this.syncWithSupabase();
+
+    // --- INSTRUMENTACIÓN TEMPORAL: SYNC RESULT ---
+    const alumnoPostSync = this.data.alumnos?.find(a => a.dni === cleanDni);
+    const profesorPostSync = this.data.profesores?.find(p => p.dni === cleanDni);
+    console.log('=== SYNC RESULT ===', {
+      freshDataAlumnos: 'ver syncWithSupabase logs',
+      freshDataProfesores: 'ver syncWithSupabase logs',
+      ambosVacios: 'ver syncWithSupabase logs',
+      alumnoEncontrado: alumnoPostSync ? {
+        existe: true,
+        authUserId: alumnoPostSync.authUserId ?? null,
+        hasPassword: 'password' in alumnoPostSync && alumnoPostSync.password !== undefined
+      } : { existe: false },
+      profesorEncontrado: profesorPostSync ? {
+        existe: true,
+        authUserId: profesorPostSync.authUserId ?? null,
+        hasPassword: 'password' in profesorPostSync && profesorPostSync.password !== undefined
+      } : { existe: false }
+    });
+    // --- FIN INSTRUMENTACIÓN ---
 
     // 2. Detectar rol por DNI (necesario para generar el email interno de Auth).
     const profesor = this.data.profesores.find(p => p.dni === cleanDni);
@@ -481,7 +551,28 @@ class GymStore {
     if (engine && (profesor || alumno)) {
       const rol = profesor ? 'profesor' : 'alumno';
       const perfil = profesor || alumno;
+
+      // --- INSTRUMENTACIÓN TEMPORAL: AUTH SIGNIN START ---
+      console.log('=== AUTH SIGNIN START ===', {
+        rol,
+        perfilEncontrado: perfil ? {
+          existe: true,
+          authUserId: perfil.authUserId ?? null,
+          hasPassword: 'password' in perfil && perfil.password !== undefined
+        } : { existe: false }
+      });
+      // --- FIN INSTRUMENTACIÓN ---
+
       const authRes = await engine.authSignIn(cleanDni, rol, cleanPass);
+
+      // --- INSTRUMENTACIÓN TEMPORAL: AUTH SIGNIN RESULT ---
+      console.log('=== AUTH SIGNIN RESULT ===', {
+        ok: authRes.ok,
+        errorCode: authRes.error?.code ?? authRes.error ?? null,
+        errorMessage: authRes.error?.message ?? authRes.error ?? null,
+        errorStatus: authRes.error?.status ?? null
+      });
+      // --- FIN INSTRUMENTACIÓN ---
 
       if (authRes.ok && authRes.user) {
         // Supabase Auth validó la contraseña correctamente.
@@ -507,13 +598,35 @@ class GymStore {
 
         // Retornar sesión usando el perfil local ya actualizado (que tiene
         // la contraseña legacy intacta).
-        if (profesor) return { rol: 'profesor', data: perfil };
-        if (alumno)   return { rol: 'alumno',   data: perfil };
+        if (profesor) {
+          console.log('=== LOGIN END ===', { success: true, rol: 'profesor', error: null });
+          return { rol: 'profesor', data: perfil };
+        }
+        if (alumno) {
+          console.log('=== LOGIN END ===', { success: true, rol: 'alumno', error: null });
+          return { rol: 'alumno', data: perfil };
+        }
       }
       // authSignIn devolvió ok:false → la cuenta Supabase Auth todavía no
       // existe o la contraseña no coincide. Caemos al flujo legacy.
       console.log(`ℹ️ authSignIn no tuvo éxito para ${rol} ${cleanDni} → usando flujo legacy.`);
     }
+
+    // --- INSTRUMENTACIÓN TEMPORAL: LEGACY FALLBACK ---
+    const profesorLegacyCheck = this.data.profesores.find(p => p.dni === cleanDni);
+    const alumnoLegacyCheck = this.data.alumnos.find(a => a.dni === cleanDni);
+    console.log('=== LEGACY FALLBACK ===', {
+      profesorEncontrado: profesorLegacyCheck ? {
+        existe: true,
+        hasPassword: 'password' in profesorLegacyCheck && profesorLegacyCheck.password !== undefined
+      } : { existe: false },
+      alumnoEncontrado: alumnoLegacyCheck ? {
+        existe: true,
+        hasPassword: 'password' in alumnoLegacyCheck && alumnoLegacyCheck.password !== undefined
+      } : { existe: false },
+      legacyResult: 'pending'
+    });
+    // --- FIN INSTRUMENTACIÓN ---
 
     // 4. Flujo legacy intacto — validación por DNI + contraseña en local.
     // Si el usuario valida por legacy (cuenta Auth todavía no creada), se
@@ -529,6 +642,7 @@ class GymStore {
       if (engine) {
         this._intentarMigracionLegacy(profesorLegacy, 'profesor', cleanDni, cleanPass, engine);
       }
+      console.log('=== LOGIN END ===', { success: true, rol: 'profesor', error: null });
       return { rol: 'profesor', data: profesorLegacy };
     }
 
@@ -538,8 +652,17 @@ class GymStore {
       if (engine) {
         this._intentarMigracionLegacy(alumnoLegacy, 'alumno', cleanDni, cleanPass, engine);
       }
+      console.log('=== LOGIN END ===', { success: true, rol: 'alumno', error: null });
       return { rol: 'alumno', data: alumnoLegacy };
     }
+
+    // --- INSTRUMENTACIÓN TEMPORAL: LOGIN END ---
+    console.log('=== LOGIN END ===', {
+      success: false,
+      rol: null,
+      error: 'No se encontró perfil válido (ni Auth ni legacy)'
+    });
+    // --- FIN INSTRUMENTACIÓN ---
 
     return null;
   }

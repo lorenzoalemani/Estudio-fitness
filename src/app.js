@@ -36,7 +36,17 @@ window.addEventListener('appinstalled', () => {
 document.addEventListener('DOMContentLoaded', () => {
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('./sw.js')
-      .then(reg => console.log('✅ Service Worker PWA activo'))
+      .then(reg => {
+        console.log('✅ Service Worker PWA activo');
+        // INSTRUMENTACIÓN TEMPORAL: SERVICE WORKER VERSION
+        const swVersion = reg.active ? reg.active.scriptURL : 'no active worker';
+        console.log('=== SERVICE WORKER VERSION ===', {
+          scriptURL: swVersion,
+          state: reg.active ? reg.active.state : 'none',
+          controller: navigator.serviceWorker.controller ? navigator.serviceWorker.controller.scriptURL : 'no controller'
+        });
+        // FIN INSTRUMENTACIÓN
+      })
       .catch(err => console.warn('Error SW:', err));
 
     navigator.serviceWorker.addEventListener('message', (event) => {
