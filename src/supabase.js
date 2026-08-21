@@ -743,6 +743,25 @@ class SupabaseEngine {
     return `dni_${rol}_${String(dni).trim()}@estudiofitness.app`;
   }
 
+  // Email interno en el formato VIEJO (usado hasta antes del commit 9c96ff6).
+  // Los usuarios de Supabase Auth creados con el código anterior existen con
+  // ESTE email. Se usa SOLO como reintento en authSignIn(): nunca para signUp,
+  // así no se crean usuarios duplicados con el formato viejo.
+  getLegacyInternalEmail(dni, rol) {
+    return `${String(dni).trim()}-${rol}@estudiofitnessinternal.com`;
+  }
+
+  // Determina si un error de signInWithPassword es de credenciales inválidas.
+  // Supabase usa el mismo código ambiguo tanto para "email inexistente" como
+  // para "contraseña incorrecta"; solo ante ese error tiene sentido probar el
+  // email en formato legado (otros errores —red, rate limit— no deben reintentar).
+  _esErrorCredencialesInvalidas(error) {
+    if (!error) return false;
+    if (error.code === 'invalid_credentials') return true;
+    if (error.status === 400 && /invalid login credentials/i.test(error.message || '')) return true;
+    return false;
+  }
+
   // Crea una cuenta de Supabase Auth para dni+rol con la password dada.
   // Retorna { ok, user, session } o { ok: false, error }.
   // No altera ningún dato de perfil ni contraseña legacy.
@@ -784,7 +803,25 @@ class SupabaseEngine {
     });
     // FIN INSTRUMENTACIÓN
     try {
-      const { data, error } = await this.client.auth.signInWithPassword({ email, password });
+      // 1) Intento principal con el formato vigente (cuentas nuevas).
+      let { data, error } = await this.client.auth.signInWithPassword({ email, password });
+
+      // 2) Reintento con el formato LEGADO solo si falló por credenciales.
+      //    Las cuentas creadas antes del cambio de getInternalEmail (9c96ff6)
+      //    viven en Supabase Auth con el email viejo; sin este reintento
+      //    reciben invalid_credentials aunque la contraseña sea correcta.
+      //    Es únicamente otro signInWithPassword: NO crea usuarios nuevos,
+      //    NO toca perfiles ni contraseñas.
+      if (error && this._esErrorCredencialesInvalidas(error)) {
+        const emailLegado = this.getLegacyInternalEmail(dni, rol);
+        if (emailLegado !== email) {
+          console.log(`ℹ️ authSignIn: sin resultado con el email actual → reintentando con formato legado (${emailLegado}).`);
+          const reintento = await this.client.auth.signInWithPassword({ email: emailLegado, password });
+          data = reintento.data;
+          error = reintento.error;
+        }
+      }
+
       if (error) {
         // INSTRUMENTACIÓN TEMPORAL: AUTH SIGNIN ERROR
         console.log('=== SUPABASE AUTH SIGNIN RESULT ===', {

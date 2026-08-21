@@ -200,19 +200,17 @@ class GymStore {
               rachaSemanal: sbAlumno.rachaSemanal !== undefined ? sbAlumno.rachaSemanal : loc.rachaSemanal
             };
 
-            if (resolvedAuthUserId) {
-              // Perfil migrado a Supabase Auth: eliminar contraseña legacy del
-              // localStorage. La contraseña solo debe vivir en Supabase Auth,
-              // nunca en el estado local una vez que la cuenta está vinculada.
+            // PRESERVACIÓN DE PASSWORD LEGACY (siempre, con o sin authUserId):
+            // borrarlo cuando existe auth_user_id (introducido en 6f49015) dejó
+            // sin red de seguridad a las cuentas cuyo usuario Auth fue creado
+            // con el formato de email viejo (pre-9c96ff6): authSignIn fallaba
+            // con invalid_credentials y el fallback legacy ya no tenía password.
+            // El password local no interfiere con el login normal (mientras
+            // authSignIn tenga éxito, el fallback ni se evalúa) y solo se
+            // elimina en _intentarMigracionLegacy() tras confirmar Auth+RPC.
+            merged.password = loc.password !== undefined ? loc.password : undefined;
+            if (merged.password === undefined) {
               delete merged.password;
-            } else {
-              // Perfil todavía no migrado: preservar la contraseña legacy para
-              // que el flujo de fallback y la migración en el próximo login
-              // sigan funcionando. NUNCA eliminarla antes de confirmar el vínculo.
-              merged.password = loc.password !== undefined ? loc.password : undefined;
-              if (merged.password === undefined) {
-                delete merged.password;
-              }
             }
 
             return merged;
@@ -242,19 +240,14 @@ class GymStore {
               authUserId: resolvedAuthUserId
             };
 
-            if (resolvedAuthUserId) {
-              // Profesor migrado a Supabase Auth: eliminar contraseña legacy.
-              // Incluye la eliminación de "octagym2000" del localStorage una vez
-              // que el profesor quede efectivamente vinculado.
+            // PRESERVACIÓN DE PASSWORD LEGACY (siempre, con o sin authUserId):
+            // mismo criterio que alumnos. Incluye conservar "octagym2000" en
+            // localStorage aunque el profesor ya esté vinculado: borrarlo aquí
+            // (6f49015) eliminaba la única vía de entrada si el usuario Auth
+            // vinculado no responde al email generado actual.
+            merged.password = loc.password !== undefined ? loc.password : undefined;
+            if (merged.password === undefined) {
               delete merged.password;
-            } else {
-              // Profesor todavía no migrado: preservar la contraseña legacy
-              // (incluida "octagym2000" del DEFAULT_DATA) para que el fallback
-              // y la migración en el próximo login sigan funcionando.
-              merged.password = loc.password !== undefined ? loc.password : undefined;
-              if (merged.password === undefined) {
-                delete merged.password;
-              }
             }
 
             return merged;
