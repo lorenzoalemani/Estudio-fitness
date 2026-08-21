@@ -1902,9 +1902,14 @@ document.addEventListener('DOMContentLoaded', () => {
       renderApp();
     });
 
-    document.getElementById('navRanking')?.addEventListener('click', () => {
+    document.getElementById('navRanking')?.addEventListener('click', async () => {
       appState.tabCliente = 'ranking';
       appState.mostrarDrawerNotifs = false;
+
+      if (appState.usuarioActual?.rol === 'alumno' && window.gymStore) {
+        await window.gymStore.syncWithSupabase(appState.usuarioActual.data.id);
+      }
+
       renderApp();
     });
 
