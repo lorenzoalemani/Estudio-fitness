@@ -291,7 +291,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
           <div class="form-group">
             <label class="form-label" for="inputPass">Contraseña</label>
-            <input type="password" id="inputPass" class="form-input" placeholder="Tu Contraseña" required>
+            <input type="password" id="inputPass" class="form-input" placeholder="Tu Contraseña" required minlength="2">
           </div>
 
           <button type="submit" class="btn btn-primary" style="width:100%">Iniciar Sesión 🚀</button>
@@ -310,6 +310,12 @@ document.addEventListener('DOMContentLoaded', () => {
       if (loginEnCurso) return; // evita doble submit mientras se sincroniza con Supabase
       const dni = document.getElementById('inputDni').value;
       const pass = document.getElementById('inputPass').value;
+
+      // Validación de longitud de contraseña
+      if (!pass || pass.trim().length < 2) {
+        alert("La contraseña debe tener al menos 2 caracteres.");
+        return;
+      }
 
       const submitBtn = e.target.querySelector('button[type="submit"]');
       loginEnCurso = true;
@@ -397,7 +403,8 @@ document.addEventListener('DOMContentLoaded', () => {
           </div>
           <div class="form-group">
             <label class="form-label">Contraseña deseada *</label>
-            <input type="password" id="regPass" class="form-input" placeholder="Crea tu clave" required>
+            <input type="password" id="regPass" class="form-input" placeholder="Crea tu clave" required minlength="2">
+            <p style="color: var(--text-gray); font-size: 0.85rem; margin-top: 4px;">Mínimo 2 caracteres (se recomienda 8+)</p>
           </div>
           <div class="form-group">
             <label class="form-label">Nombre Completo *</label>
@@ -429,6 +436,13 @@ document.addEventListener('DOMContentLoaded', () => {
         const pass = document.getElementById('regPass').value;
         const nombre = document.getElementById('regNombre').value;
         const tel = document.getElementById('regTel').value;
+
+        // Validación de longitud de contraseña
+        if (!pass || pass.trim().length < 2) {
+          alert("La contraseña debe tener al menos 2 caracteres.");
+          if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Crear mi Cuenta 📝'; }
+          return;
+        }
 
         // registrarseAlumno es async en Etapa 1: intenta authSignUp después
         // del registro local. El await es necesario para que la UI no avance

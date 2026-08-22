@@ -714,6 +714,14 @@ class GymStore {
     const cleanDni = String(dni).trim();
     const cleanPass = String(password).trim();
 
+    // Validación de longitud de contraseña
+    if (cleanPass.length < 2) {
+      throw new Error('La contraseña debe tener al menos 2 caracteres.');
+    }
+    if (cleanPass.length > 128) {
+      throw new Error('La contraseña es demasiado larga (máximo 128 caracteres).');
+    }
+
     const existente = this.data.alumnos.find(a => a.dni === cleanDni);
 
     if (existente) {

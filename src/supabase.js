@@ -771,6 +771,15 @@ class SupabaseEngine {
     console.log('AUTH DEBUG signup iniciado:', dni, rol);
 
     if (!this.client) return { ok: false, error: 'cliente_no_inicializado' };
+
+    // Validación de longitud de contraseña
+    if (typeof password !== 'string' || password.trim().length < 2) {
+      return { ok: false, error: 'La contraseña debe tener al menos 2 caracteres.' };
+    }
+    if (password.length > 128) {
+      return { ok: false, error: 'La contraseña es demasiado larga (máximo 128 caracteres).' };
+    }
+
     try {
       const email = this.getInternalEmail(dni, rol);
       const { data, error } = await this.client.auth.signUp({ email, password });
@@ -794,6 +803,12 @@ class SupabaseEngine {
   // No valida contra passwords legacy ni altera ningún campo local.
   async authSignIn(dni, rol, password) {
     if (!this.client) return { ok: false, error: 'cliente_no_inicializado' };
+
+    // Validación de longitud de contraseña
+    if (typeof password !== 'string' || password.trim().length < 2) {
+      return { ok: false, error: 'La contraseña debe tener al menos 2 caracteres.' };
+    }
+
     // INSTRUMENTACIÓN TEMPORAL: AUTH SIGNIN START
     const email = this.getInternalEmail(dni, rol);
     console.log('=== SUPABASE AUTH SIGNIN START ===', {
