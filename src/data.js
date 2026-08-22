@@ -58,7 +58,35 @@ class GymStore {
         // Si llegara (por algún bug previo), se elimina de inmediato para que
         // el constructor lo reinicialice como [] y lo pueble desde la RPC.
         if (parsed.rankingCache !== undefined) delete parsed.rankingCache;
-        return parsed;
+        
+        // Normalizar localStorage antiguo: validar tipos y agregar propiedades faltantes
+        // Preserve existing properties (including _formatoSeguro, sesionActual, etc.)
+        const normalized = {
+          ...parsed,
+          // Validar que cada propiedad crítica sea un array válido
+          // Si existe pero es de tipo inválido, usar el default correspondiente
+          profesores: Array.isArray(parsed.profesores) ? parsed.profesores : DEFAULT_DATA.profesores,
+          alumnos: Array.isArray(parsed.alumnos) ? parsed.alumnos : [],
+          dnisAutorizados: Array.isArray(parsed.dnisAutorizados) ? parsed.dnisAutorizados : [],
+          rutinas: Array.isArray(parsed.rutinas) ? parsed.rutinas : [],
+          workoutLogs: Array.isArray(parsed.workoutLogs) ? parsed.workoutLogs : [],
+          notificaciones: Array.isArray(parsed.notificaciones) ? parsed.notificaciones : []
+        };
+        
+        // Log de migración solo si realmente hay cambios (propiedades faltantes o inválidas)
+        const needsMigration = 
+          !Array.isArray(parsed.profesores) ||
+          !Array.isArray(parsed.alumnos) ||
+          !Array.isArray(parsed.dnisAutorizados) ||
+          !Array.isArray(parsed.rutinas) ||
+          !Array.isArray(parsed.workoutLogs) ||
+          !Array.isArray(parsed.notificaciones);
+        
+        if (needsMigration) {
+          console.log("📋 localStorage normalizado: se completaron propiedades faltantes o inválidas");
+        }
+        
+        return normalized;
       }
     } catch (e) {
       console.warn("Error LocalStorage:", e);
