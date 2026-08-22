@@ -905,6 +905,88 @@ class SupabaseEngine {
     }
   }
 
+  // =========================================================================
+  // --- LOGIN POR DNI — flujo mínimo (generateLink + verifyOtp) ---
+  // Pide al backend (api/login-dni o netlify/functions/login-dni) un
+  // hashed_token de magic link para el DNI dado, lo canjea con verifyOtp()
+  // por una sesión REAL emitida por Supabase Auth (no fabricada, no usa
+  // setSession() manual), y devuelve el perfil ya resuelto vía RLS.
+  // NO reemplaza a authSignIn/authSignUp: quedan intactos y sin usarse
+  // desde acá, pendientes de limpieza controlada en un paso posterior.
+  // =========================================================================
+  async loginConDni(dni) {
+    if (!this.client) return { ok: false, error: 'cliente_no_inicializado' };
+
+    const cleanDni = String(dni).trim();
+    const endpoints = ['/.netlify/functions/login-dni', '/api/login-dni'];
+
+    let hashedToken = null;
+    let lastError = null;
+
+    for (const ep of endpoints) {
+      try {
+        const res = await fetch(ep, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ dni: cleanDni })
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          hashedToken = data.hashed_token;
+          break;
+        }
+
+        const errData = await res.json().catch(() => ({}));
+        lastError = errData.error || `Error ${res.status} en ${ep}`;
+        if (errData.error === 'dni_no_encontrado') break; // no tiene sentido reintentar en el otro endpoint
+      } catch (err) {
+        lastError = err.message;
+      }
+    }
+
+    if (!hashedToken) {
+      console.warn('⚠️ loginConDni: no se obtuvo hashed_token:', lastError);
+      return { ok: false, error: lastError || 'no_se_pudo_generar_sesion' };
+    }
+
+    // Canjear el token por una sesión REAL (access + refresh emitidos por
+    // Supabase Auth / GoTrue). El SDK persiste la sesión solo y maneja el
+    // refresh automático de acá en adelante — esto es lo que garantiza que
+    // la sesión sobreviva a cerrar/reabrir la PWA.
+    const { data: sessionData, error: verifyError } = await this.client.auth.verifyOtp({
+      token_hash: hashedToken,
+      type: 'magiclink'
+    });
+
+    if (verifyError) {
+      console.warn('⚠️ loginConDni: verifyOtp falló:', verifyError.message);
+      return { ok: false, error: verifyError.message };
+    }
+
+    const authUserId = sessionData.user?.id;
+    if (!authUserId) {
+      return { ok: false, error: 'sesion_sin_usuario' };
+    }
+
+    // profiles.rol es la única fuente de verdad del rol — nunca se infiere
+    // del email de auth.users. Se lee vía RLS ("Auth: Perfil propio..."),
+    // ya con la sesión activa.
+    const { data: perfilData, error: perfilError } = await this.client
+      .from('profiles')
+      .select('id,dni,nombre,telefono,rol,estado_autorizacion,puntos_total,racha_semanas,racha_ultima_semana,auth_user_id')
+      .eq('auth_user_id', authUserId)
+      .single();
+
+    if (perfilError || !perfilData) {
+      console.warn('⚠️ loginConDni: no se pudo leer profiles tras autenticar:', perfilError?.message);
+      return { ok: false, error: 'perfil_no_encontrado_tras_login' };
+    }
+
+    console.log(`✅ loginConDni OK → rol: ${perfilData.rol}, authUserId: ${authUserId}`);
+    return { ok: true, rol: perfilData.rol, authUserId, perfil: perfilData };
+  }
+
   // RPC: verifica que el DNI exista como alumno autorizado y que el teléfono
   // coincida. Usada antes de completar el registro de un alumno precreado.
   // Retorna { ok, data } o { ok: false, error }.

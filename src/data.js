@@ -688,6 +688,48 @@ class GymStore {
     return null;
   }
 
+  // --- LOGIN POR DNI — flujo mínimo (sesión real de Supabase Auth) ---
+  // Delega la autenticación en engine.loginConDni() (generateLink +
+  // verifyOtp) y luego reutiliza syncWithSupabase() sin modificarla para
+  // repoblar this.data.alumnos/profesores con los objetos locales de
+  // siempre. Devuelve la MISMA forma { rol, data } que login(), para que
+  // el resto de app.js (asignación de sesión, sync de rutinas, etc.)
+  // funcione sin cambios.
+  // No toca login(), _intentarMigracionLegacy() ni el flujo legacy.
+  async loginConDni(dni) {
+    const cleanDni = String(dni).trim();
+    const engine = window.supabaseEngine;
+    if (!engine) {
+      console.warn('⚠️ loginConDni: supabaseEngine no disponible.');
+      return null;
+    }
+
+    const authRes = await engine.loginConDni(cleanDni);
+    if (!authRes.ok) {
+      console.warn('⚠️ loginConDni (DataManager): falló en engine:', authRes.error);
+      return null;
+    }
+
+    // Repoblar this.data.alumnos/profesores ya con la sesión activa.
+    await this.syncWithSupabase();
+
+    if (authRes.rol === 'profesor') {
+      const profesor = this.data.profesores.find(p => p.dni === cleanDni);
+      if (!profesor) {
+        console.warn('⚠️ loginConDni: autenticado pero no se encontró el profesor localmente tras sync.');
+        return null;
+      }
+      return { rol: 'profesor', data: profesor };
+    }
+
+    const alumno = this.data.alumnos.find(a => a.dni === cleanDni);
+    if (!alumno) {
+      console.warn('⚠️ loginConDni: autenticado pero no se encontró el alumno localmente tras sync.');
+      return null;
+    }
+    return { rol: 'alumno', data: alumno };
+  }
+
   // Migración automática de usuario legacy a Supabase Auth.
   // Se llama en background (fire-and-forget desde login()) cuando un usuario
   // entra por fallback legacy. La contraseña solo vive en esta función.

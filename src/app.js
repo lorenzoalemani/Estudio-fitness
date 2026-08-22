@@ -281,7 +281,7 @@ document.addEventListener('DOMContentLoaded', () => {
       <div class="login-container">
         <img src="./src/logo.svg" alt="Logo Estudio Fitness" class="login-logo">
         <h1 class="login-title">Estudio Fitness</h1>
-        <p class="login-subtitle">Ingreso único por DNI y Contraseña</p>
+        <p class="login-subtitle">Ingreso único por DNI</p>
 
         <form id="formLoginUnico">
           <div class="form-group">
@@ -289,10 +289,10 @@ document.addEventListener('DOMContentLoaded', () => {
             <input type="text" id="inputDni" class="form-input" placeholder="Ingresa tu DNI" required autofocus>
           </div>
 
-          <div class="form-group">
-            <label class="form-label" for="inputPass">Contraseña</label>
-            <input type="password" id="inputPass" class="form-input" placeholder="Tu Contraseña" required minlength="2">
-          </div>
+          <!-- Campo de contraseña eliminado del flujo activo (login por DNI,
+               generateLink + verifyOtp). authSignIn/authSignUp y el flujo
+               legacy de password siguen en supabase.js/data.js sin usarse,
+               pendientes de limpieza controlada. -->
 
           <button type="submit" class="btn btn-primary" style="width:100%">Iniciar Sesión 🚀</button>
         </form>
@@ -309,11 +309,9 @@ document.addEventListener('DOMContentLoaded', () => {
       e.preventDefault();
       if (loginEnCurso) return; // evita doble submit mientras se sincroniza con Supabase
       const dni = document.getElementById('inputDni').value;
-      const pass = document.getElementById('inputPass').value;
 
-      // Validación de longitud de contraseña
-      if (!pass || pass.trim().length < 2) {
-        alert("La contraseña debe tener al menos 2 caracteres.");
+      if (!dni || !dni.trim()) {
+        alert("Ingresá tu DNI.");
         return;
       }
 
@@ -323,9 +321,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
       let res;
       try {
-        // login() ahora espera la sincronización con Supabase antes de
-        // validar credenciales (ver comentario en data.js), por eso el await.
-        res = await store.login(dni, pass);
+        // Login por DNI: genera un magic-link en el backend y lo canjea por
+        // una sesión REAL de Supabase Auth (generateLink + verifyOtp).
+        // store.login(dni, password) queda sin usarse en este flujo activo,
+        // pendiente de limpieza controlada.
+        res = await store.loginConDni(dni);
       } finally {
         loginEnCurso = false;
         if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Iniciar Sesión 🚀'; }
@@ -379,7 +379,7 @@ document.addEventListener('DOMContentLoaded', () => {
         appState.historialProfesorLogs = null; // limpiar caché al cambiar de sesión
         renderApp();
       } else {
-        alert("❌ DNI o Contraseña incorrectos. Verifica tus datos.");
+        alert("❌ No se pudo iniciar sesión con ese DNI. Verificá el número.");
       }
 
     });
