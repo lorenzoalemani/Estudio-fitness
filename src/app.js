@@ -2101,6 +2101,14 @@ document.addEventListener('DOMContentLoaded', () => {
         });
       });
 
+      // VALIDACIÓN CRÍTICA: Verificar que existe una rutina activa válida
+      // Si no hay rutina en Supabase, el alumno debe contactar al profesor
+      if (!rutinaActiva) {
+        alert('❌ No tienes una rutina activa asignada.\n\nContacta a tu profesor para que te asigne una rutina de entrenamiento.');
+        renderApp();
+        return;
+      }
+
       // guardarEntrenamientoReal es async: guarda local de forma optimista y
       // espera la confirmación autoritativa del servidor (RPC de puntos) antes
       // de mostrar el mensaje final, así el alumno nunca ve un número de
@@ -2111,7 +2119,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const logGuardado = await store.guardarEntrenamientoReal({
         alumnoId:         alumno.id,
-        rutinaId:         rutinaActiva ? rutinaActiva.id : 'rut-default',
+        rutinaId:         rutinaActiva.id,
         diaId:            dia.id,
         diaNombre:        dia.nombre,
         diaNumero:        dia.diaNumero || 1,    // número real del día en la rutina
