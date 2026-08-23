@@ -4186,13 +4186,14 @@ appState.modalActivo = 'crear_rutina';
           });
           alert("✅ Rutina propia actualizada correctamente.");
         } else {
-          store.crearRutinaPropia({
-            alumnoId: usuarioActualData.id,
-            titulo,
-            duracionDias: duracion,
-            dias: formattedDays
-          });
-          alert("🚀 ¡Rutina propia creada! Ya podés empezar a entrenarla desde \"Mías\".");
+          await store.crearRutinaPropia({
+  alumnoId: usuarioActualData.id,
+  titulo,
+  duracionDias: duracion,
+  dias: formattedDays
+});
+
+alert("🚀 ¡Rutina propia creada! Ya podés empezar a entrenarla desde \"Mías\".");
         }
       } catch (err) {
         alert("❌ Error: " + err.message);

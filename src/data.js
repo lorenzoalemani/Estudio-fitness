@@ -1272,7 +1272,7 @@ class GymStore {
   // escritura de rutinas cuando no hay sesión de profesor activa). El alumno
   // no tiene `window._sessionProfesorId`, así que cualquier intento de
   // persistencia hacia la tabla `routines` sería rechazado de todas formas.
-  crearRutinaPropia({ alumnoId, titulo, duracionDias, dias }) {
+  async crearRutinaPropia({ alumnoId, titulo, duracionDias, dias }) {
     const alumno = this.getAlumnoPorId(alumnoId);
     if (!alumno) throw new Error("Alumno no encontrado.");
 
@@ -1293,6 +1293,18 @@ class GymStore {
       estado: "activa",
       dias
     };
+    if (window.supabaseEngine) {
+  const resultado =
+    await window.supabaseEngine.persistirNuevaRutinaEnSupabase(nuevaRutina);
+
+  if (!resultado || resultado.ok !== true) {
+    throw new Error(
+      resultado?.error || "No se pudo guardar la rutina en Supabase."
+    );
+  }
+
+  console.log("✅ Rutina propia guardada en Supabase:", resultado);
+}
 
     this.data.rutinas.push(nuevaRutina);
     this.saveData();
