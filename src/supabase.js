@@ -545,10 +545,15 @@ class SupabaseEngine {
   // alumno — si no lo es, no otorga puntos (yaHuboEntrenamientoHoy: true),
   // pero el entrenamiento ya quedó guardado en el historial de todas formas.
   async registrarPuntosEntrenamientoEnSupabase(logId, alumnoId) {
-    if (!this.client) return { ok: false, error: 'cliente_no_inicializado' };
+    if (!this.client) {
+      console.error('❌ registrarPuntosEntrenamientoEnSupabase: Cliente Supabase no inicializado');
+      return { ok: false, error: 'cliente_no_inicializado' };
+    }
     try {
       const logUuid    = this.ensureValidUUID(logId);
       const alumnoUuid = this.ensureValidUUID(alumnoId);
+      
+      console.log(`🔄 registrarPuntosEntrenamientoEnSupabase: Llamando RPC con logId=${logUuid}, alumnoId=${alumnoUuid}`);
 
       const { data: rpcData, error: rpcErr } = await this.client.rpc('registrar_puntos_entrenamiento_alumno', {
         p_workout_log_id: logUuid,
@@ -556,18 +561,18 @@ class SupabaseEngine {
       });
 
       if (rpcErr) {
-        console.error('❌ RPC registrar_puntos_entrenamiento_alumno falló:', rpcErr.message, rpcErr);
+        console.error('❌ registrarPuntosEntrenamientoEnSupabase: RPC retornó error técnico:', rpcErr.message, rpcErr);
         return { ok: false, error: rpcErr.message };
       }
       if (rpcData && rpcData.ok === false) {
-        console.error('❌ RPC registrar_puntos_entrenamiento_alumno retornó error de negocio:', rpcData.error);
+        console.error('❌ registrarPuntosEntrenamientoEnSupabase: RPC retornó error de negocio:', rpcData.error);
         return { ok: false, error: rpcData.error };
       }
-      console.log('✅ Puntos registrados atómicamente via RPC en Supabase DB.', rpcData);
+      console.log('✅ registrarPuntosEntrenamientoEnSupabase: Puntos registrados exitosamente en BD. Datos:', rpcData);
       // rpcData: { ok, puntosGanados, bonusRacha, puntosTotal, yaHuboEntrenamientoHoy }
       return { ok: true, ...rpcData };
     } catch (err) {
-      console.error('❌ Excepción en registrarPuntosEntrenamientoEnSupabase:', err);
+      console.error('❌ registrarPuntosEntrenamientoEnSupabase: Excepción no controlada:', err);
       return { ok: false, error: err.message };
     }
   }

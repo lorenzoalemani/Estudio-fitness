@@ -507,15 +507,22 @@ class GymStore {
   // el ranking los refleje sin esperar al próximo visibilitychange/sync
   // completo. Si falla (offline, etc.) conserva el rankingCache anterior.
   async forceRefreshRanking() {
-    if (!window.supabaseEngine) return;
+    if (!window.supabaseEngine) {
+      console.warn("⚠️ forceRefreshRanking: No hay supabaseEngine disponible");
+      return;
+    }
     try {
+      console.log("🔄 forceRefreshRanking: Consultando ranking fresco desde Supabase...");
       const rankingFresco = await window.supabaseEngine.fetchRankingPublico();
+      
       if (rankingFresco && rankingFresco.ok) {
         this.data.rankingCache = rankingFresco.data || [];
-        console.log(`🏆 Ranking refrescado (forceRefreshRanking): ${this.data.rankingCache.length} alumno(s).`);
+        console.log(`✅ forceRefreshRanking: Ranking actualizado correctamente con ${this.data.rankingCache.length} alumno(s).`);
+      } else {
+        console.warn("❌ forceRefreshRanking: fetchRankingPublico retornó error:", rankingFresco?.error);
       }
     } catch (err) {
-      console.warn("⚠️ Error en forceRefreshRanking:", err);
+      console.error("❌ forceRefreshRanking: Excepción al actualizar ranking:", err);
     }
   }
 
@@ -1474,6 +1481,12 @@ class GymStore {
         // Refresca el ranking en memoria para que el puntaje recién ganado
         // se vea de inmediato, sin esperar al próximo visibilitychange/sync.
         await this.forceRefreshRanking();
+        
+        // Fuerza el re-renderizado de la UI con el ranking actualizado
+        if (typeof window.renderApp === 'function') {
+          console.log("🎨 guardarEntrenamientoReal: Re-renderizando UI con ranking actualizado...");
+          window.renderApp();
+        }
       }
     }
 

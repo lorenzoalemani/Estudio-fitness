@@ -2119,12 +2119,21 @@ document.addEventListener('DOMContentLoaded', () => {
         comentarioGeneral: appState.workoutGeneralComment || ''
       });
 
-      const puntosGanados = Math.round((logGuardado?.puntos || 0));
-      const bonusTexto = logGuardado?.bonusRacha ? ` (incluye +${logGuardado.bonusRacha} 🔥 bonus por racha semanal)` : '';
-      const mensajePuntos = logGuardado?.yaHuboEntrenamientoHoy
-        ? `Ya sumaste puntos hoy con otro entrenamiento — este quedó guardado en tu historial, pero no otorga puntos adicionales (solo se otorgan puntos una vez por día).`
-        : `+${puntosGanados} puntos ganados${bonusTexto}`;
-      alert(`🏆 ¡Entrenamiento completado y guardado en tu historial!\n${mensajePuntos}`);
+      // VALIDACIÓN CRÍTICA: Verificar que la RPC confirmó los puntos en el servidor
+      const puntosConfirmadosPorServidor = logGuardado?.puntosConfirmadosPorServidor === true;
+      
+      if (!puntosConfirmadosPorServidor) {
+        // La RPC falló silenciosamente → No se pueden dar por válidos los puntos
+        alert(`⚠️ Entrenamiento guardado en tu historial, pero no se pudieron guardar los puntos en el servidor.\n\nIntentaremos de nuevo automáticamente. Si el problema persiste, contactá al profesor.`);
+      } else {
+        // La RPC fue exitosa → Mostrar el mensaje de éxito real
+        const puntosGanados = Math.round((logGuardado?.puntos || 0));
+        const bonusTexto = logGuardado?.bonusRacha ? ` (incluye +${logGuardado.bonusRacha} 🔥 bonus por racha semanal)` : '';
+        const mensajePuntos = logGuardado?.yaHuboEntrenamientoHoy
+          ? `Ya sumaste puntos hoy con otro entrenamiento — este quedó guardado en tu historial, pero no otorga puntos adicionales (solo se otorgan puntos una vez por día).`
+          : `+${puntosGanados} puntos ganados${bonusTexto}`;
+        alert(`🏆 ¡Entrenamiento completado y guardado en tu historial!\n${mensajePuntos}`);
+      }
       clearWorkoutDraft();
       appState.diaActivoEntrenamiento = null;
       appState.tabCliente = 'historial';
