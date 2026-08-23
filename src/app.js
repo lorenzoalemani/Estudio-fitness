@@ -1442,6 +1442,21 @@ document.addEventListener('DOMContentLoaded', () => {
     document.querySelectorAll('.alumno-card-clickable').forEach(card => {
       card.addEventListener('click', async (e) => {
         const alumnoId = card.dataset.alumnoId;
+
+console.log("========== DEBUG SELECCIÓN ==========");
+console.log("CARD TEXT:", card.innerText);
+console.log("DATASET ID:", card.dataset.alumnoId);
+
+const alumnoDebug = store.getAlumnoPorId(card.dataset.alumnoId);
+
+console.log("ALUMNO RESUELTO:", {
+    id: alumnoDebug?.id,
+    dni: alumnoDebug?.dni,
+    nombre: alumnoDebug?.nombre,
+    apodo: alumnoDebug?.nombreApodoProfesor
+});
+
+console.log("====================================");
         // Antes de mostrar/editar el detalle o la rutina de este alumno,
         // refrescamos su estado desde Supabase (fuente de verdad) para no
         // confiar en la copia local del profesor, que puede estar desactualizada.
