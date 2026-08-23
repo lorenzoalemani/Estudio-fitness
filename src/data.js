@@ -1382,7 +1382,13 @@ class GymStore {
     const idx = this.data.rutinas.findIndex(r => r.id === rutinaId);
     if (idx === -1) throw new Error("Rutina no encontrada.");
     const rutina = this.data.rutinas[idx];
-    if (!rutina.esPropia || rutina.alumnoCreadorId !== alumnoId) {
+    // Clasificación por profesorId (dato real, columna routines.profesor_id)
+    // y ownership por alumnoId (dato real, columna routines.alumno_id), NO
+    // por esPropia/alumnoCreadorId: esos son campos derivados que solo viven
+    // en el objeto JS local, y pueden quedar desactualizados si un sync pisó
+    // el objeto sin reconstruirlos exactamente. Mismo criterio que ya usan
+    // getRutinasAlumno()/getRutinasPropiasAlumno() para el listado.
+    if (rutina.profesorId != null || rutina.alumnoId !== alumnoId) {
       throw new Error("No tenés permiso para eliminar esta rutina.");
     }
 
