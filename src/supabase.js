@@ -309,11 +309,25 @@ class SupabaseEngine {
       console.error('🚫 Bloqueado: intento de escribir una rutina sin sesión de profesor activa.');
       return { ok: false, error: 'no_autorizado_no_es_profesor' };
     }
+    console.log("🔎 DEBUG SUPABASE ANTES ensureValidUUID:", {
+    rutinaAlumnoId: rutina.alumnoId,
+    rutinaId: rutina.id
+});
     try {
       const routineUuid = this.ensureValidUUID(rutina.id);
-      const alumnoUuid  = this.ensureValidUUID(rutina.alumnoId);
-      rutina.id       = routineUuid;
-      rutina.alumnoId = alumnoUuid;
+const alumnoUuid = this.ensureValidUUID(rutina.alumnoId);
+
+console.log("🔎 DEBUG SUPABASE DESPUÉS ensureValidUUID:", {
+    originalAlumnoId: rutina.alumnoId,
+    alumnoUuidGenerado: alumnoUuid,
+    originalRutinaId: rutina.id,
+    routineUuidGenerado: routineUuid
+});
+
+rutina.id = routineUuid;
+rutina.alumnoId = alumnoUuid;
+
+      
 
       // Asegurar UUIDs válidos en todos los niveles
       rutina.dias = (rutina.dias || []).map(d => ({
@@ -327,10 +341,16 @@ class SupabaseEngine {
 
       // Única vía: RPC guardar_rutina_profesor (SECURITY DEFINER)
       // Las tablas routines / routine_days / exercise_goals están protegidas por RLS.
-      const { data: rpcData, error: rpcErr } = await this.client.rpc(
-        'guardar_rutina_profesor',
-        { p_rutina: rutina }
-      );
+      console.log("🔎 DEBUG ANTES RPC:", {
+    alumnoId: rutina.alumnoId,
+    rutinaId: rutina.id,
+    titulo: rutina.titulo
+});
+
+const { data: rpcData, error: rpcErr } = await this.client.rpc(
+    'guardar_rutina_profesor',
+    { p_rutina: rutina }
+);
 
       if (rpcErr) {
         console.error('❌ RPC guardar_rutina_profesor falló (nueva rutina):', rpcErr.message, rpcErr);

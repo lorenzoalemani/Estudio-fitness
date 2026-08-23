@@ -1120,10 +1120,15 @@ class GymStore {
     alumno.rutinaActivaId = nuevaRutina.id;
 
     // Persistir en Supabase DB
-    if (window.supabaseEngine) {
-      window.supabaseEngine.persistirNuevaRutinaEnSupabase(nuevaRutina);
-    }
+   if (window.supabaseEngine) {
 
+    console.log("🔎 DEBUG ANTES PERSISTIR:", {
+        nuevaRutinaAlumnoId: nuevaRutina.alumnoId,
+        nuevaRutina: nuevaRutina
+    });
+
+    window.supabaseEngine.persistirNuevaRutinaEnSupabase(nuevaRutina);
+}
     // Enviar notificación Push al alumno
     this.crearNotificacion({
       destinatarioRol: "alumno",
