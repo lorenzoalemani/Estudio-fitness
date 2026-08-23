@@ -300,6 +300,17 @@ class GymStore {
           });
 
           freshData.rutinas.forEach(sbRutina => {
+            // Reconstituir esPropia/alumnoCreadorId a partir de profesorId:
+            // estos dos campos son puramente locales/derivados (no existen
+            // como columnas en `routines`), así que Supabase nunca los
+            // devuelve. Si no se recalculan acá, cada sync pisa el objeto
+            // local entero y una rutina propia (profesorId === null) pierde
+            // la marca esPropia, apareciendo entonces en "Rutinas del
+            // profesor" y desapareciendo de "Mis rutinas".
+            const esRutinaPropia = sbRutina.profesorId === null;
+            sbRutina.esPropia = esRutinaPropia;
+            sbRutina.alumnoCreadorId = esRutinaPropia ? sbRutina.alumnoId : undefined;
+
             const idx = this.data.rutinas.findIndex(r => r.id === sbRutina.id);
             if (idx >= 0) {
               this.data.rutinas[idx] = sbRutina;
@@ -412,6 +423,13 @@ class GymStore {
       });
 
       rutinasFrescas.forEach(sbRutina => {
+        // Mismo fix que en syncWithSupabase: recalcular esPropia/alumnoCreadorId
+        // desde profesorId, porque Supabase no devuelve esos campos locales y
+        // pisar el objeto entero borraría la marca de rutina propia.
+        const esRutinaPropia = sbRutina.profesorId === null;
+        sbRutina.esPropia = esRutinaPropia;
+        sbRutina.alumnoCreadorId = esRutinaPropia ? sbRutina.alumnoId : undefined;
+
         const idx = this.data.rutinas.findIndex(rt => rt.id === sbRutina.id);
         if (idx >= 0) {
           this.data.rutinas[idx] = sbRutina;
