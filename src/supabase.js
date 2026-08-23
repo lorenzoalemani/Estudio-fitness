@@ -998,7 +998,7 @@ class SupabaseEngine {
     }
 
     console.log(`✅ loginConDni OK → rol: ${perfilData.rol}, authUserId: ${authUserId}`);
-    return { ok: true, rol: perfilData.rol, authUserId, perfil: perfilData };
+    return { ok: true, rol: perfilData.rol, authUserId, data: perfilData };
   }
 
   // RPC: verifica que el DNI exista como alumno autorizado y que el teléfono
