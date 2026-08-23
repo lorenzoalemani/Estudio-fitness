@@ -44,6 +44,14 @@ class GymStore {
     // aunque haya arrancado después y termine antes. Por eso se comparan por
     // separado: cada tipo de llamada solo puede ser "pisada" por otra de su mismo tipo.
     this._syncCounter = 0; // INSTRUMENTACIÓN TEMPORAL: contador de syncs
+    // GUARDIA CONSERVADORA DE PODA DE RUTINAS (ver syncWithSupabase/
+    // syncRutinasProfesor): cuenta, por alumnoId, cuántas respuestas VACÍAS
+    // consecutivas de `obtener_rutinas_alumno` se recibieron mientras
+    // localmente había rutinas del profesor para ese alumno. Solo se poda
+    // cuando el vacío se confirma dos veces seguidas, para no borrar una
+    // rutina real por una respuesta transitoria (sesión Auth sin hidratar,
+    // timing, etc.). Vive solo en memoria (no se persiste a localStorage).
+    this._rutinasEmptyStreak = {};
     this.listenSupabaseRealtime();
     this.checkExpirationsAndNotify();
   }
@@ -293,11 +301,48 @@ class GymStore {
         // porque no aparecen en el snapshot de la RPC.
         if (alumnoId && freshData.rutinas !== null) {
           const idsFrescos = new Set(freshData.rutinas.map(r => r.id));
-          this.data.rutinas = this.data.rutinas.filter(r => {
-            if (r.alumnoId !== alumnoId) return true; // no es de este alumno: no tocar
-            if (r.esPropia) return true; // rutina propia local: nunca se poda
-            return idsFrescos.has(r.id); // rutina asignada por profesor: podar si ya no existe en Supabase
-          });
+
+          // GUARDIA CONSERVADORA CONTRA VACÍOS TRANSITORIOS: freshData.rutinas
+          // === [] es, para este código, indistinguible entre "el alumno
+          // realmente no tiene rutinas del profesor" y "obtener_rutinas_alumno
+          // devolvió vacío por una condición transitoria" (sesión Auth todavía
+          // no hidratada en este sync puntual, timing, etc. — no se puede
+          // verificar desde acá sin tocar supabase.js/RPC). Podar de inmediato
+          // en ese caso borraba rutinas reales del profesor por una respuesta
+          // de un solo sync. Con esta guardia, un vacío SOLO poda las rutinas
+          // del profesor de este alumno cuando se confirma en DOS syncs
+          // consecutivos con alumnoId — así una rutina eliminada de verdad en
+          // Supabase sigue pudiendo desaparecer localmente (con un sync extra
+          // de demora), pero un vacío aislado ya no destruye datos reales.
+          // No aplica a rutinas propias (nunca se podan, sin cambios) ni
+          // afecta el caso en que freshData.rutinas SÍ trae datos.
+          const hayRutinasDeProfesorLocales = this.data.rutinas.some(
+            r => r.alumnoId === alumnoId && !r.esPropia
+          );
+          let permitirPodaRutinas = true;
+          if (freshData.rutinas.length === 0 && hayRutinasDeProfesorLocales) {
+            const streakPrevio = this._rutinasEmptyStreak[alumnoId] || 0;
+            const streakNuevo = streakPrevio + 1;
+            this._rutinasEmptyStreak[alumnoId] = streakNuevo;
+            if (streakNuevo < 2) {
+              permitirPodaRutinas = false;
+              console.log(`⏭️ [sync] obtener_rutinas_alumno vino vacío para alumno ${alumnoId} (confirmación ${streakNuevo}/2) → se preservan rutinas locales del profesor por esta vez.`);
+            } else {
+              console.log(`🗑️ [sync] obtener_rutinas_alumno confirmó vacío 2 veces seguidas para alumno ${alumnoId} → se poda.`);
+            }
+          } else {
+            // Respuesta con datos (o no había nada que podar de todos modos):
+            // resetear la racha de vacíos para este alumno.
+            this._rutinasEmptyStreak[alumnoId] = 0;
+          }
+
+          if (permitirPodaRutinas) {
+            this.data.rutinas = this.data.rutinas.filter(r => {
+              if (r.alumnoId !== alumnoId) return true; // no es de este alumno: no tocar
+              if (r.esPropia) return true; // rutina propia local: nunca se poda
+              return idsFrescos.has(r.id); // rutina asignada por profesor: podar si ya no existe en Supabase
+            });
+          }
 
           freshData.rutinas.forEach(sbRutina => {
             // Reconstituir esPropia/alumnoCreadorId a partir de profesorId:
@@ -413,14 +458,39 @@ class GymStore {
       const rutinasFrescas = resultado.rutinas || [];
       const idsFrescos = new Set(rutinasFrescas.map(rt => rt.id));
 
+      // GUARDIA CONSERVADORA CONTRA VACÍOS TRANSITORIOS (mismo criterio que
+      // en syncWithSupabase(), y comparte el mismo contador this._rutinasEmptyStreak
+      // por alumnoId: un vacío detectado acá o en syncWithSupabase() suma a la
+      // misma racha de confirmación). Solo se poda cuando el vacío se
+      // confirma 2 veces seguidas para ese alumno puntual.
+      const hayRutinasDeProfesorLocales = this.data.rutinas.some(
+        rt => rt.alumnoId === alumnoId && !rt.esPropia
+      );
+      let permitirPodaRutinas = true;
+      if (rutinasFrescas.length === 0 && hayRutinasDeProfesorLocales) {
+        const streakPrevio = this._rutinasEmptyStreak[alumnoId] || 0;
+        const streakNuevo = streakPrevio + 1;
+        this._rutinasEmptyStreak[alumnoId] = streakNuevo;
+        if (streakNuevo < 2) {
+          permitirPodaRutinas = false;
+          console.log(`⏭️ [syncRutinasProfesor] vacío para alumno ${alumnoId} (confirmación ${streakNuevo}/2) → se preservan rutinas locales por esta vez.`);
+        } else {
+          console.log(`🗑️ [syncRutinasProfesor] vacío confirmado 2 veces seguidas para alumno ${alumnoId} → se poda.`);
+        }
+      } else {
+        this._rutinasEmptyStreak[alumnoId] = 0;
+      }
+
       // Poda: de las rutinas locales de ESTE alumno (nunca de otros, y nunca
       // las "propias" auto-gestionadas, que son locales por diseño), eliminar
       // las que ya no están en el snapshot fresco de Supabase.
-      this.data.rutinas = this.data.rutinas.filter(rt => {
-        if (rt.alumnoId !== alumnoId) return true;
-        if (rt.esPropia) return true;
-        return idsFrescos.has(rt.id);
-      });
+      if (permitirPodaRutinas) {
+        this.data.rutinas = this.data.rutinas.filter(rt => {
+          if (rt.alumnoId !== alumnoId) return true;
+          if (rt.esPropia) return true;
+          return idsFrescos.has(rt.id);
+        });
+      }
 
       rutinasFrescas.forEach(sbRutina => {
         // Mismo fix que en syncWithSupabase: recalcular esPropia/alumnoCreadorId
