@@ -1043,15 +1043,20 @@ class GymStore {
     return this.data.alumnos.find(a => a.id === id) || null;
   }
 
+  // Clasificación por profesorId (dato real, sincronizado siempre desde
+  // routines.profesor_id) y NO por esPropia/alumnoCreadorId: esos dos son
+  // campos derivados que solo viven en el objeto JS local y no son columnas
+  // reales, así que son frágiles ante cualquier merge que no los reconstruya
+  // perfectamente. profesorId es la fuente de verdad: null → propia.
   getRutinasAlumno(alumnoId) {
     return this.data.rutinas
-      .filter(r => r.alumnoId === alumnoId && !r.esPropia)
+      .filter(r => r.alumnoId === alumnoId && r.profesorId != null)
       .sort((a, b) => (b.estado === 'activa' ? 1 : 0) - (a.estado === 'activa' ? 1 : 0));
   }
 
   // --- FEATURE "MIS RUTINAS": rutinas auto-gestionadas por el propio alumno ---
   getRutinasPropiasAlumno(alumnoId) {
-    return this.data.rutinas.filter(r => r.esPropia && r.alumnoCreadorId === alumnoId);
+    return this.data.rutinas.filter(r => r.alumnoId === alumnoId && r.profesorId == null);
   }
 
   getRutinaPorId(rutinaId) {
@@ -1067,7 +1072,7 @@ class GymStore {
     }
     // Fallback: Retornar la rutina activa más reciente asignada al alumno (excluye rutinas propias)
     return this.data.rutinas
-      .filter(r => (r.alumnoId === alumno.id || r.alumnoId === alumno.dni) && !r.esPropia && (r.estado === 'activa' || !r.estado))
+      .filter(r => (r.alumnoId === alumno.id || r.alumnoId === alumno.dni) && r.profesorId != null && (r.estado === 'activa' || !r.estado))
       .sort((a, b) => new Date(b.fechaInicio || 0) - new Date(a.fechaInicio || 0))[0] || null;
   }
 
