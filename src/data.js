@@ -499,6 +499,26 @@ class GymStore {
     return this.syncWithSupabase(idAUsar);
   }
 
+  // --- REFETCH FORZADO DEL RANKING (tras registrar puntos de un entrenamiento) ---
+  // Más liviano que forceRefreshRutinas()/syncWithSupabase(): solo llama a la
+  // RPC pública get_ranking_publico() y repuebla rankingCache, sin tocar
+  // alumnos, rutinas ni el resto del estado. Se usa inmediatamente después de
+  // que el servidor confirma puntos en guardarEntrenamientoReal(), para que
+  // el ranking los refleje sin esperar al próximo visibilitychange/sync
+  // completo. Si falla (offline, etc.) conserva el rankingCache anterior.
+  async forceRefreshRanking() {
+    if (!window.supabaseEngine) return;
+    try {
+      const rankingFresco = await window.supabaseEngine.fetchRankingPublico();
+      if (rankingFresco && rankingFresco.ok) {
+        this.data.rankingCache = rankingFresco.data || [];
+        console.log(`🏆 Ranking refrescado (forceRefreshRanking): ${this.data.rankingCache.length} alumno(s).`);
+      }
+    } catch (err) {
+      console.warn("⚠️ Error en forceRefreshRanking:", err);
+    }
+  }
+
   // --- AUTENTICACIÓN Y AUTORIZACIÓN POR DNI ---
   // Async a propósito: la secuencia deseada es (1) sincronizar con Supabase,
   // (2) actualizar el estado local, (3) recién ahí validar credenciales.
@@ -932,20 +952,61 @@ class GymStore {
     let alumno = this.data.alumnos.find(a => a.dni === cleanDni);
     if (alumno) {
       alumno.estadoAutorizacion = 'autorizado';
-      alumno.nombre = nombre.trim();
+      // NUNCA pisar el nombre real (profiles.nombre / alumno.nombre): el
+      // texto que tipeó el profesor acá es su apodo/etiqueta personal.
+      alumno.nombreProfesor = nombre.trim();
     } else {
       const newId = (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() : ("al-" + Date.now());
       alumno = {
         id: newId,
         dni: cleanDni,
         password: null,
+        // Todavía no existe fila en profiles (el alumno no se registró): se
+        // usa el texto del profesor como placeholder de nombre real hasta que
+        // el alumno se registre y el próximo sync traiga profiles.nombre.
         nombre: nombre.trim(),
+        nombreProfesor: nombre.trim(),
         telefono: telefono ? telefono.trim() : "",
         estadoAutorizacion: 'autorizado',
         fechaRegistro: new Date().toISOString().split('T')[0],
         rutinaActivaId: null
       };
       this.data.alumnos.push(alumno);
+    }
+
+    this.saveData();
+    return alumno;
+  }
+
+  // --- EDITAR NOMBRE PERSONALIZADO DEL PROFESOR (apodo, vía RPC segura) ---
+  // Actualiza ÚNICAMENTE authorized_dnis.nombre (el apodo con el que el
+  // profesor identifica al alumno en SU interfaz). NUNCA toca profiles.nombre
+  // (nombre real de la cuenta, que el alumno sigue viendo intacto).
+  async editarNombreProfesor({ dni, nuevoNombre }) {
+    const cleanDni = String(dni).trim();
+    const cleanNombre = String(nuevoNombre).trim();
+    if (!cleanNombre) {
+      throw new Error("El apodo no puede estar vacío.");
+    }
+    if (!window.supabaseEngine) {
+      throw new Error("Sin conexión a Supabase: no se pudo guardar el apodo.");
+    }
+
+    const resultado = await window.supabaseEngine.editarNombreProfesor(cleanDni, cleanNombre);
+    if (!resultado || resultado.ok !== true) {
+      throw new Error((resultado && resultado.error) || "No se pudo actualizar el apodo.");
+    }
+
+    // Reflejar el cambio localmente recién DESPUÉS de que Supabase confirmó éxito.
+    const alumno = this.data.alumnos.find(a => a.dni === cleanDni);
+    if (alumno) {
+      alumno.nombreProfesor = cleanNombre;
+    }
+    const dniAuth = this.data.dnisAutorizados.find(d => d.dni === cleanDni);
+    if (dniAuth) {
+      dniAuth.nombre = cleanNombre;
+    } else {
+      this.data.dnisAutorizados.push({ dni: cleanDni, nombre: cleanNombre });
     }
 
     this.saveData();
@@ -1410,6 +1471,9 @@ class GymStore {
         nuevoLog.puntosConfirmadosPorServidor = true;
         alumno.puntosTotal = Number(resultadoPuntos.puntosTotal) || 0;
         this.saveData();
+        // Refresca el ranking en memoria para que el puntaje recién ganado
+        // se vea de inmediato, sin esperar al próximo visibilitychange/sync.
+        await this.forceRefreshRanking();
       }
     }
 

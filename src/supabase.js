@@ -94,32 +94,41 @@ class SupabaseEngine {
 
       const alumnos = resProfiles.error
         ? null
-        : (resProfiles.data || []).filter(p => p.rol === 'alumno').map(a => ({
-            id: a.id,
-            dni: a.dni,
-            // password: NUNCA se lee desde Supabase (columna no existe en profiles).
-            // Los passwords legacy viven exclusivamente en localStorage y son
-            // preservados por syncWithSupabase() durante la reconciliación.
-            // No incluir esta propiedad aquí evita que sbAlumno.password sea null
-            // (en lugar de undefined), lo que cortocircuitaría la lógica de
-            // preservación en syncWithSupabase().
-            nombre: a.nombre,
-            telefono: a.telefono || "",
-            estadoAutorizacion: a.estado_autorizacion,
-            fechaRegistro: a.created_at ? a.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
-            rutinaActivaId: null,
-            // auth_user_id: UUID de Supabase Auth. Puede ser null si la cuenta
-            // todavía no fue vinculada (Etapa 1 de migración). Se preserva
-            // undefined si la columna no existe aún en producción.
-            authUserId: a.auth_user_id !== undefined ? (a.auth_user_id || null) : undefined,
-            // Valor autoritativo desde Supabase. Puede venir undefined si la
-            // columna todavía no existe en producción (antes de correr el patch
-            // SQL) — en ese caso data.js conserva el valor local existente.
-            puntosTotal: (a.puntos_total !== null && a.puntos_total !== undefined) ? Number(a.puntos_total) : undefined,
-            rachaSemanal: (a.racha_semanas !== null && a.racha_semanas !== undefined)
-              ? { semanas: Number(a.racha_semanas), ultimaSemana: a.racha_ultima_semana || null }
-              : undefined
-          }));
+        : (resProfiles.data || []).filter(p => p.rol === 'alumno').map(a => {
+            // nombreProfesor: apodo que el profesor asigna para identificar al
+            // alumno en SU interfaz. Fuente de verdad: authorized_dnis.nombre
+            // (NUNCA profiles.nombre). Si el DNI todavía no tiene fila en
+            // authorized_dnis (alumno no autorizado aún), queda null y la UI
+            // usa alumno.nombre (nombre real) como fallback.
+            const dniAuth = (dnisAutorizados || []).find(d => d.dni === a.dni);
+            return {
+              id: a.id,
+              dni: a.dni,
+              // password: NUNCA se lee desde Supabase (columna no existe en profiles).
+              // Los passwords legacy viven exclusivamente en localStorage y son
+              // preservados por syncWithSupabase() durante la reconciliación.
+              // No incluir esta propiedad aquí evita que sbAlumno.password sea null
+              // (en lugar de undefined), lo que cortocircuitaría la lógica de
+              // preservación en syncWithSupabase().
+              nombre: a.nombre,
+              nombreProfesor: dniAuth ? dniAuth.nombre : null,
+              telefono: a.telefono || "",
+              estadoAutorizacion: a.estado_autorizacion,
+              fechaRegistro: a.created_at ? a.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
+              rutinaActivaId: null,
+              // auth_user_id: UUID de Supabase Auth. Puede ser null si la cuenta
+              // todavía no fue vinculada (Etapa 1 de migración). Se preserva
+              // undefined si la columna no existe aún en producción.
+              authUserId: a.auth_user_id !== undefined ? (a.auth_user_id || null) : undefined,
+              // Valor autoritativo desde Supabase. Puede venir undefined si la
+              // columna todavía no existe en producción (antes de correr el patch
+              // SQL) — en ese caso data.js conserva el valor local existente.
+              puntosTotal: (a.puntos_total !== null && a.puntos_total !== undefined) ? Number(a.puntos_total) : undefined,
+              rachaSemanal: (a.racha_semanas !== null && a.racha_semanas !== undefined)
+                ? { semanas: Number(a.racha_semanas), ultimaSemana: a.racha_ultima_semana || null }
+                : undefined
+            };
+          });
 
       const profesores = resProfiles.error
         ? null
@@ -1051,6 +1060,34 @@ class SupabaseEngine {
     } catch (e) {
       console.warn('⚠️ Excepción en fetchRankingPublico:', e);
       return { ok: false, error: e.message };
+    }
+  }
+
+  // --- EDITAR NOMBRE PERSONALIZADO DEL PROFESOR (apodo en authorized_dnis) ---
+  // Llama a la RPC editar_nombre_profesor (SECURITY DEFINER), que valida que
+  // quien llama es profesor via profiles.auth_user_id = auth.uid() y
+  // actualiza ÚNICAMENTE authorized_dnis.nombre. NUNCA toca profiles.nombre
+  // (nombre real de la cuenta del alumno).
+  async editarNombreProfesor(dni, nuevoNombre) {
+    if (!this.client) return { ok: false, error: 'cliente_no_inicializado' };
+    try {
+      const { data: rpcData, error: rpcErr } = await this.client.rpc('editar_nombre_profesor', {
+        p_dni: String(dni).trim(),
+        p_nuevo_nombre: String(nuevoNombre).trim()
+      });
+      if (rpcErr) {
+        console.error('❌ RPC editar_nombre_profesor falló:', rpcErr.message, rpcErr);
+        return { ok: false, error: rpcErr.message };
+      }
+      if (rpcData && rpcData.ok === false) {
+        console.error('❌ RPC editar_nombre_profesor retornó error de negocio:', rpcData.error);
+        return { ok: false, error: rpcData.error };
+      }
+      console.log('✅ Nombre personalizado del profesor actualizado via RPC en Supabase DB.', rpcData);
+      return { ok: true, data: rpcData };
+    } catch (err) {
+      console.error('❌ Excepción en editarNombreProfesor:', err);
+      return { ok: false, error: err.message };
     }
   }
 

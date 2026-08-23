@@ -389,6 +389,17 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // Genera una contraseña temporal aleatoria e interna para Supabase Auth
+  // signUp(). El usuario nunca la ve ni la introduce: el login real es
+  // exclusivamente por DNI vía loginConDni() (magic link / OTP), no por
+  // email+password. No reemplaza ni modifica authSignIn/authSignUp.
+  function generarPasswordTemporalInterna() {
+    if (window.crypto && window.crypto.randomUUID) {
+      return window.crypto.randomUUID() + window.crypto.randomUUID();
+    }
+    return 'tmp-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+  }
+
   function renderRegisterScreen() {
     appContainer.innerHTML = `
       ${renderHeader()}
@@ -400,11 +411,6 @@ document.addEventListener('DOMContentLoaded', () => {
           <div class="form-group">
             <label class="form-label">Tu DNI *</label>
             <input type="text" id="regDni" class="form-input" placeholder="Ej: 55667788" required>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Contraseña deseada *</label>
-            <input type="password" id="regPass" class="form-input" placeholder="Crea tu clave" required minlength="2">
-            <p style="color: var(--text-gray); font-size: 0.85rem; margin-top: 4px;">Mínimo 2 caracteres (se recomienda 8+)</p>
           </div>
           <div class="form-group">
             <label class="form-label">Nombre Completo *</label>
@@ -433,16 +439,14 @@ document.addEventListener('DOMContentLoaded', () => {
       if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Registrando...'; }
       try {
         const dni = document.getElementById('regDni').value;
-        const pass = document.getElementById('regPass').value;
+        // El usuario ya NO ingresa contraseña: se genera internamente, solo
+        // para satisfacer el requisito de Supabase Auth signUp(). El login
+        // real sigue siendo exclusivamente por DNI vía loginConDni() (OTP),
+        // así que esta contraseña nunca se usa para autenticar y no hace
+        // falta que el usuario la vea ni la recuerde.
+        const pass = generarPasswordTemporalInterna();
         const nombre = document.getElementById('regNombre').value;
         const tel = document.getElementById('regTel').value;
-
-        // Validación de longitud de contraseña
-        if (!pass || pass.trim().length < 2) {
-          alert("La contraseña debe tener al menos 2 caracteres.");
-          if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Crear mi Cuenta 📝'; }
-          return;
-        }
 
         // registrarseAlumno es async en Etapa 1: intenta authSignUp después
         // del registro local. El await es necesario para que la UI no avance
@@ -1358,7 +1362,11 @@ document.addEventListener('DOMContentLoaded', () => {
               <div class="alumno-card-clickable" data-alumno-id="${alumno.id}">
                 <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px">
                   <div>
-                    <div style="font-size:1.15rem; font-weight:800">${alumno.nombre}</div>
+                    <div style="display:flex; align-items:center; gap:6px;">
+                      <span style="font-size:1.15rem; font-weight:800">${alumno.nombreProfesor || alumno.nombre}</span>
+                      <button class="btn-edit-nombre" data-dni="${alumno.dni}" title="Editar apodo"
+                              style="background:none; border:none; cursor:pointer; font-size:1rem; padding:0; color:var(--text-gray)">✎</button>
+                    </div>
                     <div style="font-size:0.85rem; color:var(--text-gray)">
                       DNI: ${alumno.dni} | 
                       <span style="color:${alumno.estadoAutorizacion === 'autorizado' ? 'var(--green-active)' : 'var(--yellow-warning)'}">
@@ -1476,6 +1484,24 @@ document.addEventListener('DOMContentLoaded', () => {
           e.stopPropagation();
           appState.rutinaAEliminarId = e.target.dataset.rutinaId;
           appState.modalActivo = 'confirmar_borrado_rutina';
+          renderApp();
+        } else if (e.target.classList.contains('btn-edit-nombre')) {
+          e.stopPropagation();
+          const dniAlumno = e.target.dataset.dni;
+          const alumnoActual = store.getAlumnoPorId(alumnoId);
+          const nombreActual = (alumnoActual && (alumnoActual.nombreProfesor || alumnoActual.nombre)) || '';
+          const nuevoNombre = prompt("Apodo para identificar a este alumno en tu panel:", nombreActual);
+          if (nuevoNombre === null) return; // cancelado
+          if (!nuevoNombre.trim()) {
+            alert("El apodo no puede estar vacío.");
+            return;
+          }
+          e.target.disabled = true;
+          try {
+            await store.editarNombreProfesor({ dni: dniAlumno, nuevoNombre: nuevoNombre.trim() });
+          } catch (err) {
+            alert("❌ No se pudo actualizar el apodo: " + err.message);
+          }
           renderApp();
         } else {
           const rutina = store.getRutinaActiva(alumnoId);
