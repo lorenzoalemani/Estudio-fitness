@@ -76,7 +76,7 @@ class SupabaseEngine {
         // ranking (ver sql/patch_gestion_rutinas_y_puntos.sql). Se leen acá para
         // que cada dispositivo muestre el mismo número, en vez del contador
         // aislado que vivía antes solo en alumno.puntosTotal de localStorage.
-        this.client.from('profiles').select('id,dni,nombre,telefono,rol,estado_autorizacion,created_at,puntos_total,racha_semanas,racha_ultima_semana,auth_user_id'),
+        this.client.from('profiles').select('id,dni,nombre,nombre_apodo_profesor,telefono,rol,estado_autorizacion,created_at,puntos_total,racha_semanas,racha_ultima_semana,auth_user_id'),
         this.client.from('workout_logs').select('*'),
         this.client.from('workout_log_sets').select('*'),
         this.client.from('notifications').select('*')
@@ -111,7 +111,7 @@ class SupabaseEngine {
               // (en lugar de undefined), lo que cortocircuitaría la lógica de
               // preservación en syncWithSupabase().
               nombre: a.nombre,
-              nombreProfesor: dniAuth ? dniAuth.nombre : null,
+              nombreProfesor: a.nombre_apodo_profesor || null,
               telefono: a.telefono || "",
               estadoAutorizacion: a.estado_autorizacion,
               fechaRegistro: a.created_at ? a.created_at.split('T')[0] : new Date().toISOString().split('T')[0],
