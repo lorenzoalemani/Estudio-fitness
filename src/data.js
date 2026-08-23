@@ -1267,11 +1267,13 @@ class GymStore {
   }
 
   // --- CREAR/EDITAR/ELIMINAR RUTINA PROPIA (AUTO-GESTIÓN DEL ALUMNO) ---
-  // Diseño intencional: las rutinas propias son 100% locales (LocalStorage) y
-  // NUNCA se escriben en Supabase, para respetar el Fix 3 (bloqueo de
-  // escritura de rutinas cuando no hay sesión de profesor activa). El alumno
-  // no tiene `window._sessionProfesorId`, así que cualquier intento de
-  // persistencia hacia la tabla `routines` sería rechazado de todas formas.
+  // Las rutinas propias SÍ se persisten en Supabase (tabla routines, con
+  // profesor_id = NULL), pero por una vía separada de la del profesor:
+  // las RPCs guardar_rutina_propia_alumno / eliminar_rutina_propia_alumno
+  // (SECURITY DEFINER) validan la identidad del alumno vía auth.uid() en
+  // vez de depender de window._sessionProfesorId (que el alumno no tiene).
+  // Mismo patrón de "esperar confirmación real del servidor y revertir en
+  // memoria si falla" que usa editarRutinaExistente para rutinas de profesor.
   async crearRutinaPropia({ alumnoId, titulo, duracionDias, dias }) {
     const alumno = this.getAlumnoPorId(alumnoId);
     if (!alumno) throw new Error("Alumno no encontrado.");
@@ -1283,6 +1285,8 @@ class GymStore {
     const nuevaRutina = {
       id: routineUuid,
       alumnoId,
+      // Rutina propia del alumno: nunca tiene profesor asociado en Supabase.
+      profesorId: null,
       esPropia: true,
       alumnoCreadorId: alumnoId,
       profesorCreadorNombre: "Auto-gestionada por el alumno",
@@ -1293,49 +1297,86 @@ class GymStore {
       estado: "activa",
       dias
     };
+
     if (window.supabaseEngine) {
-  const resultado =
-    await window.supabaseEngine.persistirNuevaRutinaEnSupabase(nuevaRutina);
+      const resultado = await window.supabaseEngine.persistirRutinaPropiaEnSupabase(nuevaRutina);
 
-  if (!resultado || resultado.ok !== true) {
-    throw new Error(
-      resultado?.error || "No se pudo guardar la rutina en Supabase."
-    );
-  }
+      if (!resultado || resultado.ok !== true) {
+        throw new Error(
+          (resultado && resultado.error) || "No se pudo guardar la rutina en Supabase."
+        );
+      }
 
-  console.log("✅ Rutina propia guardada en Supabase:", resultado);
-}
+      console.log("✅ Rutina propia guardada en Supabase:", resultado);
+    }
 
     this.data.rutinas.push(nuevaRutina);
     this.saveData();
     return nuevaRutina;
   }
 
-  editarRutinaPropia({ rutinaId, alumnoId, titulo, duracionDias, dias }) {
+  async editarRutinaPropia({ rutinaId, alumnoId, titulo, duracionDias, dias }) {
     const rutina = this.getRutinaPorId(rutinaId);
     if (!rutina || !rutina.esPropia || rutina.alumnoCreadorId !== alumnoId) {
       throw new Error("No tenés permiso para editar esta rutina.");
     }
+
+    // Guardamos los valores originales antes de mutar, para poder revertir
+    // en memoria si Supabase rechaza el guardado (mismo patrón que
+    // editarRutinaExistente para rutinas de profesor).
+    const original = {
+      titulo: rutina.titulo,
+      duracionDias: rutina.duracionDias,
+      fechaVencimiento: rutina.fechaVencimiento,
+      dias: rutina.dias
+    };
+
     rutina.titulo = titulo || rutina.titulo;
     rutina.duracionDias = Number(duracionDias) || rutina.duracionDias;
     const fInicio = rutina.fechaInicio ? new Date(rutina.fechaInicio) : new Date();
     rutina.fechaVencimiento = new Date(fInicio.getTime() + Number(rutina.duracionDias) * 86400000).toISOString().split('T')[0];
     rutina.dias = dias;
+
+    if (window.supabaseEngine) {
+      const resultado = await window.supabaseEngine.persistirRutinaPropiaEnSupabase(rutina);
+
+      if (!resultado || resultado.ok !== true) {
+        // Revertir: la persistencia falló, no dejamos "confirmado" en memoria
+        // algo que el servidor no aceptó.
+        rutina.titulo = original.titulo;
+        rutina.duracionDias = original.duracionDias;
+        rutina.fechaVencimiento = original.fechaVencimiento;
+        rutina.dias = original.dias;
+        return { ok: false, error: (resultado && resultado.error) || 'error_desconocido' };
+      }
+    }
+
     this.saveData();
-    return rutina;
+    return { ok: true, data: rutina };
   }
 
-  eliminarRutinaPropia(rutinaId, alumnoId) {
+  async eliminarRutinaPropia(rutinaId, alumnoId) {
     const idx = this.data.rutinas.findIndex(r => r.id === rutinaId);
     if (idx === -1) throw new Error("Rutina no encontrada.");
     const rutina = this.data.rutinas[idx];
     if (!rutina.esPropia || rutina.alumnoCreadorId !== alumnoId) {
       throw new Error("No tenés permiso para eliminar esta rutina.");
     }
+
+    // Confirmar eliminación en Supabase PRIMERO; recién si el servidor
+    // confirma, se elimina localmente. Si falla, la rutina queda intacta.
+    if (window.supabaseEngine) {
+      const resultado = await window.supabaseEngine.eliminarRutinaPropiaEnSupabase(rutinaId, alumnoId);
+      if (!resultado || resultado.ok !== true) {
+        return { ok: false, error: (resultado && resultado.error) || 'error_desconocido' };
+      }
+    }
+
     this.data.rutinas.splice(idx, 1);
     const alumno = this.getAlumnoPorId(alumnoId);
     if (alumno && alumno.rutinaActivaId === rutinaId) alumno.rutinaActivaId = null;
     this.saveData();
+    return { ok: true };
   }
 
   // --- SISTEMA DE PUNTUACIÓN Y RACHA SEMANAL ---

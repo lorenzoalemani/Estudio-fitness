@@ -680,12 +680,17 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.target.closest('.btn-eliminar-rutina-propia')) {
           e.stopPropagation();
           if (confirm("¿Seguro que querés eliminar esta rutina propia? Esta acción no se puede deshacer.")) {
-            try {
-              store.eliminarRutinaPropia(rId, alumno.id);
-            } catch (err) {
-              alert("❌ Error: " + err.message);
-            }
-            renderApp();
+            (async () => {
+              try {
+                const resultado = await store.eliminarRutinaPropia(rId, alumno.id);
+                if (!resultado || resultado.ok !== true) {
+                  alert("❌ No se pudo eliminar la rutina: " + ((resultado && resultado.error) || "error desconocido"));
+                }
+              } catch (err) {
+                alert("❌ Error: " + err.message);
+              }
+              renderApp();
+            })();
           }
           return;
         }
@@ -2158,12 +2163,17 @@ document.addEventListener('DOMContentLoaded', () => {
         if (e.target.closest('.btn-eliminar-rutina-propia')) {
           e.stopPropagation();
           if (confirm("¿Seguro que querés eliminar esta rutina propia? Esta acción no se puede deshacer.")) {
-            try {
-              store.eliminarRutinaPropia(rId, alumno.id);
-            } catch (err) {
-              alert("❌ Error: " + err.message);
-            }
-            renderApp();
+            (async () => {
+              try {
+                const resultado = await store.eliminarRutinaPropia(rId, alumno.id);
+                if (!resultado || resultado.ok !== true) {
+                  alert("❌ No se pudo eliminar la rutina: " + ((resultado && resultado.error) || "error desconocido"));
+                }
+              } catch (err) {
+                alert("❌ Error: " + err.message);
+              }
+              renderApp();
+            })();
           }
           return;
         }
@@ -3336,16 +3346,20 @@ appState.modalActivo = 'crear_rutina';
     if (esModoAlumnoPropio) {
       try {
         if (appState.modalActivo === 'editar_rutina_propia' && appState.rutinaEnEdicionId) {
-          store.editarRutinaPropia({
+          const resultado = await store.editarRutinaPropia({
             rutinaId: appState.rutinaEnEdicionId,
             alumnoId: usuarioActualData.id,
             titulo,
             duracionDias: duracion,
             dias: formattedDays
           });
-          alert("✅ Rutina propia actualizada correctamente.");
+          if (resultado && resultado.ok) {
+            alert("✅ Rutina propia actualizada correctamente.");
+          } else {
+            alert("❌ No se pudo guardar la rutina: " + ((resultado && resultado.error) || "error desconocido") + ". Los cambios no se aplicaron, probá de nuevo.");
+          }
         } else {
-          store.crearRutinaPropia({
+          await store.crearRutinaPropia({
             alumnoId: usuarioActualData.id,
             titulo,
             duracionDias: duracion,
@@ -4177,14 +4191,18 @@ appState.modalActivo = 'crear_rutina';
     if (esModoAlumnoPropio) {
       try {
         if (appState.modalActivo === 'editar_rutina_propia' && appState.rutinaEnEdicionId) {
-          store.editarRutinaPropia({
+          const resultado = await store.editarRutinaPropia({
             rutinaId: appState.rutinaEnEdicionId,
             alumnoId: usuarioActualData.id,
             titulo,
             duracionDias: duracion,
             dias: formattedDays
           });
-          alert("✅ Rutina propia actualizada correctamente.");
+          if (resultado && resultado.ok) {
+            alert("✅ Rutina propia actualizada correctamente.");
+          } else {
+            alert("❌ No se pudo guardar la rutina: " + ((resultado && resultado.error) || "error desconocido") + ". Los cambios no se aplicaron, probá de nuevo.");
+          }
         } else {
           await store.crearRutinaPropia({
   alumnoId: usuarioActualData.id,

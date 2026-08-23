@@ -476,6 +476,83 @@ const { data: rpcData, error: rpcErr } = await this.client.rpc(
     }
   }
 
+  // --- RUTINA PROPIA DEL ALUMNO: RPC segura, SIN depender de _sessionProfesorId ---
+  // Vía separada de persistirNuevaRutinaEnSupabase/persistirEdicionRutinaEnSupabase
+  // (que son exclusivas del profesor). La RPC guardar_rutina_propia_alumno
+  // (SECURITY DEFINER) valida la identidad del alumno server-side vía
+  // auth.uid() y hace INSERT o UPDATE según corresponda (mismo patrón upsert
+  // que guardar_rutina_profesor). profesor_id siempre queda NULL para estas
+  // rutinas.
+  async persistirRutinaPropiaEnSupabase(rutina) {
+    if (!this.client) return { ok: false, error: 'cliente_no_inicializado' };
+    try {
+      const routineUuid = this.ensureValidUUID(rutina.id);
+      const alumnoUuid = this.ensureValidUUID(rutina.alumnoId);
+
+      rutina.id = routineUuid;
+      rutina.alumnoId = alumnoUuid;
+      // Nunca debe viajar un profesorId en la rutina propia del alumno.
+      rutina.profesorId = null;
+
+      // Asegurar UUIDs válidos en todos los niveles
+      rutina.dias = (rutina.dias || []).map(d => ({
+        ...d,
+        id: this.ensureValidUUID(d.id),
+        ejercicios: (d.ejercicios || []).map(e => ({
+          ...e,
+          id: this.ensureValidUUID(e.id)
+        }))
+      }));
+
+      const { data: rpcData, error: rpcErr } = await this.client.rpc(
+        'guardar_rutina_propia_alumno',
+        { p_rutina: rutina }
+      );
+
+      if (rpcErr) {
+        console.error('❌ RPC guardar_rutina_propia_alumno falló:', rpcErr.message, rpcErr);
+        return { ok: false, error: rpcErr.message };
+      }
+
+      if (rpcData && rpcData.ok === false) {
+        console.error('❌ RPC guardar_rutina_propia_alumno retornó error de negocio:', rpcData.error);
+        return { ok: false, error: rpcData.error };
+      }
+
+      console.log('✅ Rutina propia persistida atómicamente via RPC en Supabase DB.', rpcData);
+      return { ok: true, data: rpcData };
+    } catch (err) {
+      console.error('❌ Excepción en persistirRutinaPropiaEnSupabase:', err);
+      return { ok: false, error: err.message };
+    }
+  }
+
+  // --- BORRAR RUTINA PROPIA DEL ALUMNO: RPC segura, SIN depender de _sessionProfesorId ---
+  async eliminarRutinaPropiaEnSupabase(rutinaId, alumnoId) {
+    if (!this.client) return { ok: false, error: 'cliente_no_inicializado' };
+    try {
+      const rutinaUuid = this.ensureValidUUID(rutinaId);
+      const alumnoUuid = this.ensureValidUUID(alumnoId);
+      const { data: rpcData, error: rpcErr } = await this.client.rpc('eliminar_rutina_propia_alumno', {
+        p_rutina_id: rutinaUuid,
+        p_alumno_id: alumnoUuid
+      });
+      if (rpcErr) {
+        console.error('❌ RPC eliminar_rutina_propia_alumno falló:', rpcErr.message, rpcErr);
+        return { ok: false, error: rpcErr.message };
+      }
+      if (rpcData && rpcData.ok === false) {
+        console.error('❌ RPC eliminar_rutina_propia_alumno retornó error de negocio:', rpcData.error);
+        return { ok: false, error: rpcData.error };
+      }
+      console.log('✅ Rutina propia borrada atómicamente via RPC en Supabase DB.', rpcData);
+      return { ok: true, data: rpcData };
+    } catch (err) {
+      console.error('❌ Excepción en eliminarRutinaPropiaEnSupabase:', err);
+      return { ok: false, error: err.message };
+    }
+  }
+
   async guardarWorkoutLogEnSupabase(log) {
     if (!this.client) return;
     try {
