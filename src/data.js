@@ -1091,6 +1091,9 @@ class GymStore {
 
   // --- CREAR NUEVA RUTINA (PERMITIENDO MÚLTIPLES RUTINAS POR ALUMNO) ---
   crearOActualizarRutina({ alumnoId, profesorNombre, titulo, duracionDias, dias }) {
+    console.log("🔎 DEBUG crearOActualizarRutina - recibió:", {
+    alumnoId
+});
     const alumno = this.getAlumnoPorId(alumnoId);
     if (!alumno) return;
 
