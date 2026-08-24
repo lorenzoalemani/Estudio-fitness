@@ -1429,9 +1429,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const inputSearch = document.getElementById('inputSearchProf');
     inputSearch?.addEventListener('input', (e) => {
+      const cursorPos = e.target.selectionStart;
       appState.busquedaProfesor = e.target.value;
       renderApp();
-      document.getElementById('inputSearchProf').focus();
+      const newInputSearch = document.getElementById('inputSearchProf');
+      if (newInputSearch) {
+        newInputSearch.focus();
+        newInputSearch.setSelectionRange(cursorPos, cursorPos);
+      }
     });
 
     document.getElementById('fTodos')?.addEventListener('click', () => { appState.filtroProfesor = 'todos'; renderApp(); });
@@ -2912,9 +2917,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const inputSearch = document.getElementById('inputSearchProf');
     inputSearch?.addEventListener('input', (e) => {
+      const cursorPos = e.target.selectionStart;
       appState.busquedaProfesor = e.target.value;
       renderApp();
-      document.getElementById('inputSearchProf').focus();
+      const newInputSearch = document.getElementById('inputSearchProf');
+      if (newInputSearch) {
+        newInputSearch.focus();
+        newInputSearch.setSelectionRange(cursorPos, cursorPos);
+      }
     });
 
     document.getElementById('fTodos')?.addEventListener('click', () => { appState.filtroProfesor = 'todos'; renderApp(); });
