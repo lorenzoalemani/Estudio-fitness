@@ -1,1800 +1,4668 @@
-// Módulo de Datos y Estado v4 - Estudio Fitness (Supabase Source of Truth & Set-by-Set Logger)
+// LÓGICA DE APLICACIÓN v4 - ESTUDIO FITNESS (WORKOUT LOGGER & WEB PUSH REAL)
 
-const STORAGE_KEY = 'estudio_fitness_db_v4';
+// --- INSTALACIÓN DE PWA (banner "Instalar aplicación" vía beforeinstallprompt) ---
+// Se define FUERA del DOMContentLoaded, en el nivel superior del script,
+// para no perder el evento si el navegador lo dispara antes de que termine
+// de cargar el resto de la página (puede pasar). No toca el registro del
+// Service Worker (eso sigue exactamente igual, más abajo) ni ningún otro
+// flujo: solo guarda el evento para poder dispararlo cuando el usuario
+// toque el botón.
+const INSTALL_DISMISS_KEY = 'estudio_fitness_install_dismissed_at';
+const INSTALL_DISMISS_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000; // 7 días
 
-// UUID fijo de OCTAVIO MONTERSINO — el MISMO id que se inserta en Supabase
-// (profiles.id) mediante el script SQL de limpieza, para que el profesor
-// quede identificado igual en local y en la DB y no se dupliquen registros
-// al sincronizar entre dispositivos.
-const OCTAVIO_ID = "da631950-9e21-447e-801a-dd21d3fae8d4";
+window.deferredInstallPrompt = null;
 
-// Padrón Inicial de DNI Autorizados por el Gimnasio.
-// Vacío a propósito: ya no hay alumnos de prueba pre-autorizados. El
-// profesor autoriza alumnos reales desde el panel (autorizarOAgregarAlumnoPorProfesor).
-const DEFAULT_AUTHORIZED_DNIS = [];
+// display-mode:standalone cubre Android/Chrome/Edge/Desktop una vez instalada;
+// navigator.standalone es el equivalente legado de iOS Safari cuando la PWA
+// se agregó a la pantalla de inicio manualmente (ahí nunca va a existir
+// beforeinstallprompt, pero si ya está instalada tampoco hay que ofrecer nada).
+function estudioFitnessPwaYaInstalada() {
+  return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
+      || window.navigator.standalone === true;
+}
 
-// Estado inicial de una instalación nueva (localStorage vacío): un único
-// profesor real, sin alumnos, rutinas, historiales ni notificaciones de
-// demostración.
-const DEFAULT_DATA = {
-  profesores: [
-    { id: OCTAVIO_ID, dni: "41976817", password: "octagym2000", nombre: "OCTAVIO MONTERSINO", rol: "profesor" }
-  ],
-  dnisAutorizados: DEFAULT_AUTHORIZED_DNIS,
-  alumnos: [],
-  rutinas: [],
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault(); // evita el mini-banner nativo automático; lo mostramos nosotros
+  window.deferredInstallPrompt = e;
+  if (typeof window.renderApp === 'function') window.renderApp();
+});
 
-  // REGISTROS REALES DE ENTRENAMIENTO POR SERIE (RESULTADO REAL ALUMNO)
-  workoutLogs: [],
+window.addEventListener('appinstalled', () => {
+  window.deferredInstallPrompt = null;
+  try { localStorage.removeItem(INSTALL_DISMISS_KEY); } catch (e) {}
+  if (typeof window.renderApp === 'function') window.renderApp();
+});
 
-  notificaciones: []
-};
+document.addEventListener('DOMContentLoaded', () => {
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./sw.js')
+      .then(reg => {
+        console.log('✅ Service Worker PWA activo');
+        // INSTRUMENTACIÓN TEMPORAL: SERVICE WORKER VERSION
+        const swVersion = reg.active ? reg.active.scriptURL : 'no active worker';
+        console.log('=== SERVICE WORKER VERSION ===', {
+          scriptURL: swVersion,
+          state: reg.active ? reg.active.state : 'none',
+          controller: navigator.serviceWorker.controller ? navigator.serviceWorker.controller.scriptURL : 'no controller'
+        });
+        // FIN INSTRUMENTACIÓN
+      })
+      .catch(err => console.warn('Error SW:', err));
 
-class GymStore {
-  constructor() {
-    this.data = this.loadData();
-    // rankingCache vive SOLO en memoria: se puebla desde la RPC get_ranking_publico()
-    // en cada sync y se elimina explícitamente antes de serializar a localStorage
-    // (ver saveData()). Arrancar siempre desde [] para no servir datos rancios.
-    this.data.rankingCache = [];
-    this._syncSeq = 0; // Token de secuencia para descartar respuestas de sync fuera de orden
-    this._authSyncSeq = 0; // Token de secuencia EXCLUSIVO de syncs con alumnoId (autenticadas).
-    // Una sync sin alumnoId (más liviana, no trae rutinas) nunca debe poder
-    // invalidar la respuesta de una sync CON alumnoId (la que sí trae rutinas),
-    // aunque haya arrancado después y termine antes. Por eso se comparan por
-    // separado: cada tipo de llamada solo puede ser "pisada" por otra de su mismo tipo.
-    this._syncCounter = 0; // INSTRUMENTACIÓN TEMPORAL: contador de syncs
-    // GUARDIA CONSERVADORA DE PODA DE RUTINAS (ver syncWithSupabase/
-    // syncRutinasProfesor): cuenta, por alumnoId, cuántas respuestas VACÍAS
-    // consecutivas de `obtener_rutinas_alumno` se recibieron mientras
-    // localmente había rutinas del profesor para ese alumno. Solo se poda
-    // cuando el vacío se confirma dos veces seguidas, para no borrar una
-    // rutina real por una respuesta transitoria (sesión Auth sin hidratar,
-    // timing, etc.). Vive solo en memoria (no se persiste a localStorage).
-    this._rutinasEmptyStreak = {};
-    this.listenSupabaseRealtime();
-    this.checkExpirationsAndNotify();
-  }
-
-  loadData() {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        // rankingCache nunca debe venir de localStorage: contiene datos de
-        // otros usuarios (nombres/puntos) que no deben persistir localmente.
-        // Si llegara (por algún bug previo), se elimina de inmediato para que
-        // el constructor lo reinicialice como [] y lo pueble desde la RPC.
-        if (parsed.rankingCache !== undefined) delete parsed.rankingCache;
-        
-        // Normalizar localStorage antiguo: validar tipos y agregar propiedades faltantes
-        // Preserve existing properties (including _formatoSeguro, sesionActual, etc.)
-        const normalized = {
-          ...parsed,
-          // Validar que cada propiedad crítica sea un array válido
-          // Si existe pero es de tipo inválido, usar el default correspondiente
-          profesores: Array.isArray(parsed.profesores) ? parsed.profesores : DEFAULT_DATA.profesores,
-          alumnos: Array.isArray(parsed.alumnos) ? parsed.alumnos : [],
-          dnisAutorizados: Array.isArray(parsed.dnisAutorizados) ? parsed.dnisAutorizados : [],
-          rutinas: Array.isArray(parsed.rutinas) ? parsed.rutinas : [],
-          workoutLogs: Array.isArray(parsed.workoutLogs) ? parsed.workoutLogs : [],
-          notificaciones: Array.isArray(parsed.notificaciones) ? parsed.notificaciones : []
-        };
-        
-        // Log de migración solo si realmente hay cambios (propiedades faltantes o inválidas)
-        const needsMigration = 
-          !Array.isArray(parsed.profesores) ||
-          !Array.isArray(parsed.alumnos) ||
-          !Array.isArray(parsed.dnisAutorizados) ||
-          !Array.isArray(parsed.rutinas) ||
-          !Array.isArray(parsed.workoutLogs) ||
-          !Array.isArray(parsed.notificaciones);
-        
-        if (needsMigration) {
-          console.log("📋 localStorage normalizado: se completaron propiedades faltantes o inválidas");
+    navigator.serviceWorker.addEventListener('message', (event) => {
+      if (event.data && event.data.type === 'NAVIGATE_ROUTE') {
+        if (event.data.routineId && appState.usuarioActual && appState.usuarioActual.rol === 'alumno') {
+          appState.tabCliente = 'rutina';
+          appState.rutinaSeleccionadaId = event.data.routineId;
+          appState.diaSeleccionadoId = null;
+          renderApp();
+          // PWA: al interactuar con una notificación de rutina actualizada,
+          // forzamos la reobtención fresca desde Supabase (no confiar en caché).
+          if (window.gymStore) window.gymStore.forceRefreshRutinas(appState.usuarioActual.data.id);
         }
-        
-        return normalized;
       }
-    } catch (e) {
-      console.warn("Error LocalStorage:", e);
-    }
-    this.saveData(DEFAULT_DATA);
-    return DEFAULT_DATA;
-  }
-
-  saveData(newData) {
-    this.data = newData || this.data;
-    try {
-      // rankingCache contiene datos de otros usuarios (nombres/puntos del
-      // ranking público) y no debe persistirse en localStorage. Se hace una
-      // copia shallow excluyendo esa clave antes de serializar, para que
-      // this.data.rankingCache siga vivo en memoria pero nunca llegue al disco.
-      const { rankingCache: _omitido, ...toStore } = this.data;
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(toStore));
-    } catch (e) {
-      console.error("Error guardando LocalStorage:", e);
-    }
-    window.dispatchEvent(new CustomEvent('gym_store_updated'));
-  }
-
-  async syncWithSupabase(alumnoId) {
-    if (!window.supabaseEngine) return;
-    // INSTRUMENTACIÓN TEMPORAL: SYNC START
-    const syncId = ++this._syncCounter;
-    const authSession = window.supabaseEngine?.client?.auth?.getSession ? 'checking...' : 'no client';
-    console.log(`=== SYNC #${syncId} START ===`, {
-      alumnoId: alumnoId ?? null,
-      authSessionExists: 'check via getSession' // se verifica en FETCH RESULT
     });
-    // FIN INSTRUMENTACIÓN
+  }
 
-    // Token de secuencia: si mientras esta llamada está en vuelo se dispara
-    // otra sync más nueva, la respuesta de ESTA llamada se descarta al volver,
-    // para que nunca "gane" una respuesta vieja sobre una más reciente.
-    const requestToken = ++this._syncSeq;
-    // Si esta llamada trae alumnoId (autenticada), también reserva un token en
-    // el contador paralelo _authSyncSeq. Solo otra llamada CON alumnoId más
-    // nueva puede invalidarla — una sync sin alumnoId que arranque después
-    // (por ejemplo, la inicial del constructor) ya no puede pisarla.
-    const isAuthSync = !!alumnoId;
-    const authRequestToken = isAuthSync ? ++this._authSyncSeq : null;
+  const store = window.gymStore;
+  const appContainer = document.getElementById('app');
+
+  const appState = {
+    usuarioActual: null, // null | { rol: 'profesor'|'alumno', data: object }
+    tabCliente: 'rutina', // 'rutina' | 'historial'
+    rutinaSeleccionadaId: null, // ID de rutina seleccionada por el alumno
+    diaSeleccionadoId: null, // ID de día seleccionado por el alumno
+    diaActivoEntrenamiento: null, // null | diaObject
+    filtroProfesor: 'todos',
+    busquedaProfesor: '',
+    modalActivo: null,
+    alumnoSeleccionadoId: null,
+    rutinaAEliminarId: null, // rutina pendiente de confirmación de borrado (panel profesor)
+    logEnEdicionId: null,    // entrenamiento que el alumno está editando (ventana 2hs)
+    mostrarDrawerNotifs: false,
+    workoutDraftSets: {},       // Estado temporal del entrenamiento en progreso por serie
+    borradorEntrenamientoDetectado: null, // borrador recuperado de localStorage, pendiente de confirmar Continuar/Descartar
+    historialProfesorLogs: null  // Caché async del historial del alumno visto por el profesor
+  };
+
+  // Escuchar cambios de Supabase Realtime / Local Store
+  window.addEventListener('gym_store_updated', () => {
+    if (appState.usuarioActual && appState.usuarioActual.rol === 'alumno') {
+      const alumnoActualizado = store.getAlumnoPorId(appState.usuarioActual.data.id) || store.data.alumnos.find(a => a.dni === appState.usuarioActual.data.dni);
+      if (alumnoActualizado) appState.usuarioActual.data = alumnoActualizado;
+    }
+
+    const activeEl = document.activeElement;
+    const isTyping = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA');
+    if (!isTyping) {
+      renderApp();
+    }
+  });
+
+  function renderApp() {
+    if (!appState.usuarioActual) {
+      renderLoginScreen();
+    } else if (appState.usuarioActual.rol === 'alumno') {
+      renderClientDashboard();
+    } else if (appState.usuarioActual.rol === 'profesor') {
+      renderTrainerDashboard();
+    }
+  }
+  // Expuesta para que los listeners de beforeinstallprompt/appinstalled
+  // (definidos arriba, fuera de este DOMContentLoaded) puedan refrescar el
+  // banner de instalación en cuanto cambie su disponibilidad.
+  window.renderApp = renderApp;
+
+  // --- BANNER "INSTALAR APLICACIÓN" ---
+  function debeOfrecerInstalacion() {
+    if (!window.deferredInstallPrompt) return false; // sin evento nativo disponible, no mostramos nada (requisito 7)
+    if (estudioFitnessPwaYaInstalada()) return false; // ya instalada (requisito 6)
     try {
-      // Si hay alumnoId, la RPC obtener_rutinas_alumno obtendrá sus rutinas.
-      // Si no hay alumnoId (profesor), solo se sincronizan profiles y dnis.
-      const freshData = await window.supabaseEngine.fetchFullStateFromSupabase(alumnoId || null);
+      const dismissedAt = Number(localStorage.getItem(INSTALL_DISMISS_KEY) || 0);
+      if (dismissedAt && (Date.now() - dismissedAt) < INSTALL_DISMISS_COOLDOWN_MS) return false; // el usuario ya lo cerró hace poco (requisito 9)
+    } catch (e) { /* localStorage no disponible: no bloqueamos por esto */ }
+    return true;
+  }
 
-      // INSTRUMENTACIÓN TEMPORAL: SYNC FETCH RESULT
-      let sessionExists = false;
-      try {
-        const { data: { session } } = await window.supabaseEngine.client.auth.getSession();
-        sessionExists = !!session;
-      } catch (e) { sessionExists = false; }
-      console.log(`=== SYNC #${syncId} FETCH RESULT ===`, {
-        alumnos: freshData?.alumnos?.length ?? 'null',
-        profesores: freshData?.profesores?.length ?? 'null',
-        ambosVacios: (freshData?.alumnos?.length === 0 && freshData?.profesores?.length === 0) ?? 'n/a',
-        authSessionExists: sessionExists
+  function renderInstallBanner() {
+    if (!debeOfrecerInstalacion()) return '';
+    return `
+      <div class="install-pwa-banner" id="installPwaBanner">
+        <div class="install-pwa-text">
+          <div class="install-pwa-title">📱 Instalar Estudio Fitness</div>
+          <div class="install-pwa-subtitle">Accedé más rápido, como una app, sin pasar por el navegador.</div>
+        </div>
+        <div class="install-pwa-actions">
+          <button class="btn btn-primary btn-sm" id="btnInstallPwa">Instalar aplicación</button>
+          <button class="btn btn-secondary btn-icon" id="btnDismissInstallPwa" title="Cerrar">✕</button>
+        </div>
+      </div>
+    `;
+  }
+
+  function bindInstallBannerEvents() {
+    const btnInstall = document.getElementById('btnInstallPwa');
+    if (btnInstall) {
+      btnInstall.addEventListener('click', async () => {
+        const promptEvent = window.deferredInstallPrompt;
+        if (!promptEvent) { renderApp(); return; } // ya no está disponible (p.ej. se instaló desde otra pestaña)
+        btnInstall.disabled = true;
+        promptEvent.prompt();
+        try {
+          await promptEvent.userChoice; // se resuelve tanto si acepta como si rechaza el diálogo nativo
+        } catch (e) { /* usuario cerró el diálogo del sistema sin elegir */ }
+        // El evento beforeinstallprompt es de un solo uso: una vez mostrado el
+        // diálogo nativo, se descarta. Si aceptó, "appinstalled" además limpia
+        // el flag de "cerrado por el usuario" y oculta el banner (requisito 5).
+        window.deferredInstallPrompt = null;
+        renderApp();
       });
-      // FIN INSTRUMENTACIÓN
+    }
+    const btnDismiss = document.getElementById('btnDismissInstallPwa');
+    if (btnDismiss) {
+      btnDismiss.addEventListener('click', () => {
+        try { localStorage.setItem(INSTALL_DISMISS_KEY, String(Date.now())); } catch (e) {}
+        renderApp();
+      });
+    }
+  }
 
-      const isStale = isAuthSync
-        ? (authRequestToken !== this._authSyncSeq)
-        : (requestToken !== this._syncSeq);
+  // --- HEADER COMPARTIDO CON ACTIVACIÓN EXPLÍCITA DE WEB PUSH ---
+  function renderHeader() {
+    const isProfesor = appState.usuarioActual?.rol === 'profesor';
+    const user = appState.usuarioActual?.data;
 
-      if (isStale) {
-        console.log("⏭️ Descartando respuesta de sync obsoleta (fuera de orden).");
+    const notifs = store.getNotificacionesPorRol(
+      isProfesor ? 'profesor' : 'alumno',
+      user ? user.id : null
+    );
+    const unreadCount = notifs.filter(n => !n.leido).length;
+    const pushConcedido = 'Notification' in window && Notification.permission === 'granted';
+
+    return `
+      <header class="app-header">
+        <div class="brand-wrapper" id="btnHeaderHome">
+          <img src="./src/logo.svg" alt="Estudio Fitness Logo" class="brand-logo">
+          <div class="brand-title">Estudio<span>Fitness</span></div>
+        </div>
+
+        <div class="header-actions">
+          ${user ? `
+            <span class="badge header-user-badge ${isProfesor ? 'badge-warning' : 'badge-active'}" title="${user.nombre}">
+              ${isProfesor ? '⚡' : '👤'} ${user.nombre}
+            </span>
+          ` : ''}
+
+          ${appState.usuarioActual ? `
+            <button
+              class="btn btn-secondary btn-icon notif-bell-btn"
+              id="btnNotifBell"
+              title="${pushConcedido ? 'Notificaciones' : 'Notificaciones (tocá para activar el push)'}"
+            >
+              🔔
+              ${!pushConcedido
+                ? `<span class="notif-bell-dot" title="Push desactivado"></span>`
+                : (unreadCount > 0 ? `<span style="position:absolute; top:-4px; right:-4px; background:var(--red-primary); color:#fff; border-radius:50%; width:18px; height:18px; font-size:0.7rem; font-weight:800; display:flex; align-items:center; justify-content:center">${unreadCount}</span>` : '')
+              }
+            </button>
+            <button class="btn btn-secondary btn-sm header-logout-btn" id="btnLogout"><span class="header-logout-label">Salir</span> 🚪</button>
+          ` : ''}
+        </div>
+      </header>
+
+      ${appState.mostrarDrawerNotifs ? renderNotifDrawer(notifs) : ''}
+      ${renderInstallBanner()}
+    `;
+  }
+
+  function renderNotifDrawer(notifs) {
+    return `
+      <div class="notif-drawer">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; border-bottom:1px solid var(--border-color); padding-bottom:6px">
+          <strong style="font-size:0.95rem">🔔 Avisos de Entrenamiento</strong>
+          <button class="btn btn-secondary btn-sm" id="btnCloseNotifs" style="padding:2px 8px">&times;</button>
+        </div>
+        ${notifs.length === 0 ? `
+          <div style="font-size:0.85rem; color:var(--text-gray); padding:10px; text-align:center">Sin notificaciones pendientes</div>
+        ` : notifs.map(n => `
+          <div class="notif-item ${!n.leido ? 'unread' : ''}">
+            <div>${n.mensaje}</div>
+            <div style="font-size:0.72rem; color:var(--text-muted); margin-top:4px">${new Date(n.fecha).toLocaleString()}</div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  }
+
+  function renderBottomNav() {
+    if (!appState.usuarioActual) return '';
+    const isProfesor = appState.usuarioActual.rol === 'profesor';
+    const user = appState.usuarioActual.data;
+    const notifs = store.getNotificacionesPorRol(isProfesor ? 'profesor' : 'alumno', user ? user.id : null);
+    const unreadCount = notifs.filter(n => !n.leido).length;
+
+    const iconRutina = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 9h8M8 13h8M8 17h5"/></svg>`;
+    const iconHistorial = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>`;
+    const iconAvisos = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>`;
+    const iconAlumnos = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 3 3.87"/></svg>`;
+    const iconMisRutinas = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="8" r="4"/><path d="M2 21v-1a7 7 0 0 1 7-7h1.5"/><path d="M18 14v6M15 17h6"/></svg>`;
+    const iconRanking = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 21h8M12 17v4M7 4h10v4a5 5 0 0 1-10 0V4Z"/><path d="M7 6H4a2 2 0 0 0 2 4M17 6h3a2 2 0 0 1-2 4"/></svg>`;
+
+    const items = isProfesor ? [
+      { id: 'navAlumnos',    label: 'Alumnos', icon: iconAlumnos, active: appState.modalActivo === null && !appState.mostrarDrawerNotifs },
+      { id: 'navAvisosProf', label: 'Avisos',   icon: iconAvisos,  active: appState.mostrarDrawerNotifs, badge: unreadCount }
+    ] : [
+      { id: 'navRutina',       label: 'Rutinas',   icon: iconRutina,    active: appState.tabCliente === 'rutina' && !appState.mostrarDrawerNotifs },
+      { id: 'navMisRutinas',   label: 'Mías',       icon: iconMisRutinas, active: appState.tabCliente === 'mis_rutinas' && !appState.mostrarDrawerNotifs },
+      { id: 'navRanking',      label: 'Ranking',    icon: iconRanking,   active: appState.tabCliente === 'ranking' && !appState.mostrarDrawerNotifs },
+      { id: 'navHistorial',    label: 'Historial', icon: iconHistorial, active: appState.tabCliente === 'historial' && !appState.mostrarDrawerNotifs },
+      { id: 'navAvisosAlumno', label: 'Avisos',     icon: iconAvisos,    active: appState.mostrarDrawerNotifs, badge: unreadCount }
+    ];
+
+    return `
+      <nav class="bottom-nav">
+        ${items.map(it => `
+          <button class="bottom-nav-item ${it.active ? 'active' : ''}" id="${it.id}">
+            <span class="bottom-nav-icon">
+              ${it.icon}
+              ${it.badge ? `<span class="bottom-nav-badge">${it.badge}</span>` : ''}
+            </span>
+            <span class="bottom-nav-label">${it.label}</span>
+          </button>
+        `).join('')}
+      </nav>
+    `;
+  }
+
+  // --- LOGIN Y REGISTRO POR DNI CON VERIFICACIÓN DE AUTORIZACIÓN ---
+  function renderLoginScreen() {
+    appContainer.innerHTML = `
+      ${renderHeader()}
+      <div class="login-container">
+        <img src="./src/logo.svg" alt="Logo Estudio Fitness" class="login-logo">
+        <h1 class="login-title">Estudio Fitness</h1>
+        <p class="login-subtitle">Ingreso único por DNI</p>
+
+        <form id="formLoginUnico">
+          <div class="form-group">
+            <label class="form-label" for="inputDni">Número de DNI</label>
+            <input type="text" id="inputDni" class="form-input" placeholder="Ingresa tu DNI" required autofocus>
+          </div>
+
+          <!-- Campo de contraseña eliminado del flujo activo (login por DNI,
+               generateLink + verifyOtp). authSignIn/authSignUp y el flujo
+               legacy de password siguen en supabase.js/data.js sin usarse,
+               pendientes de limpieza controlada. -->
+
+          <button type="submit" class="btn btn-primary" style="width:100%">Iniciar Sesión 🚀</button>
+        </form>
+
+        <div style="margin-top:16px; border-top:1px solid var(--border-color); padding-top:14px">
+          <button class="btn btn-secondary btn-sm" id="btnToggleRegister" style="width:100%">¿Eres alumno nuevo? Crear Cuenta 👤</button>
+        </div>
+      </div>
+    `;
+    bindInstallBannerEvents();
+
+    let loginEnCurso = false;
+    document.getElementById('formLoginUnico').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (loginEnCurso) return; // evita doble submit mientras se sincroniza con Supabase
+      const dni = document.getElementById('inputDni').value;
+
+      if (!dni || !dni.trim()) {
+        alert("Ingresá tu DNI.");
         return;
       }
 
-      if (freshData) {
-        let huboCambios = false;
+      const submitBtn = e.target.querySelector('button[type="submit"]');
+      loginEnCurso = true;
+      if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Verificando...'; }
 
-        // --- GUARDIA: no confundir "vacío legítimo" con "RLS bloqueó todo" ---
-        // El SELECT de `profiles` puede devolver `[]` sin error tanto cuando
-        // "no hay ningún perfil" como cuando RLS bloqueó todo por falta de
-        // sesión Auth activa (por ejemplo, justo después de un logout). Sin
-        // esta guardia, ese `[]` reemplazaba this.data.alumnos/profesores por
-        // arrays vacíos y el login dejaba de encontrar cualquier perfil.
-        //
-        // IMPORTANTE: NO se usa authGetSession() para esto. authGetSession()
-        // devuelve null también en el flujo normal de login (login() llama a
-        // syncWithSupabase() ANTES de authSignIn()), así que usarlo como
-        // condición bloqueaba incluso el primer login legítimo de una app
-        // recién abierta, sin haber sesión Auth todavía.
-        //
-        // Heurística en su lugar: en este sistema siempre existe al menos un
-        // profesor (OCTAVIO_ID, ver DEFAULT_DATA), así que un snapshot real de
-        // Supabase JAMÁS trae alumnos Y profesores vacíos al mismo tiempo. Si
-        // eso ocurre, es la señal de que RLS filtró todo por falta de sesión
-        // (o por algún corte de red parcial) y no debe usarse para podar el
-        // estado local. Si viene CUALQUIER dato (alumnos o profesores no
-        // vacíos), se reconcilia normalmente, haya o no sesión Auth activa.
-        const ambosVaciosSimultaneamente =
-          freshData.alumnos !== null && freshData.profesores !== null &&
-          freshData.alumnos.length === 0 && freshData.profesores.length === 0;
-        if (ambosVaciosSimultaneamente) {
-          console.log('⏭️ [sync] profiles trajo alumnos Y profesores vacíos a la vez (posible RLS sin sesión) → NO se reconcilian this.data.alumnos/this.data.profesores, se preserva el estado local.');
-        }
+      let res;
+      try {
+        // Login por DNI: genera un magic-link en el backend y lo canjea por
+        // una sesión REAL de Supabase Auth (generateLink + verifyOtp).
+        // store.login(dni, password) queda sin usarse en este flujo activo,
+        // pendiente de limpieza controlada.
+        res = await store.loginConDni(dni);
+      } finally {
+        loginEnCurso = false;
+        if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Iniciar Sesión 🚀'; }
+      }
 
-        // NOTA GENERAL: a partir de acá, cada campo de freshData es un array
-        // (posiblemente VACÍO — snapshot real de Supabase) o `null` (no se
-        // consultó, o la consulta falló). Se chequea `!== null`, nunca
-        // `.length > 0`, para no confundir "no hay nada" con "no se pudo
-        // consultar" — ver comentario en fetchFullStateFromSupabase().
+      if (res) {
+        appState.usuarioActual = res;
 
-        if (freshData.dnisAutorizados !== null) {
-          this.data.dnisAutorizados = freshData.dnisAutorizados;
-          huboCambios = true;
-        }
-
-        // ALUMNOS: Supabase es la fuente de verdad. Reconciliación completa:
-        // se reconstruye this.data.alumnos a partir del snapshot de Supabase
-        // (agrega los nuevos, actualiza los existentes) y, como resultado,
-        // cualquier alumno local que ya NO está en el snapshot queda
-        // automáticamente afuera (podado) — ya no sobrevive un alumno
-        // eliminado en Supabase solo porque seguía en localStorage.
-        if (freshData.alumnos !== null && ambosVaciosSimultaneamente) {
-          // no reconciliar — ver guardia arriba
-        } else if (freshData.alumnos !== null) {
-          this.data.alumnos = freshData.alumnos.map(sbAlumno => {
-            const loc = this.data.alumnos.find(a => a.dni === sbAlumno.dni || a.id === sbAlumno.id);
-            if (!loc) return sbAlumno;
-
-            // authUserId resuelto: Supabase es la fuente de verdad si lo tiene;
-            // si no lo tiene, se conserva el valor local.
-            const resolvedAuthUserId = sbAlumno.authUserId !== undefined
-              ? sbAlumno.authUserId
-              : loc.authUserId;
-
-            const merged = {
-              ...loc,
-              ...sbAlumno,
-              authUserId: resolvedAuthUserId,
-              rutinaActivaId: sbAlumno.rutinaActivaId || loc.rutinaActivaId,
-              puntosTotal: sbAlumno.puntosTotal !== undefined ? sbAlumno.puntosTotal : loc.puntosTotal,
-              rachaSemanal: sbAlumno.rachaSemanal !== undefined ? sbAlumno.rachaSemanal : loc.rachaSemanal
-            };
-
-            // PRESERVACIÓN DE PASSWORD LEGACY (siempre, con o sin authUserId):
-            // borrarlo cuando existe auth_user_id (introducido en 6f49015) dejó
-            // sin red de seguridad a las cuentas cuyo usuario Auth fue creado
-            // con el formato de email viejo (pre-9c96ff6): authSignIn fallaba
-            // con invalid_credentials y el fallback legacy ya no tenía password.
-            // El password local no interfiere con el login normal (mientras
-            // authSignIn tenga éxito, el fallback ni se evalúa) y solo se
-            // elimina en _intentarMigracionLegacy() tras confirmar Auth+RPC.
-            merged.password = loc.password !== undefined ? loc.password : undefined;
-            if (merged.password === undefined) {
-              delete merged.password;
-            }
-
-            return merged;
-          });
-          huboCambios = true;
-        }
-
-        // PROFESORES: antes NO se sincronizaba nunca (freshData.profesores se
-        // calculaba en supabase.js pero jamás se leía acá), por lo que un
-        // profesor eliminado en Supabase seguía viviendo para siempre en
-        // localStorage y podía loguearse con esas credenciales. Mismo
-        // criterio de reconciliación completa que alumnos.
-        if (freshData.profesores !== null && ambosVaciosSimultaneamente) {
-          // no reconciliar — ver guardia arriba
-        } else if (freshData.profesores !== null) {
-          this.data.profesores = freshData.profesores.map(sbProfesor => {
-            const loc = this.data.profesores.find(p => p.dni === sbProfesor.dni || p.id === sbProfesor.id);
-            if (!loc) return sbProfesor;
-
-            const resolvedAuthUserId = sbProfesor.authUserId !== undefined
-              ? sbProfesor.authUserId
-              : loc.authUserId;
-
-            const merged = {
-              ...loc,
-              ...sbProfesor,
-              authUserId: resolvedAuthUserId
-            };
-
-            // PRESERVACIÓN DE PASSWORD LEGACY (siempre, con o sin authUserId):
-            // mismo criterio que alumnos. Incluye conservar "octagym2000" en
-            // localStorage aunque el profesor ya esté vinculado: borrarlo aquí
-            // (6f49015) eliminaba la única vía de entrada si el usuario Auth
-            // vinculado no responde al email generado actual.
-            merged.password = loc.password !== undefined ? loc.password : undefined;
-            if (merged.password === undefined) {
-              delete merged.password;
-            }
-
-            return merged;
-          });
-          huboCambios = true;
-        }
-
-        // RUTINAS: solo se consultaron (via RPC) las del alumnoId de ESTA
-        // llamada, así que la reconciliación debe limitarse estrictamente a
-        // las rutinas de ese alumno — nunca tocar rutinas de otros alumnos
-        // que no formaron parte de esta consulta.
-        // Excepción importante: las rutinas "propias" (esPropia: true,
-        // auto-gestionadas por el alumno) son 100% locales por diseño y
-        // NUNCA se escriben ni se leen de Supabase — no deben podarse solo
-        // porque no aparecen en el snapshot de la RPC.
-        if (alumnoId && freshData.rutinas !== null) {
-          const idsFrescos = new Set(freshData.rutinas.map(r => r.id));
-
-          // GUARDIA CONSERVADORA CONTRA VACÍOS TRANSITORIOS: freshData.rutinas
-          // === [] es, para este código, indistinguible entre "el alumno
-          // realmente no tiene rutinas del profesor" y "obtener_rutinas_alumno
-          // devolvió vacío por una condición transitoria" (sesión Auth todavía
-          // no hidratada en este sync puntual, timing, etc. — no se puede
-          // verificar desde acá sin tocar supabase.js/RPC). Podar de inmediato
-          // en ese caso borraba rutinas reales del profesor por una respuesta
-          // de un solo sync. Con esta guardia, un vacío SOLO poda las rutinas
-          // del profesor de este alumno cuando se confirma en DOS syncs
-          // consecutivos con alumnoId — así una rutina eliminada de verdad en
-          // Supabase sigue pudiendo desaparecer localmente (con un sync extra
-          // de demora), pero un vacío aislado ya no destruye datos reales.
-          // No aplica a rutinas propias (nunca se podan, sin cambios) ni
-          // afecta el caso en que freshData.rutinas SÍ trae datos.
-          const hayRutinasDeProfesorLocales = this.data.rutinas.some(
-            r => r.alumnoId === alumnoId && !r.esPropia
-          );
-          let permitirPodaRutinas = true;
-          if (freshData.rutinas.length === 0 && hayRutinasDeProfesorLocales) {
-            const streakPrevio = this._rutinasEmptyStreak[alumnoId] || 0;
-            const streakNuevo = streakPrevio + 1;
-            this._rutinasEmptyStreak[alumnoId] = streakNuevo;
-            if (streakNuevo < 2) {
-              permitirPodaRutinas = false;
-              console.log(`⏭️ [sync] obtener_rutinas_alumno vino vacío para alumno ${alumnoId} (confirmación ${streakNuevo}/2) → se preservan rutinas locales del profesor por esta vez.`);
-            } else {
-              console.log(`🗑️ [sync] obtener_rutinas_alumno confirmó vacío 2 veces seguidas para alumno ${alumnoId} → se poda.`);
-            }
-          } else {
-            // Respuesta con datos (o no había nada que podar de todos modos):
-            // resetear la racha de vacíos para este alumno.
-            this._rutinasEmptyStreak[alumnoId] = 0;
-          }
-
-          if (permitirPodaRutinas) {
-            this.data.rutinas = this.data.rutinas.filter(r => {
-              if (r.alumnoId !== alumnoId) return true; // no es de este alumno: no tocar
-              if (r.esPropia) return true; // rutina propia local: nunca se poda
-              return idsFrescos.has(r.id); // rutina asignada por profesor: podar si ya no existe en Supabase
-            });
-          }
-
-          freshData.rutinas.forEach(sbRutina => {
-            // Reconstituir esPropia/alumnoCreadorId a partir de profesorId:
-            // estos dos campos son puramente locales/derivados (no existen
-            // como columnas en `routines`), así que Supabase nunca los
-            // devuelve. Si no se recalculan acá, cada sync pisa el objeto
-            // local entero y una rutina propia (profesorId === null) pierde
-            // la marca esPropia, apareciendo entonces en "Rutinas del
-            // profesor" y desapareciendo de "Mis rutinas".
-            const esRutinaPropia = sbRutina.profesorId === null;
-            sbRutina.esPropia = esRutinaPropia;
-            sbRutina.alumnoCreadorId = esRutinaPropia ? sbRutina.alumnoId : undefined;
-
-            const idx = this.data.rutinas.findIndex(r => r.id === sbRutina.id);
-            if (idx >= 0) {
-              this.data.rutinas[idx] = sbRutina;
-            } else {
-              this.data.rutinas.push(sbRutina);
-            }
-
-            // Actualizar rutinaActivaId en el perfil local del alumno si es activa
-            if (sbRutina.estado === 'activa') {
-              const alumno = this.data.alumnos.find(a => a.id === alumnoId || a.id === sbRutina.alumnoId);
-              if (alumno && !alumno.rutinaActivaId) {
-                alumno.rutinaActivaId = sbRutina.id;
+        if (res.rol === 'alumno' && res.data && res.data.id) {
+          // --- SESIÓN ALUMNO ---
+          window._sessionAlumnoId = res.data.id;
+          window._sessionProfesorId = null;
+          // Detectar si hay un borrador de entrenamiento sin terminar que
+          // pertenezca a ESTE alumno (getBorradorPropio verifica ownerId).
+          appState.borradorEntrenamientoDetectado = getBorradorPropio();
+          // Sincronizar rutinas e historial vía RPC después del login
+          setTimeout(async () => {
+            await gymStore.syncWithSupabase(res.data.id);
+            // Sincronizar historial desde Supabase
+            if (window.supabaseEngine) {
+              const sbLogs = await window.supabaseEngine.obtenerHistorialDesdeSupabase(res.data.id);
+              if (sbLogs && sbLogs.length > 0) {
+                sbLogs.forEach(sbLog => {
+                  const idx = gymStore.data.workoutLogs.findIndex(w => w.id === sbLog.id);
+                  if (idx >= 0) {
+                    gymStore.data.workoutLogs[idx] = sbLog;
+                  } else {
+                    gymStore.data.workoutLogs.push(sbLog);
+                  }
+                });
+                gymStore.saveData();
+                window.dispatchEvent(new CustomEvent('gym_store_updated'));
               }
             }
-          });
-          huboCambios = true;
+          }, 300);
+        } else if (res.rol === 'profesor' && res.data && res.data.id) {
+          // --- SESIÓN PROFESOR ---
+          window._sessionProfesorId = res.data.id;
+          window._sessionAlumnoId = null;
+          // Sincronizar rutinas de todos los alumnos conocidos tras el login
+          // (punto C). No existe persistencia de sesión, así que este login
+          // es el único punto de entrada confiable para el profesor.
+          setTimeout(async () => {
+            await gymStore.syncRutinasProfesor();
+          }, 300);
+        } else {
+          window._sessionAlumnoId = null;
+          window._sessionProfesorId = null;
         }
 
-        if (freshData.workoutLogs !== null) {
-          freshData.workoutLogs.forEach(sbLog => {
-            const idx = this.data.workoutLogs.findIndex(w => w.id === sbLog.id);
-            if (idx >= 0) {
-              this.data.workoutLogs[idx] = sbLog;
-            } else {
-              this.data.workoutLogs.unshift(sbLog);
-            }
-          });
-          huboCambios = true;
-        }
-
-        if (freshData.notificaciones !== null) {
-          this.data.notificaciones = freshData.notificaciones;
-          huboCambios = true;
-        }
-
-        if (huboCambios) {
-          console.log("🟢 Sincronizado exitosamente con Supabase DB (Fuente de Verdad).");
-          this.saveData();
-        }
-
-        // Ranking: se actualiza en cada sync exitosa (con o sin cambios de
-        // negocio), porque cualquier sync puede ocurrir tras un nuevo entrenamiento
-        // de cualquier otro alumno. La RPC get_ranking_publico() (SECURITY DEFINER)
-        // ignora RLS y devuelve solo las 5 columnas públicas. Si falla (offline,
-        // usuario no authenticated, etc.) se conserva el rankingCache anterior
-        // sin alterar nada — el ranking simplemente queda con los datos del
-        // último sync exitoso.
-        if (window.supabaseEngine) {
-          const rankingFresco = await window.supabaseEngine.fetchRankingPublico();
-          if (rankingFresco && rankingFresco.ok) {
-            this.data.rankingCache = rankingFresco.data || [];
-            console.log(`🏆 Ranking actualizado: ${this.data.rankingCache.length} alumno(s).`);
-          }
-        }
+        appState.historialProfesorLogs = null; // limpiar caché al cambiar de sesión
+        renderApp();
+      } else {
+        alert("❌ No se pudo iniciar sesión con ese DNI. Verificá el número.");
       }
-    } catch (err) {
-      console.warn("⚠️ Error en syncWithSupabase:", err);
-    }
-    // INSTRUMENTACIÓN TEMPORAL: SYNC END
-    console.log(`=== SYNC #${syncId} END ===`, {
-      alumnosFinal: this.data.alumnos?.length ?? 0,
-      profesoresFinal: this.data.profesores?.length ?? 0
+
     });
-    // FIN INSTRUMENTACIÓN
+
+    document.getElementById('btnToggleRegister')?.addEventListener('click', () => {
+      renderRegisterScreen();
+    });
   }
 
-  // --- RUTINAS DEL PROFESOR (PUNTO C) ---
-  // El profesor no tiene un alumnoId propio, así que syncWithSupabase(null)
-  // nunca trae rutinas (ver comentario en esa función). Para que el profesor
-  // vea rutinas creadas/editadas desde OTRO dispositivo, consultamos la RPC
-  // obtener_rutinas_alumno UNA VEZ POR CADA ALUMNO que el profesor ya conoce
-  // localmente (this.data.alumnos), y mergeamos los resultados.
-  //
-  // Condición de seguridad: si la consulta de un alumno puntual falla (error
-  // de red, RPC, o promesa rechazada), esa falla se ignora por completo y NO
-  // borra ni pisa las rutinas locales existentes — ni las de ese alumno ni
-  // las de ningún otro. Solo se reconcilian las rutinas de los alumnos cuya
-  // consulta sí llegó ok (resultado.ok === true), incluyendo poda si esa
-  // respuesta vino vacía. No modifica _syncSeq/_authSyncSeq (no comparte su
-  // lógica de descarte).
-  async syncRutinasProfesor() {
-    if (!window.supabaseEngine) return;
+  // Genera una contraseña temporal aleatoria e interna para Supabase Auth
+  // signUp(). El usuario nunca la ve ni la introduce: el login real es
+  // exclusivamente por DNI vía loginConDni() (magic link / OTP), no por
+  // email+password. No reemplaza ni modifica authSignIn/authSignUp.
+  function generarPasswordTemporalInterna() {
+    if (window.crypto && window.crypto.randomUUID) {
+      return window.crypto.randomUUID() + window.crypto.randomUUID();
+    }
+    return 'tmp-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+  }
 
-    const alumnosConocidos = (this.data.alumnos || []).filter(a => a && a.id);
-    if (alumnosConocidos.length === 0) return;
+  function renderRegisterScreen() {
+    appContainer.innerHTML = `
+      ${renderHeader()}
+      <div class="login-container">
+        <h2 class="login-title">Crear Cuenta de Alumno</h2>
+        <p class="login-subtitle">Ingresa tus datos para registrarte en el gimnasio</p>
 
-    const resultados = await Promise.allSettled(
-      alumnosConocidos.map(alumno => window.supabaseEngine.obtenerRutinasAlumnoDesdeSupabase(alumno.id))
-    );
+        <form id="formRegisterAlumno">
+          <div class="form-group">
+            <label class="form-label">Tu DNI *</label>
+            <input type="text" id="regDni" class="form-input" placeholder="Ej: 55667788" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Nombre Completo *</label>
+            <input type="text" id="regNombre" class="form-input" placeholder="Ej: Mariano López" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Teléfono (Opcional)</label>
+            <input type="text" id="regTel" class="form-input" placeholder="Ej: 1199887766">
+          </div>
 
-    let huboCambios = false;
+          <button type="submit" class="btn btn-primary" style="width:100%">Crear mi Cuenta 📝</button>
+        </form>
 
-    resultados.forEach((r, i) => {
-      // Promesa rechazada o resultado ok:false -> se ignora, no se toca this.data.
-      if (r.status !== 'fulfilled') return;
-      const resultado = r.value;
-      if (!resultado || resultado.ok !== true) return;
+        <div style="margin-top:14px">
+          <button class="btn btn-secondary btn-sm" id="btnBackToLogin">Volver al Login ⬅️</button>
+        </div>
+      </div>
+    `;
+    bindInstallBannerEvents();
 
-      const alumnoId = alumnosConocidos[i].id;
-      const rutinasFrescas = resultado.rutinas || [];
-      const idsFrescos = new Set(rutinasFrescas.map(rt => rt.id));
+    document.getElementById('btnBackToLogin')?.addEventListener('click', () => renderLoginScreen());
 
-      // GUARDIA CONSERVADORA CONTRA VACÍOS TRANSITORIOS (mismo criterio que
-      // en syncWithSupabase(), y comparte el mismo contador this._rutinasEmptyStreak
-      // por alumnoId: un vacío detectado acá o en syncWithSupabase() suma a la
-      // misma racha de confirmación). Solo se poda cuando el vacío se
-      // confirma 2 veces seguidas para ese alumno puntual.
-      const hayRutinasDeProfesorLocales = this.data.rutinas.some(
-        rt => rt.alumnoId === alumnoId && !rt.esPropia
-      );
-      let permitirPodaRutinas = true;
-      if (rutinasFrescas.length === 0 && hayRutinasDeProfesorLocales) {
-        const streakPrevio = this._rutinasEmptyStreak[alumnoId] || 0;
-        const streakNuevo = streakPrevio + 1;
-        this._rutinasEmptyStreak[alumnoId] = streakNuevo;
-        if (streakNuevo < 2) {
-          permitirPodaRutinas = false;
-          console.log(`⏭️ [syncRutinasProfesor] vacío para alumno ${alumnoId} (confirmación ${streakNuevo}/2) → se preservan rutinas locales por esta vez.`);
-        } else {
-          console.log(`🗑️ [syncRutinasProfesor] vacío confirmado 2 veces seguidas para alumno ${alumnoId} → se poda.`);
+    document.getElementById('formRegisterAlumno')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const submitBtn = e.target.querySelector('button[type="submit"]');
+      if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Registrando...'; }
+      try {
+        const dni = document.getElementById('regDni').value;
+        // El usuario ya NO ingresa contraseña: se genera internamente, solo
+        // para satisfacer el requisito de Supabase Auth signUp(). El login
+        // real sigue siendo exclusivamente por DNI vía loginConDni() (OTP),
+        // así que esta contraseña nunca se usa para autenticar y no hace
+        // falta que el usuario la vea ni la recuerde.
+        const pass = generarPasswordTemporalInterna();
+        const nombre = document.getElementById('regNombre').value;
+        const tel = document.getElementById('regTel').value;
+
+        // registrarseAlumno es async en Etapa 1: intenta authSignUp después
+        // del registro local. El await es necesario para que la UI no avance
+        // antes de que el intento de Supabase Auth termine (aunque no sea bloqueante
+        // para el perfil local, sí debe resolverse antes de renderApp).
+        const alumno = await store.registrarseAlumno({ dni, password: pass, nombre, telefono: tel });
+        appState.usuarioActual = { rol: 'alumno', data: alumno };
+        renderApp();
+      } catch (err) {
+        alert("❌ Error: " + err.message);
+      } finally {
+        if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Crear mi Cuenta 📝'; }
+      }
+    });
+  }
+
+  // --- DASHBOARD ALUMNO (NUEVA NAVEGACIÓN MOBILE-FIRST POR TARJETAS) ---
+  function renderClientDashboard() {
+    const alumno = appState.usuarioActual.data;
+    const pendienteAutorizacion = alumno.estadoAutorizacion === 'pendiente';
+
+    const historialEntrenamientos = store.getHistorialEntrenamientosReales(alumno.id);
+
+    appContainer.innerHTML = `
+      ${renderHeader()}
+
+      <main class="client-dashboard">
+        ${pendienteAutorizacion ? `
+          <div class="pending-banner">
+            ⚠️ Tu DNI (<strong>${alumno.dni}</strong>) todavía no fue autorizado por tu profesor, así que aún no
+            vas a ver rutinas asignadas. Mientras tanto, ¡ya podés crear y entrenar tus propias rutinas en
+            <strong>"Mías"</strong>! Pedile a tu profe que te autorice para recibir rutinas personalizadas.
+          </div>
+        ` : ''}
+
+        ${(appState.tabCliente === 'rutina' || appState.tabCliente === 'mis_rutinas') ? (
+          appState.diaActivoEntrenamiento ? renderWorkoutSession() : (
+            appState.diaSeleccionadoId ? renderDayDetailView(alumno) : (
+              appState.rutinaSeleccionadaId ? renderRoutineDaysView(alumno) : (
+                appState.tabCliente === 'mis_rutinas' ? renderMisRutinasView(alumno) : renderRoutinesListView(alumno)
+              )
+            )
+          )
+        ) : ''}
+
+        ${appState.tabCliente === 'ranking' ? renderRankingView() : ''}
+        ${appState.tabCliente === 'historial' ? renderHistorialAgrupado(historialEntrenamientos, store.data.rutinas, true) : ''}
+      </main>
+
+      ${(appState.modalActivo === 'crear_rutina_propia' || appState.modalActivo === 'editar_rutina_propia') ? renderModalFormularioRutina(appState.modalActivo) : ''}
+      ${appState.modalActivo === 'editar_entrenamiento' ? renderModalEditarEntrenamiento(alumno) : ''}
+      ${appState.borradorEntrenamientoDetectado ? renderModalRecuperarBorrador() : ''}
+
+      ${renderBottomNav()}
+    `;
+
+    bindHeaderEvents();
+    bindInstallBannerEvents();
+    bindBottomNavEvents();
+    bindMisRutinasEvents(alumno);
+    bindHistorialEvents(alumno);
+    bindBorradorEntrenamientoEvents();
+
+    // Eventos de navegación por tarjetas de rutina (excluye las de "Mis Rutinas",
+    // que tienen su propio binding en bindMisRutinasEvents para soportar Editar/Borrar)
+    document.querySelectorAll('.routine-select-card:not(.routine-propia-card)').forEach(card => {
+      card.addEventListener('click', () => {
+        appState.rutinaSeleccionadaId = card.dataset.rutinaId;
+        appState.diaSeleccionadoId = null;
+        renderApp();
+      });
+    });
+
+    // Evento volver a Mis Rutinas desde lista de días
+    document.getElementById('btnBackToRoutines')?.addEventListener('click', () => {
+      appState.rutinaSeleccionadaId = null;
+      appState.diaSeleccionadoId = null;
+      renderApp();
+    });
+
+    // Eventos de navegación por tarjetas de día
+    document.querySelectorAll('.day-select-card').forEach(card => {
+      card.addEventListener('click', () => {
+        appState.diaSeleccionadoId = card.dataset.diaId;
+        renderApp();
+      });
+    });
+
+    // Evento volver a Días desde detalle de día
+    document.getElementById('btnBackToDays')?.addEventListener('click', () => {
+      appState.diaSeleccionadoId = null;
+      renderApp();
+    });
+
+    // Eventos de iniciar entrenamiento
+    document.querySelectorAll('.btn-comenzar-entrenamiento').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const diaId = e.currentTarget.dataset.diaId;
+        const rutina = store.getRutinaPorId(appState.rutinaSeleccionadaId);
+        const diaObj = rutina ? rutina.dias.find(d => d.id === diaId) : null;
+        if (diaObj) {
+          appState.diaActivoEntrenamiento = diaObj;
+          initWorkoutDraft(diaObj);
+          renderApp();
         }
-      } else {
-        this._rutinasEmptyStreak[alumnoId] = 0;
+      });
+    });
+
+    bindAccordionEvents();
+  }
+
+  function renderRoutinesListView(alumno) {
+    const rutinas = store.getRutinasAlumno(alumno.id);
+    if (!rutinas || rutinas.length === 0) {
+      return `
+        <div class="routine-banner" style="text-align:center; justify-content:center; flex-direction:column; padding:30px 20px">
+          <div style="font-size:2.5rem; margin-bottom:10px">🏋️</div>
+          <h2 style="font-size:1.3rem; font-weight:900">Sin Rutinas Asignadas</h2>
+          <p style="color:var(--text-gray); font-size:0.9rem; margin-top:6px">Tu profesor te asignará una nueva rutina personalizada en breve.</p>
+        </div>
+      `;
+    }
+
+    return `
+      <div style="margin-bottom:16px">
+        <h2 style="font-size:1.4rem; font-weight:900; letter-spacing:0.5px">Mis Rutinas</h2>
+        <p style="font-size:0.85rem; color:var(--text-gray)">Seleccioná una rutina para ver tus días de entrenamiento</p>
+      </div>
+
+      ${rutinas.map(r => {
+        const semanas = Math.max(1, Math.ceil((r.duracionDias || 30) / 7));
+        const esActiva = r.estado === 'activa';
+        const diasRestantes = store.calcularDiasRestantes(r.fechaVencimiento);
+
+        return `
+          <div class="routine-select-card" data-rutina-id="${r.id}">
+            <div class="routine-card-header">
+              <span class="badge ${esActiva ? (diasRestantes <= 1 ? 'badge-warning' : 'badge-active') : 'badge-role'}">
+                ● ${esActiva ? (diasRestantes <= 1 ? `ACTIVA (${diasRestantes}d restantes)` : 'ACTIVA') : 'INACTIVA'}
+              </span>
+              <span class="badge badge-info">${semanas} ${semanas === 1 ? 'semana' : 'semanas'}</span>
+            </div>
+
+            <div>
+              <h3 class="routine-card-title">${r.titulo}</h3>
+              <p class="routine-card-subtitle">Profesor: <strong>${r.profesorCreadorNombre || 'Estudio Fitness'}</strong></p>
+            </div>
+
+            <div style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid var(--border-color); padding-top:10px; margin-top:4px">
+              <div class="routine-card-days-count">
+                🔥 ${r.dias ? r.dias.length : 0} Días de Entrenamiento
+              </div>
+              <div style="font-weight:800; font-size:0.88rem; color:var(--red-primary); display:flex; align-items:center; gap:4px">
+                Tocar para ver días ➔
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('')}
+    `;
+  }
+
+  // --- FEATURE "MIS RUTINAS": vista de rutinas auto-gestionadas por el alumno ---
+  function renderMisRutinasView(alumno) {
+    const misRutinas = store.getRutinasPropiasAlumno(alumno.id);
+
+    return `
+      <div style="margin-bottom:16px; display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap">
+        <div>
+          <h2 style="font-size:1.4rem; font-weight:900; letter-spacing:0.5px">🧑‍🔧 Mis Rutinas</h2>
+          <p style="font-size:0.85rem; color:var(--text-gray)">Rutinas personales que armás y gestionás vos mismo</p>
+        </div>
+        <button class="btn btn-primary btn-sm" id="btnNuevaRutinaPropia">+ Crear Rutina Propia</button>
+      </div>
+
+      ${misRutinas.length === 0 ? `
+        <div class="routine-banner" style="text-align:center; justify-content:center; flex-direction:column; padding:30px 20px">
+          <div style="font-size:2.5rem; margin-bottom:10px">📝</div>
+          <h3 style="font-size:1.1rem; font-weight:900">Todavía no creaste rutinas propias</h3>
+          <p style="color:var(--text-gray); font-size:0.88rem; margin-top:6px">
+            Armá tu propia rutina de entrenamiento y empezá a registrar tus series cuando quieras.
+          </p>
+        </div>
+      ` : misRutinas.map(r => `
+        <div class="routine-select-card routine-propia-card" data-rutina-id="${r.id}">
+          <div class="routine-card-header">
+            <span class="badge badge-info">🔧 Auto-gestionada</span>
+            <span class="badge badge-info">${r.dias ? r.dias.length : 0} ${r.dias && r.dias.length === 1 ? 'día' : 'días'}</span>
+          </div>
+
+          <div>
+            <h3 class="routine-card-title">${r.titulo}</h3>
+            <p class="routine-card-subtitle">Creada por vos · Duración: ${r.duracionDias} días</p>
+          </div>
+
+          <div style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid var(--border-color); padding-top:10px; margin-top:4px; gap:8px; flex-wrap:wrap">
+            <div class="routine-card-days-count">Tocar para ver días ➔</div>
+            <div style="display:flex; gap:6px">
+              <button class="btn btn-secondary btn-sm btn-editar-rutina-propia" data-rutina-id="${r.id}" style="border-color:var(--yellow-warning); color:var(--yellow-warning); padding:4px 10px; font-size:0.78rem">✏️ Editar</button>
+              <button class="btn btn-secondary btn-sm btn-eliminar-rutina-propia" data-rutina-id="${r.id}" style="border-color:var(--red-primary); color:var(--red-primary); padding:4px 10px; font-size:0.78rem">🗑️ Borrar</button>
+            </div>
+          </div>
+        </div>
+      `).join('')}
+    `;
+  }
+
+  function bindMisRutinasEvents(alumno) {
+    document.getElementById('btnNuevaRutinaPropia')?.addEventListener('click', () => {
+      appState.alumnoSeleccionadoId = alumno.id;
+      appState.rutinaEnEdicionId = null;
+      appState.modalActivo = 'crear_rutina_propia';
+      initFormBuilderForNew();
+      renderApp();
+    });
+
+    document.querySelectorAll('.routine-propia-card').forEach(card => {
+      card.addEventListener('click', (e) => {
+        const rId = card.dataset.rutinaId;
+
+        if (e.target.closest('.btn-editar-rutina-propia')) {
+          e.stopPropagation();
+          appState.alumnoSeleccionadoId = alumno.id;
+          appState.rutinaEnEdicionId = rId;
+          appState.modalActivo = 'editar_rutina_propia';
+          initFormBuilderForRoutine(rId);
+          renderApp();
+          return;
+        }
+
+        if (e.target.closest('.btn-eliminar-rutina-propia')) {
+          e.stopPropagation();
+          if (confirm("¿Seguro que querés eliminar esta rutina propia? Esta acción no se puede deshacer.")) {
+            (async () => {
+              try {
+                const resultado = await store.eliminarRutinaPropia(rId, alumno.id);
+                if (!resultado || resultado.ok !== true) {
+                  alert("❌ No se pudo eliminar la rutina: " + ((resultado && resultado.error) || "error desconocido"));
+                }
+              } catch (err) {
+                alert("❌ Error: " + err.message);
+              }
+              renderApp();
+            })();
+          }
+          return;
+        }
+
+        // Reutiliza el mismo flujo de días/ejercicios/entrenamiento que las rutinas asignadas,
+        // pero SIN cambiar de pestaña: se mantiene en "Mis Rutinas" (tabCliente ya es 'mis_rutinas').
+        appState.rutinaSeleccionadaId = rId;
+        appState.diaSeleccionadoId = null;
+        renderApp();
+      });
+    });
+  }
+
+  // --- EDICIÓN DE ENTRENAMIENTO YA GUARDADO (ventana de 2hs, solo el propio alumno) ---
+  function bindHistorialEvents(alumno) {
+    document.querySelectorAll('.btn-editar-entrenamiento-click').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const logId = btn.dataset.logId;
+        const log = store.data.workoutLogs.find(w => w.id === logId);
+        if (!log) return;
+        appState.logEnEdicionId = logId;
+        appState.editDraftSets = JSON.parse(JSON.stringify(log.sets || []));
+        appState.editDraftComentario = log.comentarioGeneral || '';
+        appState.modalActivo = 'editar_entrenamiento';
+        renderApp();
+      });
+    });
+  }
+
+  function renderModalEditarEntrenamiento(alumno) {
+    const log = store.data.workoutLogs.find(w => w.id === appState.logEnEdicionId);
+    if (!log || !appState.editDraftSets) return '';
+
+    if (!store.puedeEditarseEntrenamiento(log)) {
+      return `
+        <div class="modal-overlay">
+          <div class="modal-content" style="max-width:420px">
+            <div class="modal-header">
+              <h3>⏰ Ventana de edición vencida</h3>
+              <button class="close-btn" id="btnCloseModal">&times;</button>
+            </div>
+            <p style="color:var(--text-gray); font-size:0.92rem">
+              Ya pasaron más de 2 horas desde que guardaste este entrenamiento, así que no se puede editar.
+            </p>
+          </div>
+        </div>
+      `;
+    }
+
+    // Agrupar por ejercicio, conservando el índice real en editDraftSets para los onchange
+    const ejMap = {};
+    appState.editDraftSets.forEach((s, idx) => {
+      if (!ejMap[s.ejercicioNombre]) ejMap[s.ejercicioNombre] = [];
+      ejMap[s.ejercicioNombre].push({ ...s, _idx: idx });
+    });
+
+    return `
+      <div class="modal-overlay">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3>✏️ Editar Entrenamiento: ${log.diaNombre}</h3>
+            <button class="close-btn" id="btnCloseModal">&times;</button>
+          </div>
+          <p style="color:var(--yellow-warning); font-size:0.8rem; margin-bottom:12px">
+            ⏰ Podés editar hasta 2 horas después de haber guardado el entrenamiento. Los puntos ya otorgados no cambian.
+          </p>
+
+          ${Object.entries(ejMap).map(([ejNombre, sets]) => `
+            <div class="exercise-block">
+              <div class="exercise-title" style="font-size:1rem; font-weight:900; color:#fff">${ejNombre}</div>
+              <div class="sets-table-header">
+                <div>SERIE</div>
+                <div>REPS</div>
+                <div>PESO</div>
+                <div>COMENTARIO POR SERIE</div>
+              </div>
+              ${sets.map(s => `
+                <div class="set-row">
+                  <div class="set-label">Serie ${s.setNumero}</div>
+                  <div><input type="number" class="set-input" value="${s.repsRealizadas}" onchange="window.updateEditSet(${s._idx}, 'repsRealizadas', this.value)"></div>
+                  <div><input type="text" class="set-input" value="${s.pesoUtilizado}" onchange="window.updateEditSet(${s._idx}, 'pesoUtilizado', this.value)"></div>
+                  <div><input type="text" class="set-input set-comment-input" value="${s.comentarioAlumno || ''}" onchange="window.updateEditSet(${s._idx}, 'comentarioAlumno', this.value)"></div>
+                </div>
+              `).join('')}
+            </div>
+          `).join('')}
+
+          <div class="exercise-block" style="border-color:var(--border-highlight)">
+            <label class="form-label" style="color:var(--red-primary)">💬 COMENTARIO GENERAL</label>
+            <textarea class="exercise-textarea" onchange="window.updateEditComentarioGeneral(this.value)">${appState.editDraftComentario || ''}</textarea>
+          </div>
+
+          <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:16px">
+            <button type="button" class="btn btn-secondary" id="btnCancelModal">Cancelar</button>
+            <button type="button" class="btn btn-primary" id="btnGuardarEdicionEntrenamiento">💾 Guardar Cambios</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  window.updateEditSet = (idx, field, val) => {
+    if (appState.editDraftSets && appState.editDraftSets[idx]) {
+      appState.editDraftSets[idx][field] = field === 'repsRealizadas' ? Number(val) : val;
+    }
+  };
+
+  window.updateEditComentarioGeneral = (val) => {
+    appState.editDraftComentario = val;
+  };
+
+  // --- MODAL: recuperar entrenamiento sin terminar (borrador local) ---
+  function renderModalRecuperarBorrador() {
+    const draft = appState.borradorEntrenamientoDetectado;
+    if (!draft) return '';
+    return `
+      <div class="modal-overlay">
+        <div class="modal-content" style="max-width:420px">
+          <div class="modal-header">
+            <h3>💪 Entrenamiento sin terminar</h3>
+          </div>
+          <p style="color:var(--text-gray); font-size:0.92rem; line-height:1.5">
+            Tenés un entrenamiento sin terminar: <strong style="color:#fff">${draft.diaActivoEntrenamiento?.nombre || ''}</strong>. ¿Querés continuar donde lo dejaste?
+          </p>
+          <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:20px">
+            <button type="button" class="btn btn-secondary" id="btnDescartarBorrador">Descartar</button>
+            <button type="button" class="btn btn-primary" id="btnContinuarBorrador">Continuar ▶</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function bindBorradorEntrenamientoEvents() {
+    document.getElementById('btnContinuarBorrador')?.addEventListener('click', () => {
+      const draft = appState.borradorEntrenamientoDetectado;
+      if (!draft) return;
+      appState.rutinaSeleccionadaId = draft.rutinaSeleccionadaId || null;
+      appState.tabCliente = draft.tabCliente || 'rutina';
+      appState.diaActivoEntrenamiento = draft.diaActivoEntrenamiento;
+      appState.workoutDraftSets = draft.workoutDraftSets || {};
+      appState.workoutGeneralComment = draft.workoutGeneralComment || '';
+      appState.borradorEntrenamientoDetectado = null;
+      renderApp();
+    });
+
+    document.getElementById('btnDescartarBorrador')?.addEventListener('click', () => {
+      clearWorkoutDraft();
+      appState.borradorEntrenamientoDetectado = null;
+      renderApp();
+    });
+  }
+
+  // --- FEATURE RANKING: tabla de posiciones en tiempo real con medallas Top 3 ---
+  function renderRankingView() {
+    const ranking = store.getRanking();
+    const miId = appState.usuarioActual.data.id;
+    const medalla = (pos) => pos === 1 ? '🥇' : pos === 2 ? '🥈' : pos === 3 ? '🥉' : `#${pos}`;
+
+    return `
+      <div style="margin-bottom:16px">
+        <h2 style="font-size:1.4rem; font-weight:900; letter-spacing:0.5px">🏆 Ranking</h2>
+        <p style="font-size:0.85rem; color:var(--text-gray)">Puntos acumulados por entrenamientos completados y racha semanal</p>
+      </div>
+
+      ${ranking.length === 0 ? `
+        <div class="routine-banner" style="text-align:center; justify-content:center; flex-direction:column; padding:30px 20px">
+          <div style="font-size:2.5rem; margin-bottom:10px">🏆</div>
+          <h3 style="font-size:1.1rem; font-weight:900">Aún no hay puntos registrados</h3>
+          <p style="color:var(--text-gray); font-size:0.88rem; margin-top:6px">Completá un entrenamiento para empezar a sumar puntos.</p>
+        </div>
+      ` : `
+        <div class="ranking-list">
+          ${ranking.map(a => `
+            <div class="ranking-row ${a.id === miId ? 'ranking-row-me' : ''} ${a.posicion <= 3 ? 'ranking-row-top' + a.posicion : ''}">
+              <div class="ranking-pos">${medalla(a.posicion)}</div>
+              <div class="ranking-info">
+                <div class="ranking-name">${a.nombre}${a.id === miId ? ' <span style="color:var(--red-primary)">(Vos)</span>' : ''}</div>
+                ${a.rachaSemanal && a.rachaSemanal.semanas >= 2 ? `<div class="ranking-streak">🔥 Racha de ${a.rachaSemanal.semanas} semanas</div>` : ''}
+              </div>
+              <div class="ranking-points">${Math.round(a.puntosTotal || 0)} pts</div>
+            </div>
+          `).join('')}
+        </div>
+      `}
+    `;
+  }
+
+  function renderRoutineDaysView(alumno) {
+    const rutina = store.getRutinaPorId(appState.rutinaSeleccionadaId);
+    if (!rutina) {
+      appState.rutinaSeleccionadaId = null;
+      return renderRoutinesListView(alumno);
+    }
+
+    const semanas = Math.max(1, Math.ceil((rutina.duracionDias || 30) / 7));
+    const esActiva = rutina.estado === 'activa';
+
+    return `
+      <button class="nav-breadcrumb-btn" id="btnBackToRoutines">⬅️ Volver a ${rutina.esPropia ? 'Mis Rutinas' : 'Rutinas'}</button>
+
+      <div class="routine-banner" style="margin-bottom:20px">
+        <div>
+          <span class="badge ${esActiva ? 'badge-active' : 'badge-role'}">
+            ● ${esActiva ? 'RUTINA ACTIVA' : 'RUTINA HISTÓRICA'}
+          </span>
+          <h2 style="font-size:1.35rem; font-weight:900; margin-top:6px">${rutina.titulo}</h2>
+          <p style="font-size:0.85rem; color:var(--text-gray); margin-top:4px">
+            Profesor: <strong>${rutina.profesorCreadorNombre || 'Estudio Fitness'}</strong> | Duración: ${semanas} ${semanas === 1 ? 'semana' : 'semanas'}
+          </p>
+        </div>
+      </div>
+
+      <div style="margin-bottom:14px">
+        <h3 style="font-size:1.1rem; font-weight:900; text-transform:uppercase; letter-spacing:0.5px">Días de Entrenamiento</h3>
+        <p style="font-size:0.82rem; color:var(--text-gray)">Tocá un día para ver sus ejercicios</p>
+      </div>
+
+      ${rutina.dias.map((dia, idx) => `
+        <div class="day-select-card" data-dia-id="${dia.id}">
+          <div class="day-card-info">
+            <div class="day-card-number">Día ${dia.diaNumero || (idx + 1)}</div>
+            <div class="day-card-name">${dia.nombre}</div>
+            <div style="font-size:0.8rem; color:var(--text-gray); margin-top:4px">
+              💪 ${dia.ejercicios ? dia.ejercicios.length : 0} ejercicios programados
+            </div>
+          </div>
+          <div class="day-card-arrow">➔</div>
+        </div>
+      `).join('')}
+    `;
+  }
+
+  function renderDayDetailView(alumno) {
+    const rutina = store.getRutinaPorId(appState.rutinaSeleccionadaId);
+    if (!rutina) {
+      appState.rutinaSeleccionadaId = null;
+      appState.diaSeleccionadoId = null;
+      return renderRoutinesListView(alumno);
+    }
+
+    const dia = rutina.dias.find(d => d.id === appState.diaSeleccionadoId);
+    if (!dia) {
+      appState.diaSeleccionadoId = null;
+      return renderRoutineDaysView(alumno);
+    }
+
+    return `
+      <button class="nav-breadcrumb-btn" id="btnBackToDays">⬅️ Volver a Días de la Rutina</button>
+
+      <div style="margin-bottom:20px; background:var(--bg-card); border:1px solid var(--border-color); border-radius:var(--radius-md); padding:18px">
+        <span class="badge badge-warning" style="margin-bottom:6px">DÍA ${dia.diaNumero || 1} DE ENTRENAMIENTO</span>
+        <h2 style="font-size:1.4rem; font-weight:900; color:#fff">${dia.nombre}</h2>
+        <div style="font-size:0.85rem; color:var(--text-gray); margin-top:4px">Rutina: ${rutina.titulo}</div>
+      </div>
+
+      <h3 style="font-size:1.05rem; font-weight:900; text-transform:uppercase; margin-bottom:14px; color:var(--text-white)">
+        📋 Ejercicios e Indicaciones del Profesor
+      </h3>
+
+      ${dia.ejercicios.map(ej => `
+        <div class="exercise-block">
+          <div style="font-size:1.15rem; font-weight:900; color:#fff; margin-bottom:8px">${ej.nombre}</div>
+
+          <div class="target-box">
+            <div class="target-title">🎯 Objetivo Indicado por el Profesor:</div>
+            <div class="target-stats">
+              ${ej.seriesTarget} series × ${ej.repeticionesTarget} reps · ${ej.pesoSugerido}
+            </div>
+            ${ej.notaProfesor ? `
+              <div style="font-size:0.85rem; color:#fca5a5; margin-top:6px; border-top:1px dashed rgba(255,255,255,0.1); padding-top:6px">
+                👨‍🏫 <strong>${ej.profesorNotaAutor || 'Profesor'}:</strong> "${ej.notaProfesor}"
+              </div>
+            ` : ''}
+          </div>
+          ${ej.videoUrl ? `<a href="${ej.videoUrl}" target="_blank" rel="noopener noreferrer" class="btn-video-demo">🎬 Ver ejercicio</a>` : ''}
+        </div>
+      `).join('')}
+
+      <button class="btn btn-primary btn-comenzar-entrenamiento" data-dia-id="${dia.id}" style="width:100%; padding:18px; font-size:1.15rem; font-weight:900; margin-top:10px; box-shadow: 0 0 35px rgba(255, 46, 46, 0.45)">
+        ▶ EMPEZAR ENTRENAMIENTO
+      </button>
+    `;
+  }
+
+  // MODULO DE ENTRENAMIENTO EN VIVO: REGISTRO DE SERIES (OBJETIVO VS REAL)
+
+  // --- BORRADOR DE ENTRENAMIENTO EN CURSO: persistencia local anti-pérdida ---
+  // Clave INDEPENDIENTE de estudio_fitness_db_v4 (el store global) y de
+  // cualquier copia de alumnos/profesores — acá SOLO vive el entrenamiento
+  // que el alumno está completando en este momento, y únicamente mientras
+  // lo está completando. No se toca syncWithSupabase() ni RLS para esto.
+  const WORKOUT_DRAFT_KEY = 'estudio_fitness_draft_v4';
+
+  function getCurrentAlumnoId() {
+    return (appState.usuarioActual && appState.usuarioActual.rol === 'alumno' && appState.usuarioActual.data)
+      ? appState.usuarioActual.data.id
+      : null;
+  }
+
+  // Guarda el borrador completo (día activo + series + comentario) cada vez
+  // que cambia algo. Se etiqueta con ownerId = alumno.id logueado en ESE
+  // momento, para poder verificar más tarde que el borrador le pertenece a
+  // quien lo está por recuperar.
+  function persistWorkoutDraft() {
+    const alumnoId = getCurrentAlumnoId();
+    if (!alumnoId || !appState.diaActivoEntrenamiento) return;
+    try {
+      const draft = {
+        ownerId: alumnoId,
+        rutinaSeleccionadaId: appState.rutinaSeleccionadaId || null,
+        tabCliente: appState.tabCliente,
+        diaActivoEntrenamiento: appState.diaActivoEntrenamiento,
+        workoutDraftSets: appState.workoutDraftSets,
+        workoutGeneralComment: appState.workoutGeneralComment || '',
+        savedAt: new Date().toISOString()
+      };
+      localStorage.setItem(WORKOUT_DRAFT_KEY, JSON.stringify(draft));
+    } catch (e) {
+      console.warn('⚠️ No se pudo guardar el borrador de entrenamiento:', e);
+    }
+  }
+
+  // Borra el borrador SOLO si pertenece al alumno actualmente logueado (o si
+  // no hay forma de determinar dueño, por seguridad igual se borra al hacer
+  // logout explícito — ver bindHeaderEvents). Nunca borra a ciegas el
+  // borrador de otro usuario que todavía no volvió a entrar.
+  function clearWorkoutDraft() {
+    try { localStorage.removeItem(WORKOUT_DRAFT_KEY); } catch (e) {}
+  }
+
+  // Devuelve el borrador guardado ÚNICAMENTE si su ownerId coincide con el
+  // alumno actualmente logueado. Si pertenece a otro alumno (por ejemplo,
+  // otro usuario que entrenó antes en este mismo dispositivo y no llegó a
+  // terminar), se ignora por completo — nunca se muestra ni se borra el
+  // borrador ajeno, así el dueño real todavía puede recuperarlo cuando
+  // vuelva a loguearse él.
+  function getBorradorPropio() {
+    try {
+      const raw = localStorage.getItem(WORKOUT_DRAFT_KEY);
+      if (!raw) return null;
+      const draft = JSON.parse(raw);
+      const alumnoId = getCurrentAlumnoId();
+      if (!alumnoId || !draft || draft.ownerId !== alumnoId) return null;
+      return draft;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function initWorkoutDraft(diaObj) {
+    appState.workoutDraftSets = {};
+    appState.workoutGeneralComment = '';
+    diaObj.ejercicios.forEach(ej => {
+      appState.workoutDraftSets[ej.id] = {
+        nombre: ej.nombre,
+        sets: Array.from({ length: ej.seriesTarget }, (_, i) => ({
+          setNumero: i + 1,
+          reps: ej.repeticionesTarget.includes('-') ? Number(ej.repeticionesTarget.split('-')[0]) : (Number(ej.repeticionesTarget) || 10),
+          peso: ej.pesoSugerido,
+          comentarioSet: ''
+        }))
+      };
+    });
+    // Guarda inmediatamente el borrador recién iniciado (antes de que el
+    // alumno edite nada), para cubrir el caso de que la app se cierre
+    // apenas empezado el entrenamiento.
+    persistWorkoutDraft();
+  }
+
+  function renderWorkoutSession() {
+    const dia = appState.diaActivoEntrenamiento;
+    if (!dia) return '';
+
+    return `
+      <div class="workout-session-container">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px">
+          <div>
+            <span class="badge badge-warning">▶ EN PROGRESO</span>
+            <h2 style="font-size:1.4rem; font-weight:900; margin-top:4px">${dia.nombre}</h2>
+          </div>
+          <button class="btn btn-secondary btn-sm" id="btnCancelWorkout">Cancelar ✖</button>
+        </div>
+
+        ${dia.ejercicios.map(ej => {
+          const draftEj = appState.workoutDraftSets[ej.id];
+          return `
+            <div class="exercise-block">
+              <div class="exercise-title" style="font-size:1.15rem; font-weight:900; color:#fff">${ej.nombre}</div>
+
+              <div class="target-box">
+                <div class="target-title">🎯 OBJETIVO DEL PROFESOR</div>
+                <div class="target-stats">${ej.seriesTarget} series · ${ej.repeticionesTarget} reps · ${ej.pesoSugerido}</div>
+                ${ej.notaProfesor ? `<div style="font-size:0.85rem; color:#fca5a5; margin-top:4px">👨‍🏫 ${ej.notaProfesor}</div>` : ''}
+              </div>
+              ${ej.videoUrl ? `<a href="${ej.videoUrl}" target="_blank" rel="noopener noreferrer" class="btn-video-demo">🎬 Ver ejercicio</a>` : ''}
+
+              <h4 style="font-size:0.8rem; text-transform:uppercase; color:var(--text-gray); margin-bottom:8px">✏️ REGISTRO REAL POR SERIE:</h4>
+
+              <div class="sets-table-header">
+                <div>SERIE</div>
+                <div>REPS</div>
+                <div>PESO</div>
+                <div>COMENTARIO POR SERIE</div>
+              </div>
+
+              ${draftEj.sets.map((set, setIdx) => `
+                <div class="set-row">
+                  <div class="set-label">Serie ${set.setNumero}</div>
+                  <div>
+                    <input type="number" class="set-input" value="${set.reps}" onchange="window.updateDraftSet('${ej.id}', ${setIdx}, 'reps', this.value)">
+                  </div>
+                  <div>
+                    <input type="text" class="set-input" value="${set.peso}" onchange="window.updateDraftSet('${ej.id}', ${setIdx}, 'peso', this.value)">
+                  </div>
+                  <div>
+                    <input type="text" class="set-input set-comment-input" placeholder="Comentario..." value="${set.comentarioSet || ''}" onchange="window.updateDraftSet('${ej.id}', ${setIdx}, 'comentarioSet', this.value)">
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          `;
+        }).join('')}
+
+        <div class="exercise-block" style="border-color:var(--border-highlight)">
+          <label class="form-label" style="color:var(--red-primary)">💬 COMENTARIO GENERAL DEL ENTRENAMIENTO (OPCIONAL)</label>
+          <textarea class="exercise-textarea" id="inputGeneralComment" placeholder="Escribe un comentario general sobre cómo te sentiste en la sesión..." onchange="window.updateGeneralComment(this.value)">${appState.workoutGeneralComment || ''}</textarea>
+        </div>
+
+        <button class="btn btn-primary" id="btnFinishWorkout" style="width:100%; padding:16px; font-size:1.1rem; margin-top:10px; box-shadow: 0 0 35px rgba(255, 46, 46, 0.45)">
+          🏆 FINALIZAR Y GUARDAR ENTRENAMIENTO
+        </button>
+      </div>
+    `;
+  }
+
+  window.updateDraftSet = (ejId, setIdx, field, val) => {
+    if (appState.workoutDraftSets[ejId]) {
+      appState.workoutDraftSets[ejId].sets[setIdx][field] = field === 'reps' ? Number(val) : val;
+      persistWorkoutDraft();
+    }
+  };
+
+  window.updateGeneralComment = (val) => {
+    appState.workoutGeneralComment = val;
+    persistWorkoutDraft();
+  };
+
+  // Extrae el día calendario (YYYY-MM-DD) de un ISO string usando la ZONA HORARIA LOCAL
+  // del navegador, NO UTC. log.fecha se guarda como new Date().toISOString() (ej. "2026-08-12T23:30:00.000Z"),
+  // y usar toISOString().slice(0,10) para agrupar desplazaría al día siguiente cualquier
+  // entrenamiento hecho entre las 21:00 y las 23:59 hora Argentina (UTC-3). No modifica el
+  // formato almacenado en Supabase, solo cómo se interpreta acá para contar días.
+  function getFechaCalendarioLocal(fechaISO) {
+    const d = new Date(fechaISO);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
+
+  // --- HISTORIAL AGRUPADO: Rutina → Semana → Día → Ejercicios → Series ---
+  // permitirEdicion: SOLO true cuando el alumno ve su PROPIO historial
+  // (renderClientDashboard). El historial que el profesor ve de un alumno
+  // (renderModalHistorialAlumno) llama esta misma función sin el flag,
+  // así que nunca muestra el botón "Editar entrenamiento" — esa edición es
+  // exclusiva del alumno dueño del registro, dentro de la ventana de 2hs.
+  function renderHistorialAgrupado(logs, rutinas, permitirEdicion = false) {
+    if (!logs || logs.length === 0) {
+      return `<div style="text-align:center; color:var(--text-gray); padding:40px 20px">
+        <div style="font-size:2.5rem; margin-bottom:10px">📜</div>
+        <div style="font-size:1rem; font-weight:700">Aún no hay entrenamientos registrados.</div>
+        <div style="font-size:0.85rem; margin-top:6px">Completa una sesión para ver tu historial aquí.</div>
+      </div>`;
+    }
+
+    // Agrupar: rutinaId → semana → día
+    const grouped = {};
+    logs.forEach(log => {
+      const rId = log.rutinaId || 'sin-rutina';
+      if (!grouped[rId]) {
+        const rutina = rutinas ? rutinas.find(r => r.id === rId) : null;
+        grouped[rId] = {
+          titulo: log.rutinaT || (rutina ? rutina.titulo : 'Rutina'),
+          fechaInicio: rutina ? rutina.fechaInicio : null,
+          duracionDias: rutina ? (rutina.duracionDias || 30) : 30,
+          semanas: {}
+        };
+      }
+      const g = grouped[rId];
+
+      // Calcular semana relativa a la fecha de inicio de la rutina
+      let semana = log.semana || 1;
+      if (!log.semana && g.fechaInicio && log.fecha) {
+        const diffDays = Math.floor(
+          (new Date(log.fecha) - new Date(g.fechaInicio)) / 86400000
+        );
+        semana = Math.max(1, Math.ceil((diffDays + 1) / 7));
       }
 
-      // Poda: de las rutinas locales de ESTE alumno (nunca de otros, y nunca
-      // las "propias" auto-gestionadas, que son locales por diseño), eliminar
-      // las que ya no están en el snapshot fresco de Supabase.
-      if (permitirPodaRutinas) {
-        this.data.rutinas = this.data.rutinas.filter(rt => {
-          if (rt.alumnoId !== alumnoId) return true;
-          if (rt.esPropia) return true;
-          return idsFrescos.has(rt.id);
+      if (!g.semanas[semana]) g.semanas[semana] = {};
+      const diaKey = String(log.diaNumero || log.diaNombre || 1);
+      if (!g.semanas[semana][diaKey]) g.semanas[semana][diaKey] = [];
+      g.semanas[semana][diaKey].push(log);
+    });
+
+    return `<div style="max-width:800px; margin:0 auto">
+      ${Object.entries(grouped).map(([rId, g]) => {
+        const totalSemanas = Math.max(1, Math.ceil(g.duracionDias / 7));
+        const semanasOrdenadas = Object.keys(g.semanas).map(Number).sort((a, b) => a - b);
+
+        return `
+        <div style="margin-bottom:28px">
+          <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px; padding:12px 16px;
+                      background:rgba(255,46,46,0.08); border-radius:10px; border-left:4px solid var(--red-primary)">
+            <div style="font-size:1.3rem">💪</div>
+            <div>
+              <div style="font-size:1.1rem; font-weight:900; color:#fff">${g.titulo}</div>
+              <div style="font-size:0.78rem; color:var(--text-gray)">${totalSemanas} semanas · ${g.duracionDias} días
+                ${g.fechaInicio ? ' · Inicio: ' + new Date(g.fechaInicio).toLocaleDateString('es-AR') : ''}
+              </div>
+            </div>
+          </div>
+
+          ${Array.from({ length: totalSemanas }, (_, i) => i + 1).map(numSemana => {
+            const diasEsaSemana = g.semanas[numSemana];
+            const tieneRegistros = diasEsaSemana && Object.keys(diasEsaSemana).length > 0;
+
+            // logsEsaSemana = TODOS los workout_logs de la semana, sin importar bajo qué diaNumero quedaron agrupados
+            const logsEsaSemana = tieneRegistros ? Object.values(diasEsaSemana).flat() : [];
+
+            // "día" = fecha calendario única (zona horaria local), NO diaNumero de rutina
+            const fechasUnicas = new Set(logsEsaSemana.map(l => getFechaCalendarioLocal(l.fecha)));
+            const totalDiasCalendario = fechasUnicas.size;
+
+            // "entrenamiento" = un workout_log, sin agrupar
+            const totalEntrenamientos = logsEsaSemana.length;
+
+            const resumenSemana = totalDiasCalendario === totalEntrenamientos
+              ? `${totalDiasCalendario} ${totalDiasCalendario === 1 ? 'día' : 'días'}`
+              : `${totalDiasCalendario} ${totalDiasCalendario === 1 ? 'día' : 'días'} · ${totalEntrenamientos} entrenamientos`;
+
+            return `
+            <div style="margin-bottom:12px">
+              <div class="history-accordion-header" data-acc-id="acc-s${numSemana}-${rId.slice(0,8)}"
+                   style="display:flex; justify-content:space-between; align-items:center;
+                          background:rgba(255,255,255,0.04); border:1px solid var(--border-color);
+                          padding:10px 14px; border-radius:8px; cursor:pointer; user-select:none">
+                <span style="font-weight:800; font-size:0.95rem">📅 Semana ${numSemana}</span>
+                <span style="color:var(--text-gray); font-size:0.8rem">
+                  ${tieneRegistros ? resumenSemana : 'Sin registros'} ▼
+                </span>
+              </div>
+
+              <div class="history-accordion-body" id="acc-s${numSemana}-${rId.slice(0,8)}"
+                   style="display:none; padding:10px 0 0">
+                ${!tieneRegistros
+                  ? `<div style="text-align:center; color:var(--text-gray); font-size:0.82rem; padding:12px">
+                       Sin entrenamientos registrados esta semana.
+                     </div>`
+                  : Object.entries(diasEsaSemana).map(([diaKey, diaLogs]) => {
+                      return diaLogs.map(log => `
+                      <div class="history-item-card" style="margin-bottom:10px; border-left:3px solid var(--border-highlight)">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
+                          <div>
+                            <strong style="color:var(--green-active); font-size:1rem">✓ ${log.diaNombre}</strong>
+                            <div style="font-size:0.75rem; color:var(--text-gray)">
+                              ${new Date(log.fecha).toLocaleString('es-AR', { weekday:'short', day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' })}
+                            </div>
+                          </div>
+                          <div style="display:flex; align-items:center; gap:8px">
+                            <span class="badge badge-active">Completado</span>
+                            ${permitirEdicion && store.puedeEditarseEntrenamiento(log) ? `
+                              <button class="btn btn-secondary btn-sm btn-editar-entrenamiento-click" data-log-id="${log.id}" style="border-color:var(--yellow-warning); color:var(--yellow-warning); padding:4px 10px; font-size:0.75rem">✏️ Editar entrenamiento</button>
+                            ` : ''}
+                          </div>
+                        </div>
+
+                        ${log.comentarioGeneral ? `
+                          <div style="background:rgba(255,46,46,0.08); border-left:3px solid var(--red-primary);
+                                      padding:7px 12px; border-radius:0 6px 6px 0; margin-bottom:8px; font-size:0.82rem">
+                            💬 <strong>Comentario general:</strong> "${log.comentarioGeneral}"
+                          </div>` : ''}
+
+                        <div style="border-top:1px solid var(--border-color); padding-top:8px">
+                          ${(() => {
+                            // Agrupar series por ejercicio
+                            const ejMap = {};
+                            (log.sets || []).forEach(s => {
+                              const key = s.ejercicioNombre;
+                              if (!ejMap[key]) ejMap[key] = [];
+                              ejMap[key].push(s);
+                            });
+                            return Object.entries(ejMap).map(([ejNombre, sets]) => `
+                              <div style="margin-bottom:8px">
+                                <div style="font-size:0.88rem; font-weight:800; color:#fff; margin-bottom:4px">
+                                  🏋️ ${ejNombre}
+                                </div>
+                                ${sets.map(s => `
+                                  <div style="font-size:0.82rem; background:rgba(0,0,0,0.3);
+                                              padding:5px 10px; border-radius:6px; margin-bottom:3px">
+                                    Serie ${s.setNumero}: <strong>${s.repsRealizadas} reps</strong>
+                                    con <strong>${s.pesoUtilizado}</strong>
+                                    ${s.comentarioAlumno ? `<span style="color:var(--yellow-warning)">
+                                      · 💬 "${s.comentarioAlumno}"</span>` : ''}
+                                  </div>`).join('')}
+                              </div>`).join('');
+                          })()}
+                        </div>
+                      </div>
+                      `).join('');
+                    }).join('')
+                }
+              </div>
+            </div>`;
+          }).join('')}
+        </div>`;
+      }).join('')}
+    </div>`;
+  }
+
+  // --- DASHBOARD PROFESOR ---
+  function renderTrainerDashboard() {
+    const alumnosFiltrados = store.getAlumnosFiltrados({
+      busqueda: appState.busquedaProfesor,
+      filtro: appState.filtroProfesor
+    });
+
+    const totalAlumnos = store.data.alumnos.length;
+    const conRutina = store.data.alumnos.filter(a => store.getRutinaActiva(a.id)).length;
+    const porVencer = store.getAlumnosFiltrados({ filtro: 'por_vencer' }).length;
+    const sinRutina = totalAlumnos - conRutina;
+
+    appContainer.innerHTML = `
+      ${renderHeader()}
+
+      <main class="trainer-dashboard">
+        <div class="stats-grid">
+          <div class="stat-card"><div class="val">${totalAlumnos}</div><div class="label">Alumnos</div></div>
+          <div class="stat-card"><div class="val" style="color:var(--green-active)">${conRutina}</div><div class="label">Rutinas Activas</div></div>
+          <div class="stat-card"><div class="val" style="color:var(--yellow-warning)">${porVencer}</div><div class="label">Por Vencer 24h</div></div>
+          <div class="stat-card"><div class="val" style="color:var(--red-primary)">${sinRutina}</div><div class="label">Sin Rutina</div></div>
+        </div>
+
+        <div class="toolbar-section">
+          <div class="search-box">
+            <input type="text" id="inputSearchProf" class="form-input" placeholder="🔎 Buscar por Nombre o DNI..." value="${appState.busquedaProfesor}">
+          </div>
+
+          <div class="filter-buttons">
+            <button class="btn btn-secondary btn-sm ${appState.filtroProfesor === 'todos' ? 'active' : ''}" id="fTodos">Todos (${totalAlumnos})</button>
+            <button class="btn btn-secondary btn-sm ${appState.filtroProfesor === 'activa' ? 'active' : ''}" id="fActiva">Activas (${conRutina})</button>
+            <button class="btn btn-secondary btn-sm ${appState.filtroProfesor === 'por_vencer' ? 'active' : ''}" id="fVencer">Por Vencer ⏰ (${porVencer})</button>
+            <button class="btn btn-secondary btn-sm ${appState.filtroProfesor === 'expirada' ? 'active' : ''}" id="fSinRutina">Sin Rutina ⚠️ (${sinRutina})</button>
+          </div>
+
+          <button class="btn btn-primary" id="btnOpenNuevoAlumno">+ Registrar Nuevo Alumno 👤</button>
+        </div>
+
+        <div class="alumnos-grid">
+          ${alumnosFiltrados.map(alumno => {
+            const rutinasAlumno = store.getRutinasAlumno(alumno.id);
+            const rutinaActiva = store.getRutinaActiva(alumno.id);
+            const dRest = rutinaActiva ? store.calcularDiasRestantes(rutinaActiva.fechaVencimiento) : -1;
+
+            let badgeHtml = `<span class="badge badge-expired">Sin Rutina</span>`;
+            if (rutinaActiva) {
+              if (dRest <= 1 && dRest >= 0) badgeHtml = `<span class="badge badge-warning">⏰ Vence en ${dRest}d</span>`;
+              else if (dRest > 1) badgeHtml = `<span class="badge badge-active">● Activa (${dRest}d)</span>`;
+            }
+
+            return `
+              <div class="alumno-card-clickable" data-alumno-id="${alumno.id}">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px">
+                  <div>
+                    <div style="display:flex; align-items:center; gap:6px;">
+                      <span style="font-size:1.15rem; font-weight:800">${alumno.nombreProfesor || alumno.nombre}</span>
+                      <button class="btn-edit-nombre" data-dni="${alumno.dni}" title="Editar apodo"
+                              style="background:none; border:none; cursor:pointer; font-size:1rem; padding:0; color:var(--text-gray)">✎</button>
+                    </div>
+                    <div style="font-size:0.85rem; color:var(--text-gray)">
+                      DNI: ${alumno.dni} | 
+                      <span style="color:${alumno.estadoAutorizacion === 'autorizado' ? 'var(--green-active)' : 'var(--yellow-warning)'}">
+                        ${alumno.estadoAutorizacion === 'autorizado' ? 'Autorizado' : 'Pendiente'}
+                      </span>
+                    </div>
+                  </div>
+                  ${badgeHtml}
+                </div>
+
+                <div style="background:rgba(0,0,0,0.3); padding:10px; border-radius:8px; font-size:0.85rem; color:var(--text-gray); margin-bottom:12px">
+                  ${rutinasAlumno.length > 0 ? rutinasAlumno.map(r => {
+                    const estaDesactivada = r.estado === 'desactivada';
+                    return `
+                    <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.06); padding:6px 0; gap:8px; flex-wrap:wrap">
+                      <div>
+                        <div style="color:#fff; font-weight:700">💪 ${r.titulo} ${estaDesactivada ? '<span class="badge badge-role" style="margin-left:4px">Desactivada</span>' : ''}</div>
+                        <div style="font-size:0.72rem; color:var(--text-muted)">Vence: ${r.fechaVencimiento} | ${r.dias ? r.dias.length : 0} días</div>
+                      </div>
+                      <div style="display:flex; gap:6px; flex-wrap:wrap">
+                        <button class="btn btn-secondary btn-sm btn-editar-rutina-click" data-alumno-id="${alumno.id}" data-rutina-id="${r.id}" style="border-color:var(--yellow-warning); color:var(--yellow-warning); padding:4px 10px; font-size:0.78rem">✏️ Editar</button>
+                        <button class="btn btn-secondary btn-sm btn-toggle-estado-rutina-click" data-alumno-id="${alumno.id}" data-rutina-id="${r.id}" data-estado-actual="${r.estado}" style="border-color:var(--blue-info,#3b82f6); color:var(--blue-info,#3b82f6); padding:4px 10px; font-size:0.78rem">
+                          ${estaDesactivada ? '▶️ Activar' : '⏸️ Desactivar'}
+                        </button>
+                        <button class="btn btn-secondary btn-sm btn-borrar-rutina-click" data-alumno-id="${alumno.id}" data-rutina-id="${r.id}" style="border-color:var(--red-primary); color:var(--red-primary); padding:4px 10px; font-size:0.78rem">🗑️ Borrar</button>
+                      </div>
+                    </div>
+                  `;
+                  }).join('') : `
+                    <div>⚠️ Sin rutinas creadas aún.</div>
+                  `}
+                </div>
+
+                <div style="display:flex; flex-wrap:wrap; gap:8px">
+                  <button class="btn btn-primary btn-sm btn-crear-rutina-click" data-alumno-id="${alumno.id}">+ Crear Nueva Rutina</button>
+                  <button class="btn btn-secondary btn-sm btn-historial-click" data-alumno-id="${alumno.id}">📜 Historial Real</button>
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      </main>
+
+      ${appState.modalActivo === 'nuevo_alumno' ? renderModalNuevoAlumno() : ''}
+      ${(appState.modalActivo === 'crear_rutina' || appState.modalActivo === 'editar_rutina') ? renderModalFormularioRutina(appState.modalActivo) : ''}
+      ${appState.modalActivo === 'historial_alumno' ? renderModalHistorialAlumno() : ''}
+      ${appState.modalActivo === 'confirmar_borrado_rutina' ? renderModalConfirmarBorradoRutina() : ''}
+
+      ${renderBottomNav()}
+    `;
+
+    bindHeaderEvents();
+    bindInstallBannerEvents();
+    bindBottomNavEvents();
+
+    const inputSearch = document.getElementById('inputSearchProf');
+    inputSearch?.addEventListener('input', (e) => {
+      const cursorPos = e.target.selectionStart;
+      appState.busquedaProfesor = e.target.value;
+      renderApp();
+      const newInputSearch = document.getElementById('inputSearchProf');
+      if (newInputSearch) {
+        newInputSearch.focus();
+        newInputSearch.setSelectionRange(cursorPos, cursorPos);
+      }
+    });
+
+    document.getElementById('fTodos')?.addEventListener('click', () => { appState.filtroProfesor = 'todos'; renderApp(); });
+    document.getElementById('fActiva')?.addEventListener('click', () => { appState.filtroProfesor = 'activa'; renderApp(); });
+    document.getElementById('fVencer')?.addEventListener('click', () => { appState.filtroProfesor = 'por_vencer'; renderApp(); });
+    document.getElementById('fSinRutina')?.addEventListener('click', () => { appState.filtroProfesor = 'expirada'; renderApp(); });
+
+    document.getElementById('btnOpenNuevoAlumno')?.addEventListener('click', () => {
+      appState.modalActivo = 'nuevo_alumno';
+      renderApp();
+    });
+
+    document.querySelectorAll('.alumno-card-clickable').forEach(card => {
+      card.addEventListener('click', async (e) => {
+        const alumnoId = card.dataset.alumnoId;
+
+console.log("========== DEBUG SELECCIÓN ==========");
+console.log("CARD TEXT:", card.innerText);
+console.log("DATASET ID:", card.dataset.alumnoId);
+
+const alumnoDebug = store.getAlumnoPorId(card.dataset.alumnoId);
+
+console.log("ALUMNO RESUELTO:", {
+    id: alumnoDebug?.id,
+    dni: alumnoDebug?.dni,
+    nombre: alumnoDebug?.nombre,
+    apodo: alumnoDebug?.nombreApodoProfesor
+});
+
+console.log("====================================");
+        // Antes de mostrar/editar el detalle o la rutina de este alumno,
+        // refrescamos su estado desde Supabase (fuente de verdad) para no
+        // confiar en la copia local del profesor, que puede estar desactualizada.
+        await store.syncWithSupabase(alumnoId);
+        if (e.target.classList.contains('btn-historial-click')) {
+          e.stopPropagation();
+          // Se invalida el caché en cada apertura del historial (no solo al cambiar de alumno)
+          // para que el profesor siempre vea los registros más recientes desde Supabase.
+          appState.historialProfesorLogs = null;
+          appState.alumnoSeleccionadoId = alumnoId;
+          appState.modalActivo = 'historial_alumno';
+          renderApp();
+        } else if (e.target.classList.contains('btn-editar-rutina-click')) {
+          e.stopPropagation();
+          appState.alumnoSeleccionadoId = alumnoId;
+          appState.rutinaEnEdicionId = e.target.dataset.rutinaId;
+          appState.modalActivo = 'editar_rutina';
+          initFormBuilderForRoutine(appState.rutinaEnEdicionId);
+          renderApp();
+        // LÓGICA DE APLICACIÓN v4 - ESTUDIO FITNESS (WORKOUT LOGGER & WEB PUSH REAL)
+
+// --- INSTALACIÓN DE PWA (banner "Instalar aplicación" vía beforeinstallprompt) ---
+// Se define FUERA del DOMContentLoaded, en el nivel superior del script,
+// para no perder el evento si el navegador lo dispara antes de que termine
+// de cargar el resto de la página (puede pasar). No toca el registro del
+// Service Worker (eso sigue exactamente igual, más abajo) ni ningún otro
+// flujo: solo guarda el evento para poder dispararlo cuando el usuario
+// toque el botón.
+const INSTALL_DISMISS_KEY = 'estudio_fitness_install_dismissed_at';
+const INSTALL_DISMISS_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000; // 7 días
+
+window.deferredInstallPrompt = null;
+
+// display-mode:standalone cubre Android/Chrome/Edge/Desktop una vez instalada;
+// navigator.standalone es el equivalente legado de iOS Safari cuando la PWA
+// se agregó a la pantalla de inicio manualmente (ahí nunca va a existir
+// beforeinstallprompt, pero si ya está instalada tampoco hay que ofrecer nada).
+function estudioFitnessPwaYaInstalada() {
+  return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
+      || window.navigator.standalone === true;
+}
+
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault(); // evita el mini-banner nativo automático; lo mostramos nosotros
+  window.deferredInstallPrompt = e;
+  if (typeof window.renderApp === 'function') window.renderApp();
+});
+
+window.addEventListener('appinstalled', () => {
+  window.deferredInstallPrompt = null;
+  try { localStorage.removeItem(INSTALL_DISMISS_KEY); } catch (e) {}
+  if (typeof window.renderApp === 'function') window.renderApp();
+});
+
+document.addEventListener('DOMContentLoaded', () => {
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./sw.js')
+      .then(reg => {
+        console.log('✅ Service Worker PWA activo');
+        // INSTRUMENTACIÓN TEMPORAL: SERVICE WORKER VERSION
+        const swVersion = reg.active ? reg.active.scriptURL : 'no active worker';
+        console.log('=== SERVICE WORKER VERSION ===', {
+          scriptURL: swVersion,
+          state: reg.active ? reg.active.state : 'none',
+          controller: navigator.serviceWorker.controller ? navigator.serviceWorker.controller.scriptURL : 'no controller'
+        });
+        // FIN INSTRUMENTACIÓN
+      })
+      .catch(err => console.warn('Error SW:', err));
+
+    navigator.serviceWorker.addEventListener('message', (event) => {
+      if (event.data && event.data.type === 'NAVIGATE_ROUTE') {
+        if (event.data.routineId && appState.usuarioActual && appState.usuarioActual.rol === 'alumno') {
+          appState.tabCliente = 'rutina';
+          appState.rutinaSeleccionadaId = event.data.routineId;
+          appState.diaSeleccionadoId = null;
+          renderApp();
+          // PWA: al interactuar con una notificación de rutina actualizada,
+          // forzamos la reobtención fresca desde Supabase (no confiar en caché).
+          if (window.gymStore) window.gymStore.forceRefreshRutinas(appState.usuarioActual.data.id);
+        }
+      }
+    });
+  }
+
+  const store = window.gymStore;
+  const appContainer = document.getElementById('app');
+
+  const appState = {
+    usuarioActual: null, // null | { rol: 'profesor'|'alumno', data: object }
+    tabCliente: 'rutina', // 'rutina' | 'historial'
+    rutinaSeleccionadaId: null, // ID de rutina seleccionada por el alumno
+    diaSeleccionadoId: null, // ID de día seleccionado por el alumno
+    diaActivoEntrenamiento: null, // null | diaObject
+    filtroProfesor: 'todos',
+    busquedaProfesor: '',
+    modalActivo: null,
+    alumnoSeleccionadoId: null,
+    rutinaAEliminarId: null, // rutina pendiente de confirmación de borrado (panel profesor)
+    logEnEdicionId: null,    // entrenamiento que el alumno está editando (ventana 2hs)
+    mostrarDrawerNotifs: false,
+    workoutDraftSets: {},       // Estado temporal del entrenamiento en progreso por serie
+    borradorEntrenamientoDetectado: null, // borrador recuperado de localStorage, pendiente de confirmar Continuar/Descartar
+    historialProfesorLogs: null  // Caché async del historial del alumno visto por el profesor
+  };
+
+  // Escuchar cambios de Supabase Realtime / Local Store
+  window.addEventListener('gym_store_updated', () => {
+    if (appState.usuarioActual && appState.usuarioActual.rol === 'alumno') {
+      const alumnoActualizado = store.getAlumnoPorId(appState.usuarioActual.data.id) || store.data.alumnos.find(a => a.dni === appState.usuarioActual.data.dni);
+      if (alumnoActualizado) appState.usuarioActual.data = alumnoActualizado;
+    }
+
+    const activeEl = document.activeElement;
+    const isTyping = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA');
+    if (!isTyping) {
+      renderApp();
+    }
+  });
+
+  function renderApp() {
+    if (!appState.usuarioActual) {
+      renderLoginScreen();
+    } else if (appState.usuarioActual.rol === 'alumno') {
+      renderClientDashboard();
+    } else if (appState.usuarioActual.rol === 'profesor') {
+      renderTrainerDashboard();
+    }
+  }
+  // Expuesta para que los listeners de beforeinstallprompt/appinstalled
+  // (definidos arriba, fuera de este DOMContentLoaded) puedan refrescar el
+  // banner de instalación en cuanto cambie su disponibilidad.
+  window.renderApp = renderApp;
+
+  // --- BANNER "INSTALAR APLICACIÓN" ---
+  function debeOfrecerInstalacion() {
+    if (!window.deferredInstallPrompt) return false; // sin evento nativo disponible, no mostramos nada (requisito 7)
+    if (estudioFitnessPwaYaInstalada()) return false; // ya instalada (requisito 6)
+    try {
+      const dismissedAt = Number(localStorage.getItem(INSTALL_DISMISS_KEY) || 0);
+      if (dismissedAt && (Date.now() - dismissedAt) < INSTALL_DISMISS_COOLDOWN_MS) return false; // el usuario ya lo cerró hace poco (requisito 9)
+    } catch (e) { /* localStorage no disponible: no bloqueamos por esto */ }
+    return true;
+  }
+
+  function renderInstallBanner() {
+    if (!debeOfrecerInstalacion()) return '';
+    return `
+      <div class="install-pwa-banner" id="installPwaBanner">
+        <div class="install-pwa-text">
+          <div class="install-pwa-title">📱 Instalar Estudio Fitness</div>
+          <div class="install-pwa-subtitle">Accedé más rápido, como una app, sin pasar por el navegador.</div>
+        </div>
+        <div class="install-pwa-actions">
+          <button class="btn btn-primary btn-sm" id="btnInstallPwa">Instalar aplicación</button>
+          <button class="btn btn-secondary btn-icon" id="btnDismissInstallPwa" title="Cerrar">✕</button>
+        </div>
+      </div>
+    `;
+  }
+
+  function bindInstallBannerEvents() {
+    const btnInstall = document.getElementById('btnInstallPwa');
+    if (btnInstall) {
+      btnInstall.addEventListener('click', async () => {
+        const promptEvent = window.deferredInstallPrompt;
+        if (!promptEvent) { renderApp(); return; } // ya no está disponible (p.ej. se instaló desde otra pestaña)
+        btnInstall.disabled = true;
+        promptEvent.prompt();
+        try {
+          await promptEvent.userChoice; // se resuelve tanto si acepta como si rechaza el diálogo nativo
+        } catch (e) { /* usuario cerró el diálogo del sistema sin elegir */ }
+        // El evento beforeinstallprompt es de un solo uso: una vez mostrado el
+        // diálogo nativo, se descarta. Si aceptó, "appinstalled" además limpia
+        // el flag de "cerrado por el usuario" y oculta el banner (requisito 5).
+        window.deferredInstallPrompt = null;
+        renderApp();
+      });
+    }
+    const btnDismiss = document.getElementById('btnDismissInstallPwa');
+    if (btnDismiss) {
+      btnDismiss.addEventListener('click', () => {
+        try { localStorage.setItem(INSTALL_DISMISS_KEY, String(Date.now())); } catch (e) {}
+        renderApp();
+      });
+    }
+  }
+
+  // --- HEADER COMPARTIDO CON ACTIVACIÓN EXPLÍCITA DE WEB PUSH ---
+  function renderHeader() {
+    const isProfesor = appState.usuarioActual?.rol === 'profesor';
+    const user = appState.usuarioActual?.data;
+
+    const notifs = store.getNotificacionesPorRol(
+      isProfesor ? 'profesor' : 'alumno',
+      user ? user.id : null
+    );
+    const unreadCount = notifs.filter(n => !n.leido).length;
+    const pushConcedido = 'Notification' in window && Notification.permission === 'granted';
+
+    return `
+      <header class="app-header">
+        <div class="brand-wrapper" id="btnHeaderHome">
+          <img src="./src/logo.svg" alt="Estudio Fitness Logo" class="brand-logo">
+          <div class="brand-title">Estudio<span>Fitness</span></div>
+        </div>
+
+        <div class="header-actions">
+          ${user ? `
+            <span class="badge header-user-badge ${isProfesor ? 'badge-warning' : 'badge-active'}" title="${user.nombre}">
+              ${isProfesor ? '⚡' : '👤'} ${user.nombre}
+            </span>
+          ` : ''}
+
+          ${appState.usuarioActual ? `
+            <button
+              class="btn btn-secondary btn-icon notif-bell-btn"
+              id="btnNotifBell"
+              title="${pushConcedido ? 'Notificaciones' : 'Notificaciones (tocá para activar el push)'}"
+            >
+              🔔
+              ${!pushConcedido
+                ? `<span class="notif-bell-dot" title="Push desactivado"></span>`
+                : (unreadCount > 0 ? `<span style="position:absolute; top:-4px; right:-4px; background:var(--red-primary); color:#fff; border-radius:50%; width:18px; height:18px; font-size:0.7rem; font-weight:800; display:flex; align-items:center; justify-content:center">${unreadCount}</span>` : '')
+              }
+            </button>
+            <button class="btn btn-secondary btn-sm header-logout-btn" id="btnLogout"><span class="header-logout-label">Salir</span> 🚪</button>
+          ` : ''}
+        </div>
+      </header>
+
+      ${appState.mostrarDrawerNotifs ? renderNotifDrawer(notifs) : ''}
+      ${renderInstallBanner()}
+    `;
+  }
+
+  function renderNotifDrawer(notifs) {
+    return `
+      <div class="notif-drawer">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; border-bottom:1px solid var(--border-color); padding-bottom:6px">
+          <strong style="font-size:0.95rem">🔔 Avisos de Entrenamiento</strong>
+          <button class="btn btn-secondary btn-sm" id="btnCloseNotifs" style="padding:2px 8px">&times;</button>
+        </div>
+        ${notifs.length === 0 ? `
+          <div style="font-size:0.85rem; color:var(--text-gray); padding:10px; text-align:center">Sin notificaciones pendientes</div>
+        ` : notifs.map(n => `
+          <div class="notif-item ${!n.leido ? 'unread' : ''}">
+            <div>${n.mensaje}</div>
+            <div style="font-size:0.72rem; color:var(--text-muted); margin-top:4px">${new Date(n.fecha).toLocaleString()}</div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  }
+
+  function renderBottomNav() {
+    if (!appState.usuarioActual) return '';
+    const isProfesor = appState.usuarioActual.rol === 'profesor';
+    const user = appState.usuarioActual.data;
+    const notifs = store.getNotificacionesPorRol(isProfesor ? 'profesor' : 'alumno', user ? user.id : null);
+    const unreadCount = notifs.filter(n => !n.leido).length;
+
+    const iconRutina = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 9h8M8 13h8M8 17h5"/></svg>`;
+    const iconHistorial = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>`;
+    const iconAvisos = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>`;
+    const iconAlumnos = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 3 3.87"/></svg>`;
+    const iconMisRutinas = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="8" r="4"/><path d="M2 21v-1a7 7 0 0 1 7-7h1.5"/><path d="M18 14v6M15 17h6"/></svg>`;
+    const iconRanking = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 21h8M12 17v4M7 4h10v4a5 5 0 0 1-10 0V4Z"/><path d="M7 6H4a2 2 0 0 0 2 4M17 6h3a2 2 0 0 1-2 4"/></svg>`;
+
+    const items = isProfesor ? [
+      { id: 'navAlumnos',    label: 'Alumnos', icon: iconAlumnos, active: appState.modalActivo === null && !appState.mostrarDrawerNotifs },
+      { id: 'navAvisosProf', label: 'Avisos',   icon: iconAvisos,  active: appState.mostrarDrawerNotifs, badge: unreadCount }
+    ] : [
+      { id: 'navRutina',       label: 'Rutinas',   icon: iconRutina,    active: appState.tabCliente === 'rutina' && !appState.mostrarDrawerNotifs },
+      { id: 'navMisRutinas',   label: 'Mías',       icon: iconMisRutinas, active: appState.tabCliente === 'mis_rutinas' && !appState.mostrarDrawerNotifs },
+      { id: 'navRanking',      label: 'Ranking',    icon: iconRanking,   active: appState.tabCliente === 'ranking' && !appState.mostrarDrawerNotifs },
+      { id: 'navHistorial',    label: 'Historial', icon: iconHistorial, active: appState.tabCliente === 'historial' && !appState.mostrarDrawerNotifs },
+      { id: 'navAvisosAlumno', label: 'Avisos',     icon: iconAvisos,    active: appState.mostrarDrawerNotifs, badge: unreadCount }
+    ];
+
+    return `
+      <nav class="bottom-nav">
+        ${items.map(it => `
+          <button class="bottom-nav-item ${it.active ? 'active' : ''}" id="${it.id}">
+            <span class="bottom-nav-icon">
+              ${it.icon}
+              ${it.badge ? `<span class="bottom-nav-badge">${it.badge}</span>` : ''}
+            </span>
+            <span class="bottom-nav-label">${it.label}</span>
+          </button>
+        `).join('')}
+      </nav>
+    `;
+  }
+
+  // --- LOGIN Y REGISTRO POR DNI CON VERIFICACIÓN DE AUTORIZACIÓN ---
+  function renderLoginScreen() {
+    appContainer.innerHTML = `
+      ${renderHeader()}
+      <div class="login-container">
+        <img src="./src/logo.svg" alt="Logo Estudio Fitness" class="login-logo">
+        <h1 class="login-title">Estudio Fitness</h1>
+        <p class="login-subtitle">Ingreso único por DNI</p>
+
+        <form id="formLoginUnico">
+          <div class="form-group">
+            <label class="form-label" for="inputDni">Número de DNI</label>
+            <input type="text" id="inputDni" class="form-input" placeholder="Ingresa tu DNI" required autofocus>
+          </div>
+
+          <!-- Campo de contraseña eliminado del flujo activo (login por DNI,
+               generateLink + verifyOtp). authSignIn/authSignUp y el flujo
+               legacy de password siguen en supabase.js/data.js sin usarse,
+               pendientes de limpieza controlada. -->
+
+          <button type="submit" class="btn btn-primary" style="width:100%">Iniciar Sesión 🚀</button>
+        </form>
+
+        <div style="margin-top:16px; border-top:1px solid var(--border-color); padding-top:14px">
+          <button class="btn btn-secondary btn-sm" id="btnToggleRegister" style="width:100%">¿Eres alumno nuevo? Crear Cuenta 👤</button>
+        </div>
+      </div>
+    `;
+    bindInstallBannerEvents();
+
+    let loginEnCurso = false;
+    document.getElementById('formLoginUnico').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (loginEnCurso) return; // evita doble submit mientras se sincroniza con Supabase
+      const dni = document.getElementById('inputDni').value;
+
+      if (!dni || !dni.trim()) {
+        alert("Ingresá tu DNI.");
+        return;
+      }
+
+      const submitBtn = e.target.querySelector('button[type="submit"]');
+      loginEnCurso = true;
+      if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Verificando...'; }
+
+      let res;
+      try {
+        // Login por DNI: genera un magic-link en el backend y lo canjea por
+        // una sesión REAL de Supabase Auth (generateLink + verifyOtp).
+        // store.login(dni, password) queda sin usarse en este flujo activo,
+        // pendiente de limpieza controlada.
+        res = await store.loginConDni(dni);
+      } finally {
+        loginEnCurso = false;
+        if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Iniciar Sesión 🚀'; }
+      }
+
+      if (res) {
+        appState.usuarioActual = res;
+
+        if (res.rol === 'alumno' && res.data && res.data.id) {
+          // --- SESIÓN ALUMNO ---
+          window._sessionAlumnoId = res.data.id;
+          window._sessionProfesorId = null;
+          // Detectar si hay un borrador de entrenamiento sin terminar que
+          // pertenezca a ESTE alumno (getBorradorPropio verifica ownerId).
+          appState.borradorEntrenamientoDetectado = getBorradorPropio();
+          // Sincronizar rutinas e historial vía RPC después del login
+          setTimeout(async () => {
+            await gymStore.syncWithSupabase(res.data.id);
+            // Sincronizar historial desde Supabase
+            if (window.supabaseEngine) {
+              const sbLogs = await window.supabaseEngine.obtenerHistorialDesdeSupabase(res.data.id);
+              if (sbLogs && sbLogs.length > 0) {
+                sbLogs.forEach(sbLog => {
+                  const idx = gymStore.data.workoutLogs.findIndex(w => w.id === sbLog.id);
+                  if (idx >= 0) {
+                    gymStore.data.workoutLogs[idx] = sbLog;
+                  } else {
+                    gymStore.data.workoutLogs.push(sbLog);
+                  }
+                });
+                gymStore.saveData();
+                window.dispatchEvent(new CustomEvent('gym_store_updated'));
+              }
+            }
+          }, 300);
+        } else if (res.rol === 'profesor' && res.data && res.data.id) {
+          // --- SESIÓN PROFESOR ---
+          window._sessionProfesorId = res.data.id;
+          window._sessionAlumnoId = null;
+          // Sincronizar rutinas de todos los alumnos conocidos tras el login
+          // (punto C). No existe persistencia de sesión, así que este login
+          // es el único punto de entrada confiable para el profesor.
+          setTimeout(async () => {
+            await gymStore.syncRutinasProfesor();
+          }, 300);
+        } else {
+          window._sessionAlumnoId = null;
+          window._sessionProfesorId = null;
+        }
+
+        appState.historialProfesorLogs = null; // limpiar caché al cambiar de sesión
+        renderApp();
+      } else {
+        alert("❌ No se pudo iniciar sesión con ese DNI. Verificá el número.");
+      }
+
+    });
+
+    document.getElementById('btnToggleRegister')?.addEventListener('click', () => {
+      renderRegisterScreen();
+    });
+  }
+
+  // Genera una contraseña temporal aleatoria e interna para Supabase Auth
+  // signUp(). El usuario nunca la ve ni la introduce: el login real es
+  // exclusivamente por DNI vía loginConDni() (magic link / OTP), no por
+  // email+password. No reemplaza ni modifica authSignIn/authSignUp.
+  function generarPasswordTemporalInterna() {
+    if (window.crypto && window.crypto.randomUUID) {
+      return window.crypto.randomUUID() + window.crypto.randomUUID();
+    }
+    return 'tmp-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+  }
+
+  function renderRegisterScreen() {
+    appContainer.innerHTML = `
+      ${renderHeader()}
+      <div class="login-container">
+        <h2 class="login-title">Crear Cuenta de Alumno</h2>
+        <p class="login-subtitle">Ingresa tus datos para registrarte en el gimnasio</p>
+
+        <form id="formRegisterAlumno">
+          <div class="form-group">
+            <label class="form-label">Tu DNI *</label>
+            <input type="text" id="regDni" class="form-input" placeholder="Ej: 55667788" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Nombre Completo *</label>
+            <input type="text" id="regNombre" class="form-input" placeholder="Ej: Mariano López" required>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Teléfono (Opcional)</label>
+            <input type="text" id="regTel" class="form-input" placeholder="Ej: 1199887766">
+          </div>
+
+          <button type="submit" class="btn btn-primary" style="width:100%">Crear mi Cuenta 📝</button>
+        </form>
+
+        <div style="margin-top:14px">
+          <button class="btn btn-secondary btn-sm" id="btnBackToLogin">Volver al Login ⬅️</button>
+        </div>
+      </div>
+    `;
+    bindInstallBannerEvents();
+
+    document.getElementById('btnBackToLogin')?.addEventListener('click', () => renderLoginScreen());
+
+    document.getElementById('formRegisterAlumno')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const submitBtn = e.target.querySelector('button[type="submit"]');
+      if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Registrando...'; }
+      try {
+        const dni = document.getElementById('regDni').value;
+        // El usuario ya NO ingresa contraseña: se genera internamente, solo
+        // para satisfacer el requisito de Supabase Auth signUp(). El login
+        // real sigue siendo exclusivamente por DNI vía loginConDni() (OTP),
+        // así que esta contraseña nunca se usa para autenticar y no hace
+        // falta que el usuario la vea ni la recuerde.
+        const pass = generarPasswordTemporalInterna();
+        const nombre = document.getElementById('regNombre').value;
+        const tel = document.getElementById('regTel').value;
+
+        // registrarseAlumno es async en Etapa 1: intenta authSignUp después
+        // del registro local. El await es necesario para que la UI no avance
+        // antes de que el intento de Supabase Auth termine (aunque no sea bloqueante
+        // para el perfil local, sí debe resolverse antes de renderApp).
+        const alumno = await store.registrarseAlumno({ dni, password: pass, nombre, telefono: tel });
+        appState.usuarioActual = { rol: 'alumno', data: alumno };
+        renderApp();
+      } catch (err) {
+        alert("❌ Error: " + err.message);
+      } finally {
+        if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Crear mi Cuenta 📝'; }
+      }
+    });
+  }
+
+  // --- DASHBOARD ALUMNO (NUEVA NAVEGACIÓN MOBILE-FIRST POR TARJETAS) ---
+  function renderClientDashboard() {
+    const alumno = appState.usuarioActual.data;
+    const pendienteAutorizacion = alumno.estadoAutorizacion === 'pendiente';
+
+    const historialEntrenamientos = store.getHistorialEntrenamientosReales(alumno.id);
+
+    appContainer.innerHTML = `
+      ${renderHeader()}
+
+      <main class="client-dashboard">
+        ${pendienteAutorizacion ? `
+          <div class="pending-banner">
+            ⚠️ Tu DNI (<strong>${alumno.dni}</strong>) todavía no fue autorizado por tu profesor, así que aún no
+            vas a ver rutinas asignadas. Mientras tanto, ¡ya podés crear y entrenar tus propias rutinas en
+            <strong>"Mías"</strong>! Pedile a tu profe que te autorice para recibir rutinas personalizadas.
+          </div>
+        ` : ''}
+
+        ${(appState.tabCliente === 'rutina' || appState.tabCliente === 'mis_rutinas') ? (
+          appState.diaActivoEntrenamiento ? renderWorkoutSession() : (
+            appState.diaSeleccionadoId ? renderDayDetailView(alumno) : (
+              appState.rutinaSeleccionadaId ? renderRoutineDaysView(alumno) : (
+                appState.tabCliente === 'mis_rutinas' ? renderMisRutinasView(alumno) : renderRoutinesListView(alumno)
+              )
+            )
+          )
+        ) : ''}
+
+        ${appState.tabCliente === 'ranking' ? renderRankingView() : ''}
+        ${appState.tabCliente === 'historial' ? renderHistorialAgrupado(historialEntrenamientos, store.data.rutinas, true) : ''}
+      </main>
+
+      ${(appState.modalActivo === 'crear_rutina_propia' || appState.modalActivo === 'editar_rutina_propia') ? renderModalFormularioRutina(appState.modalActivo) : ''}
+      ${appState.modalActivo === 'editar_entrenamiento' ? renderModalEditarEntrenamiento(alumno) : ''}
+      ${appState.borradorEntrenamientoDetectado ? renderModalRecuperarBorrador() : ''}
+
+      ${renderBottomNav()}
+    `;
+
+    bindHeaderEvents();
+    bindInstallBannerEvents();
+    bindBottomNavEvents();
+    bindMisRutinasEvents(alumno);
+    bindHistorialEvents(alumno);
+    bindBorradorEntrenamientoEvents();
+
+    // Eventos de navegación por tarjetas de rutina (excluye las de "Mis Rutinas",
+    // que tienen su propio binding en bindMisRutinasEvents para soportar Editar/Borrar)
+    document.querySelectorAll('.routine-select-card:not(.routine-propia-card)').forEach(card => {
+      card.addEventListener('click', () => {
+        appState.rutinaSeleccionadaId = card.dataset.rutinaId;
+        appState.diaSeleccionadoId = null;
+        renderApp();
+      });
+    });
+
+    // Evento volver a Mis Rutinas desde lista de días
+    document.getElementById('btnBackToRoutines')?.addEventListener('click', () => {
+      appState.rutinaSeleccionadaId = null;
+      appState.diaSeleccionadoId = null;
+      renderApp();
+    });
+
+    // Eventos de navegación por tarjetas de día
+    document.querySelectorAll('.day-select-card').forEach(card => {
+      card.addEventListener('click', () => {
+        appState.diaSeleccionadoId = card.dataset.diaId;
+        renderApp();
+      });
+    });
+
+    // Evento volver a Días desde detalle de día
+    document.getElementById('btnBackToDays')?.addEventListener('click', () => {
+      appState.diaSeleccionadoId = null;
+      renderApp();
+    });
+
+    // Eventos de iniciar entrenamiento
+    document.querySelectorAll('.btn-comenzar-entrenamiento').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const diaId = e.currentTarget.dataset.diaId;
+        const rutina = store.getRutinaPorId(appState.rutinaSeleccionadaId);
+        const diaObj = rutina ? rutina.dias.find(d => d.id === diaId) : null;
+        if (diaObj) {
+          appState.diaActivoEntrenamiento = diaObj;
+          initWorkoutDraft(diaObj);
+          renderApp();
+        }
+      });
+    });
+
+    bindAccordionEvents();
+  }
+
+  function renderRoutinesListView(alumno) {
+    const rutinas = store.getRutinasAlumno(alumno.id);
+    if (!rutinas || rutinas.length === 0) {
+      return `
+        <div class="routine-banner" style="text-align:center; justify-content:center; flex-direction:column; padding:30px 20px">
+          <div style="font-size:2.5rem; margin-bottom:10px">🏋️</div>
+          <h2 style="font-size:1.3rem; font-weight:900">Sin Rutinas Asignadas</h2>
+          <p style="color:var(--text-gray); font-size:0.9rem; margin-top:6px">Tu profesor te asignará una nueva rutina personalizada en breve.</p>
+        </div>
+      `;
+    }
+
+    return `
+      <div style="margin-bottom:16px">
+        <h2 style="font-size:1.4rem; font-weight:900; letter-spacing:0.5px">Mis Rutinas</h2>
+        <p style="font-size:0.85rem; color:var(--text-gray)">Seleccioná una rutina para ver tus días de entrenamiento</p>
+      </div>
+
+      ${rutinas.map(r => {
+        const semanas = Math.max(1, Math.ceil((r.duracionDias || 30) / 7));
+        const esActiva = r.estado === 'activa';
+        const diasRestantes = store.calcularDiasRestantes(r.fechaVencimiento);
+
+        return `
+          <div class="routine-select-card" data-rutina-id="${r.id}">
+            <div class="routine-card-header">
+              <span class="badge ${esActiva ? (diasRestantes <= 1 ? 'badge-warning' : 'badge-active') : 'badge-role'}">
+                ● ${esActiva ? (diasRestantes <= 1 ? `ACTIVA (${diasRestantes}d restantes)` : 'ACTIVA') : 'INACTIVA'}
+              </span>
+              <span class="badge badge-info">${semanas} ${semanas === 1 ? 'semana' : 'semanas'}</span>
+            </div>
+
+            <div>
+              <h3 class="routine-card-title">${r.titulo}</h3>
+              <p class="routine-card-subtitle">Profesor: <strong>${r.profesorCreadorNombre || 'Estudio Fitness'}</strong></p>
+            </div>
+
+            <div style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid var(--border-color); padding-top:10px; margin-top:4px">
+              <div class="routine-card-days-count">
+                🔥 ${r.dias ? r.dias.length : 0} Días de Entrenamiento
+              </div>
+              <div style="font-weight:800; font-size:0.88rem; color:var(--red-primary); display:flex; align-items:center; gap:4px">
+                Tocar para ver días ➔
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('')}
+    `;
+  }
+
+  // --- FEATURE "MIS RUTINAS": vista de rutinas auto-gestionadas por el alumno ---
+  function renderMisRutinasView(alumno) {
+    const misRutinas = store.getRutinasPropiasAlumno(alumno.id);
+
+    return `
+      <div style="margin-bottom:16px; display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap">
+        <div>
+          <h2 style="font-size:1.4rem; font-weight:900; letter-spacing:0.5px">🧑‍🔧 Mis Rutinas</h2>
+          <p style="font-size:0.85rem; color:var(--text-gray)">Rutinas personales que armás y gestionás vos mismo</p>
+        </div>
+        <button class="btn btn-primary btn-sm" id="btnNuevaRutinaPropia">+ Crear Rutina Propia</button>
+      </div>
+
+      ${misRutinas.length === 0 ? `
+        <div class="routine-banner" style="text-align:center; justify-content:center; flex-direction:column; padding:30px 20px">
+          <div style="font-size:2.5rem; margin-bottom:10px">📝</div>
+          <h3 style="font-size:1.1rem; font-weight:900">Todavía no creaste rutinas propias</h3>
+          <p style="color:var(--text-gray); font-size:0.88rem; margin-top:6px">
+            Armá tu propia rutina de entrenamiento y empezá a registrar tus series cuando quieras.
+          </p>
+        </div>
+      ` : misRutinas.map(r => `
+        <div class="routine-select-card routine-propia-card" data-rutina-id="${r.id}">
+          <div class="routine-card-header">
+            <span class="badge badge-info">🔧 Auto-gestionada</span>
+            <span class="badge badge-info">${r.dias ? r.dias.length : 0} ${r.dias && r.dias.length === 1 ? 'día' : 'días'}</span>
+          </div>
+
+          <div>
+            <h3 class="routine-card-title">${r.titulo}</h3>
+            <p class="routine-card-subtitle">Creada por vos · Duración: ${r.duracionDias} días</p>
+          </div>
+
+          <div style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid var(--border-color); padding-top:10px; margin-top:4px; gap:8px; flex-wrap:wrap">
+            <div class="routine-card-days-count">Tocar para ver días ➔</div>
+            <div style="display:flex; gap:6px">
+              <button class="btn btn-secondary btn-sm btn-editar-rutina-propia" data-rutina-id="${r.id}" style="border-color:var(--yellow-warning); color:var(--yellow-warning); padding:4px 10px; font-size:0.78rem">✏️ Editar</button>
+              <button class="btn btn-secondary btn-sm btn-eliminar-rutina-propia" data-rutina-id="${r.id}" style="border-color:var(--red-primary); color:var(--red-primary); padding:4px 10px; font-size:0.78rem">🗑️ Borrar</button>
+            </div>
+          </div>
+        </div>
+      `).join('')}
+    `;
+  }
+
+  function bindMisRutinasEvents(alumno) {
+    document.getElementById('btnNuevaRutinaPropia')?.addEventListener('click', () => {
+      appState.alumnoSeleccionadoId = alumno.id;
+      appState.rutinaEnEdicionId = null;
+      appState.modalActivo = 'crear_rutina_propia';
+      initFormBuilderForNew();
+      renderApp();
+    });
+
+    document.querySelectorAll('.routine-propia-card').forEach(card => {
+      card.addEventListener('click', (e) => {
+        const rId = card.dataset.rutinaId;
+
+        if (e.target.closest('.btn-editar-rutina-propia')) {
+          e.stopPropagation();
+          appState.alumnoSeleccionadoId = alumno.id;
+          appState.rutinaEnEdicionId = rId;
+          appState.modalActivo = 'editar_rutina_propia';
+          initFormBuilderForRoutine(rId);
+          renderApp();
+          return;
+        }
+
+        if (e.target.closest('.btn-eliminar-rutina-propia')) {
+          e.stopPropagation();
+          if (confirm("¿Seguro que querés eliminar esta rutina propia? Esta acción no se puede deshacer.")) {
+            (async () => {
+              try {
+                const resultado = await store.eliminarRutinaPropia(rId, alumno.id);
+                if (!resultado || resultado.ok !== true) {
+                  alert("❌ No se pudo eliminar la rutina: " + ((resultado && resultado.error) || "error desconocido"));
+                }
+              } catch (err) {
+                alert("❌ Error: " + err.message);
+              }
+              renderApp();
+            })();
+          }
+          return;
+        }
+
+        // Reutiliza el mismo flujo de días/ejercicios/entrenamiento que las rutinas asignadas,
+        // pero SIN cambiar de pestaña: se mantiene en "Mis Rutinas" (tabCliente ya es 'mis_rutinas').
+        appState.rutinaSeleccionadaId = rId;
+        appState.diaSeleccionadoId = null;
+        renderApp();
+      });
+    });
+  }
+
+  // --- EDICIÓN DE ENTRENAMIENTO YA GUARDADO (ventana de 2hs, solo el propio alumno) ---
+  function bindHistorialEvents(alumno) {
+    document.querySelectorAll('.btn-editar-entrenamiento-click').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const logId = btn.dataset.logId;
+        const log = store.data.workoutLogs.find(w => w.id === logId);
+        if (!log) return;
+        appState.logEnEdicionId = logId;
+        appState.editDraftSets = JSON.parse(JSON.stringify(log.sets || []));
+        appState.editDraftComentario = log.comentarioGeneral || '';
+        appState.modalActivo = 'editar_entrenamiento';
+        renderApp();
+      });
+    });
+  }
+
+  function renderModalEditarEntrenamiento(alumno) {
+    const log = store.data.workoutLogs.find(w => w.id === appState.logEnEdicionId);
+    if (!log || !appState.editDraftSets) return '';
+
+    if (!store.puedeEditarseEntrenamiento(log)) {
+      return `
+        <div class="modal-overlay">
+          <div class="modal-content" style="max-width:420px">
+            <div class="modal-header">
+              <h3>⏰ Ventana de edición vencida</h3>
+              <button class="close-btn" id="btnCloseModal">&times;</button>
+            </div>
+            <p style="color:var(--text-gray); font-size:0.92rem">
+              Ya pasaron más de 2 horas desde que guardaste este entrenamiento, así que no se puede editar.
+            </p>
+          </div>
+        </div>
+      `;
+    }
+
+    // Agrupar por ejercicio, conservando el índice real en editDraftSets para los onchange
+    const ejMap = {};
+    appState.editDraftSets.forEach((s, idx) => {
+      if (!ejMap[s.ejercicioNombre]) ejMap[s.ejercicioNombre] = [];
+      ejMap[s.ejercicioNombre].push({ ...s, _idx: idx });
+    });
+
+    return `
+      <div class="modal-overlay">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3>✏️ Editar Entrenamiento: ${log.diaNombre}</h3>
+            <button class="close-btn" id="btnCloseModal">&times;</button>
+          </div>
+          <p style="color:var(--yellow-warning); font-size:0.8rem; margin-bottom:12px">
+            ⏰ Podés editar hasta 2 horas después de haber guardado el entrenamiento. Los puntos ya otorgados no cambian.
+          </p>
+
+          ${Object.entries(ejMap).map(([ejNombre, sets]) => `
+            <div class="exercise-block">
+              <div class="exercise-title" style="font-size:1rem; font-weight:900; color:#fff">${ejNombre}</div>
+              <div class="sets-table-header">
+                <div>SERIE</div>
+                <div>REPS</div>
+                <div>PESO</div>
+                <div>COMENTARIO POR SERIE</div>
+              </div>
+              ${sets.map(s => `
+                <div class="set-row">
+                  <div class="set-label">Serie ${s.setNumero}</div>
+                  <div><input type="number" class="set-input" value="${s.repsRealizadas}" onchange="window.updateEditSet(${s._idx}, 'repsRealizadas', this.value)"></div>
+                  <div><input type="text" class="set-input" value="${s.pesoUtilizado}" onchange="window.updateEditSet(${s._idx}, 'pesoUtilizado', this.value)"></div>
+                  <div><input type="text" class="set-input set-comment-input" value="${s.comentarioAlumno || ''}" onchange="window.updateEditSet(${s._idx}, 'comentarioAlumno', this.value)"></div>
+                </div>
+              `).join('')}
+            </div>
+          `).join('')}
+
+          <div class="exercise-block" style="border-color:var(--border-highlight)">
+            <label class="form-label" style="color:var(--red-primary)">💬 COMENTARIO GENERAL</label>
+            <textarea class="exercise-textarea" onchange="window.updateEditComentarioGeneral(this.value)">${appState.editDraftComentario || ''}</textarea>
+          </div>
+
+          <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:16px">
+            <button type="button" class="btn btn-secondary" id="btnCancelModal">Cancelar</button>
+            <button type="button" class="btn btn-primary" id="btnGuardarEdicionEntrenamiento">💾 Guardar Cambios</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  window.updateEditSet = (idx, field, val) => {
+    if (appState.editDraftSets && appState.editDraftSets[idx]) {
+      appState.editDraftSets[idx][field] = field === 'repsRealizadas' ? Number(val) : val;
+    }
+  };
+
+  window.updateEditComentarioGeneral = (val) => {
+    appState.editDraftComentario = val;
+  };
+
+  // --- MODAL: recuperar entrenamiento sin terminar (borrador local) ---
+  function renderModalRecuperarBorrador() {
+    const draft = appState.borradorEntrenamientoDetectado;
+    if (!draft) return '';
+    return `
+      <div class="modal-overlay">
+        <div class="modal-content" style="max-width:420px">
+          <div class="modal-header">
+            <h3>💪 Entrenamiento sin terminar</h3>
+          </div>
+          <p style="color:var(--text-gray); font-size:0.92rem; line-height:1.5">
+            Tenés un entrenamiento sin terminar: <strong style="color:#fff">${draft.diaActivoEntrenamiento?.nombre || ''}</strong>. ¿Querés continuar donde lo dejaste?
+          </p>
+          <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:20px">
+            <button type="button" class="btn btn-secondary" id="btnDescartarBorrador">Descartar</button>
+            <button type="button" class="btn btn-primary" id="btnContinuarBorrador">Continuar ▶</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function bindBorradorEntrenamientoEvents() {
+    document.getElementById('btnContinuarBorrador')?.addEventListener('click', () => {
+      const draft = appState.borradorEntrenamientoDetectado;
+      if (!draft) return;
+      appState.rutinaSeleccionadaId = draft.rutinaSeleccionadaId || null;
+      appState.tabCliente = draft.tabCliente || 'rutina';
+      appState.diaActivoEntrenamiento = draft.diaActivoEntrenamiento;
+      appState.workoutDraftSets = draft.workoutDraftSets || {};
+      appState.workoutGeneralComment = draft.workoutGeneralComment || '';
+      appState.borradorEntrenamientoDetectado = null;
+      renderApp();
+    });
+
+    document.getElementById('btnDescartarBorrador')?.addEventListener('click', () => {
+      clearWorkoutDraft();
+      appState.borradorEntrenamientoDetectado = null;
+      renderApp();
+    });
+  }
+
+  // --- FEATURE RANKING: tabla de posiciones en tiempo real con medallas Top 3 ---
+  function renderRankingView() {
+    const ranking = store.getRanking();
+    const miId = appState.usuarioActual.data.id;
+    const medalla = (pos) => pos === 1 ? '🥇' : pos === 2 ? '🥈' : pos === 3 ? '🥉' : `#${pos}`;
+
+    return `
+      <div style="margin-bottom:16px">
+        <h2 style="font-size:1.4rem; font-weight:900; letter-spacing:0.5px">🏆 Ranking</h2>
+        <p style="font-size:0.85rem; color:var(--text-gray)">Puntos acumulados por entrenamientos completados y racha semanal</p>
+      </div>
+
+      ${ranking.length === 0 ? `
+        <div class="routine-banner" style="text-align:center; justify-content:center; flex-direction:column; padding:30px 20px">
+          <div style="font-size:2.5rem; margin-bottom:10px">🏆</div>
+          <h3 style="font-size:1.1rem; font-weight:900">Aún no hay puntos registrados</h3>
+          <p style="color:var(--text-gray); font-size:0.88rem; margin-top:6px">Completá un entrenamiento para empezar a sumar puntos.</p>
+        </div>
+      ` : `
+        <div class="ranking-list">
+          ${ranking.map(a => `
+            <div class="ranking-row ${a.id === miId ? 'ranking-row-me' : ''} ${a.posicion <= 3 ? 'ranking-row-top' + a.posicion : ''}">
+              <div class="ranking-pos">${medalla(a.posicion)}</div>
+              <div class="ranking-info">
+                <div class="ranking-name">${a.nombre}${a.id === miId ? ' <span style="color:var(--red-primary)">(Vos)</span>' : ''}</div>
+                ${a.rachaSemanal && a.rachaSemanal.semanas >= 2 ? `<div class="ranking-streak">🔥 Racha de ${a.rachaSemanal.semanas} semanas</div>` : ''}
+              </div>
+              <div class="ranking-points">${Math.round(a.puntosTotal || 0)} pts</div>
+            </div>
+          `).join('')}
+        </div>
+      `}
+    `;
+  }
+
+  function renderRoutineDaysView(alumno) {
+    const rutina = store.getRutinaPorId(appState.rutinaSeleccionadaId);
+    if (!rutina) {
+      appState.rutinaSeleccionadaId = null;
+      return renderRoutinesListView(alumno);
+    }
+
+    const semanas = Math.max(1, Math.ceil((rutina.duracionDias || 30) / 7));
+    const esActiva = rutina.estado === 'activa';
+
+    return `
+      <button class="nav-breadcrumb-btn" id="btnBackToRoutines">⬅️ Volver a ${rutina.esPropia ? 'Mis Rutinas' : 'Rutinas'}</button>
+
+      <div class="routine-banner" style="margin-bottom:20px">
+        <div>
+          <span class="badge ${esActiva ? 'badge-active' : 'badge-role'}">
+            ● ${esActiva ? 'RUTINA ACTIVA' : 'RUTINA HISTÓRICA'}
+          </span>
+          <h2 style="font-size:1.35rem; font-weight:900; margin-top:6px">${rutina.titulo}</h2>
+          <p style="font-size:0.85rem; color:var(--text-gray); margin-top:4px">
+            Profesor: <strong>${rutina.profesorCreadorNombre || 'Estudio Fitness'}</strong> | Duración: ${semanas} ${semanas === 1 ? 'semana' : 'semanas'}
+          </p>
+        </div>
+      </div>
+
+      <div style="margin-bottom:14px">
+        <h3 style="font-size:1.1rem; font-weight:900; text-transform:uppercase; letter-spacing:0.5px">Días de Entrenamiento</h3>
+        <p style="font-size:0.82rem; color:var(--text-gray)">Tocá un día para ver sus ejercicios</p>
+      </div>
+
+      ${rutina.dias.map((dia, idx) => `
+        <div class="day-select-card" data-dia-id="${dia.id}">
+          <div class="day-card-info">
+            <div class="day-card-number">Día ${dia.diaNumero || (idx + 1)}</div>
+            <div class="day-card-name">${dia.nombre}</div>
+            <div style="font-size:0.8rem; color:var(--text-gray); margin-top:4px">
+              💪 ${dia.ejercicios ? dia.ejercicios.length : 0} ejercicios programados
+            </div>
+          </div>
+          <div class="day-card-arrow">➔</div>
+        </div>
+      `).join('')}
+    `;
+  }
+
+  function renderDayDetailView(alumno) {
+    const rutina = store.getRutinaPorId(appState.rutinaSeleccionadaId);
+    if (!rutina) {
+      appState.rutinaSeleccionadaId = null;
+      appState.diaSeleccionadoId = null;
+      return renderRoutinesListView(alumno);
+    }
+
+    const dia = rutina.dias.find(d => d.id === appState.diaSeleccionadoId);
+    if (!dia) {
+      appState.diaSeleccionadoId = null;
+      return renderRoutineDaysView(alumno);
+    }
+
+    return `
+      <button class="nav-breadcrumb-btn" id="btnBackToDays">⬅️ Volver a Días de la Rutina</button>
+
+      <div style="margin-bottom:20px; background:var(--bg-card); border:1px solid var(--border-color); border-radius:var(--radius-md); padding:18px">
+        <span class="badge badge-warning" style="margin-bottom:6px">DÍA ${dia.diaNumero || 1} DE ENTRENAMIENTO</span>
+        <h2 style="font-size:1.4rem; font-weight:900; color:#fff">${dia.nombre}</h2>
+        <div style="font-size:0.85rem; color:var(--text-gray); margin-top:4px">Rutina: ${rutina.titulo}</div>
+      </div>
+
+      <h3 style="font-size:1.05rem; font-weight:900; text-transform:uppercase; margin-bottom:14px; color:var(--text-white)">
+        📋 Ejercicios e Indicaciones del Profesor
+      </h3>
+
+      ${dia.ejercicios.map(ej => `
+        <div class="exercise-block">
+          <div style="font-size:1.15rem; font-weight:900; color:#fff; margin-bottom:8px">${ej.nombre}</div>
+
+          <div class="target-box">
+            <div class="target-title">🎯 Objetivo Indicado por el Profesor:</div>
+            <div class="target-stats">
+              ${ej.seriesTarget} series × ${ej.repeticionesTarget} reps · ${ej.pesoSugerido}
+            </div>
+            ${ej.notaProfesor ? `
+              <div style="font-size:0.85rem; color:#fca5a5; margin-top:6px; border-top:1px dashed rgba(255,255,255,0.1); padding-top:6px">
+                👨‍🏫 <strong>${ej.profesorNotaAutor || 'Profesor'}:</strong> "${ej.notaProfesor}"
+              </div>
+            ` : ''}
+          </div>
+          ${ej.videoUrl ? `<a href="${ej.videoUrl}" target="_blank" rel="noopener noreferrer" class="btn-video-demo">🎬 Ver ejercicio</a>` : ''}
+        </div>
+      `).join('')}
+
+      <button class="btn btn-primary btn-comenzar-entrenamiento" data-dia-id="${dia.id}" style="width:100%; padding:18px; font-size:1.15rem; font-weight:900; margin-top:10px; box-shadow: 0 0 35px rgba(255, 46, 46, 0.45)">
+        ▶ EMPEZAR ENTRENAMIENTO
+      </button>
+    `;
+  }
+
+  // MODULO DE ENTRENAMIENTO EN VIVO: REGISTRO DE SERIES (OBJETIVO VS REAL)
+
+  // --- BORRADOR DE ENTRENAMIENTO EN CURSO: persistencia local anti-pérdida ---
+  // Clave INDEPENDIENTE de estudio_fitness_db_v4 (el store global) y de
+  // cualquier copia de alumnos/profesores — acá SOLO vive el entrenamiento
+  // que el alumno está completando en este momento, y únicamente mientras
+  // lo está completando. No se toca syncWithSupabase() ni RLS para esto.
+  const WORKOUT_DRAFT_KEY = 'estudio_fitness_draft_v4';
+
+  function getCurrentAlumnoId() {
+    return (appState.usuarioActual && appState.usuarioActual.rol === 'alumno' && appState.usuarioActual.data)
+      ? appState.usuarioActual.data.id
+      : null;
+  }
+
+  // Guarda el borrador completo (día activo + series + comentario) cada vez
+  // que cambia algo. Se etiqueta con ownerId = alumno.id logueado en ESE
+  // momento, para poder verificar más tarde que el borrador le pertenece a
+  // quien lo está por recuperar.
+  function persistWorkoutDraft() {
+    const alumnoId = getCurrentAlumnoId();
+    if (!alumnoId || !appState.diaActivoEntrenamiento) return;
+    try {
+      const draft = {
+        ownerId: alumnoId,
+        rutinaSeleccionadaId: appState.rutinaSeleccionadaId || null,
+        tabCliente: appState.tabCliente,
+        diaActivoEntrenamiento: appState.diaActivoEntrenamiento,
+        workoutDraftSets: appState.workoutDraftSets,
+        workoutGeneralComment: appState.workoutGeneralComment || '',
+        savedAt: new Date().toISOString()
+      };
+      localStorage.setItem(WORKOUT_DRAFT_KEY, JSON.stringify(draft));
+    } catch (e) {
+      console.warn('⚠️ No se pudo guardar el borrador de entrenamiento:', e);
+    }
+  }
+
+  // Borra el borrador SOLO si pertenece al alumno actualmente logueado (o si
+  // no hay forma de determinar dueño, por seguridad igual se borra al hacer
+  // logout explícito — ver bindHeaderEvents). Nunca borra a ciegas el
+  // borrador de otro usuario que todavía no volvió a entrar.
+  function clearWorkoutDraft() {
+    try { localStorage.removeItem(WORKOUT_DRAFT_KEY); } catch (e) {}
+  }
+
+  // Devuelve el borrador guardado ÚNICAMENTE si su ownerId coincide con el
+  // alumno actualmente logueado. Si pertenece a otro alumno (por ejemplo,
+  // otro usuario que entrenó antes en este mismo dispositivo y no llegó a
+  // terminar), se ignora por completo — nunca se muestra ni se borra el
+  // borrador ajeno, así el dueño real todavía puede recuperarlo cuando
+  // vuelva a loguearse él.
+  function getBorradorPropio() {
+    try {
+      const raw = localStorage.getItem(WORKOUT_DRAFT_KEY);
+      if (!raw) return null;
+      const draft = JSON.parse(raw);
+      const alumnoId = getCurrentAlumnoId();
+      if (!alumnoId || !draft || draft.ownerId !== alumnoId) return null;
+      return draft;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function initWorkoutDraft(diaObj) {
+    appState.workoutDraftSets = {};
+    appState.workoutGeneralComment = '';
+    diaObj.ejercicios.forEach(ej => {
+      appState.workoutDraftSets[ej.id] = {
+        nombre: ej.nombre,
+        sets: Array.from({ length: ej.seriesTarget }, (_, i) => ({
+          setNumero: i + 1,
+          reps: ej.repeticionesTarget.includes('-') ? Number(ej.repeticionesTarget.split('-')[0]) : (Number(ej.repeticionesTarget) || 10),
+          peso: ej.pesoSugerido,
+          comentarioSet: ''
+        }))
+      };
+    });
+    // Guarda inmediatamente el borrador recién iniciado (antes de que el
+    // alumno edite nada), para cubrir el caso de que la app se cierre
+    // apenas empezado el entrenamiento.
+    persistWorkoutDraft();
+  }
+
+  function renderWorkoutSession() {
+    const dia = appState.diaActivoEntrenamiento;
+    if (!dia) return '';
+
+    return `
+      <div class="workout-session-container">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px">
+          <div>
+            <span class="badge badge-warning">▶ EN PROGRESO</span>
+            <h2 style="font-size:1.4rem; font-weight:900; margin-top:4px">${dia.nombre}</h2>
+          </div>
+          <button class="btn btn-secondary btn-sm" id="btnCancelWorkout">Cancelar ✖</button>
+        </div>
+
+        ${dia.ejercicios.map(ej => {
+          const draftEj = appState.workoutDraftSets[ej.id];
+          return `
+            <div class="exercise-block">
+              <div class="exercise-title" style="font-size:1.15rem; font-weight:900; color:#fff">${ej.nombre}</div>
+
+              <div class="target-box">
+                <div class="target-title">🎯 OBJETIVO DEL PROFESOR</div>
+                <div class="target-stats">${ej.seriesTarget} series · ${ej.repeticionesTarget} reps · ${ej.pesoSugerido}</div>
+                ${ej.notaProfesor ? `<div style="font-size:0.85rem; color:#fca5a5; margin-top:4px">👨‍🏫 ${ej.notaProfesor}</div>` : ''}
+              </div>
+              ${ej.videoUrl ? `<a href="${ej.videoUrl}" target="_blank" rel="noopener noreferrer" class="btn-video-demo">🎬 Ver ejercicio</a>` : ''}
+
+              <h4 style="font-size:0.8rem; text-transform:uppercase; color:var(--text-gray); margin-bottom:8px">✏️ REGISTRO REAL POR SERIE:</h4>
+
+              <div class="sets-table-header">
+                <div>SERIE</div>
+                <div>REPS</div>
+                <div>PESO</div>
+                <div>COMENTARIO POR SERIE</div>
+              </div>
+
+              ${draftEj.sets.map((set, setIdx) => `
+                <div class="set-row">
+                  <div class="set-label">Serie ${set.setNumero}</div>
+                  <div>
+                    <input type="number" class="set-input" value="${set.reps}" onchange="window.updateDraftSet('${ej.id}', ${setIdx}, 'reps', this.value)">
+                  </div>
+                  <div>
+                    <input type="text" class="set-input" value="${set.peso}" onchange="window.updateDraftSet('${ej.id}', ${setIdx}, 'peso', this.value)">
+                  </div>
+                  <div>
+                    <input type="text" class="set-input set-comment-input" placeholder="Comentario..." value="${set.comentarioSet || ''}" onchange="window.updateDraftSet('${ej.id}', ${setIdx}, 'comentarioSet', this.value)">
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          `;
+        }).join('')}
+
+        <div class="exercise-block" style="border-color:var(--border-highlight)">
+          <label class="form-label" style="color:var(--red-primary)">💬 COMENTARIO GENERAL DEL ENTRENAMIENTO (OPCIONAL)</label>
+          <textarea class="exercise-textarea" id="inputGeneralComment" placeholder="Escribe un comentario general sobre cómo te sentiste en la sesión..." onchange="window.updateGeneralComment(this.value)">${appState.workoutGeneralComment || ''}</textarea>
+        </div>
+
+        <button class="btn btn-primary" id="btnFinishWorkout" style="width:100%; padding:16px; font-size:1.1rem; margin-top:10px; box-shadow: 0 0 35px rgba(255, 46, 46, 0.45)">
+          🏆 FINALIZAR Y GUARDAR ENTRENAMIENTO
+        </button>
+      </div>
+    `;
+  }
+
+  window.updateDraftSet = (ejId, setIdx, field, val) => {
+    if (appState.workoutDraftSets[ejId]) {
+      appState.workoutDraftSets[ejId].sets[setIdx][field] = field === 'reps' ? Number(val) : val;
+      persistWorkoutDraft();
+    }
+  };
+
+  window.updateGeneralComment = (val) => {
+    appState.workoutGeneralComment = val;
+    persistWorkoutDraft();
+  };
+
+  // Extrae el día calendario (YYYY-MM-DD) de un ISO string usando la ZONA HORARIA LOCAL
+  // del navegador, NO UTC. log.fecha se guarda como new Date().toISOString() (ej. "2026-08-12T23:30:00.000Z"),
+  // y usar toISOString().slice(0,10) para agrupar desplazaría al día siguiente cualquier
+  // entrenamiento hecho entre las 21:00 y las 23:59 hora Argentina (UTC-3). No modifica el
+  // formato almacenado en Supabase, solo cómo se interpreta acá para contar días.
+  function getFechaCalendarioLocal(fechaISO) {
+    const d = new Date(fechaISO);
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
+
+  // --- HISTORIAL AGRUPADO: Rutina → Semana → Día → Ejercicios → Series ---
+  // permitirEdicion: SOLO true cuando el alumno ve su PROPIO historial
+  // (renderClientDashboard). El historial que el profesor ve de un alumno
+  // (renderModalHistorialAlumno) llama esta misma función sin el flag,
+  // así que nunca muestra el botón "Editar entrenamiento" — esa edición es
+  // exclusiva del alumno dueño del registro, dentro de la ventana de 2hs.
+  function renderHistorialAgrupado(logs, rutinas, permitirEdicion = false) {
+    if (!logs || logs.length === 0) {
+      return `<div style="text-align:center; color:var(--text-gray); padding:40px 20px">
+        <div style="font-size:2.5rem; margin-bottom:10px">📜</div>
+        <div style="font-size:1rem; font-weight:700">Aún no hay entrenamientos registrados.</div>
+        <div style="font-size:0.85rem; margin-top:6px">Completa una sesión para ver tu historial aquí.</div>
+      </div>`;
+    }
+
+    // Agrupar: rutinaId → semana → día
+    const grouped = {};
+    logs.forEach(log => {
+      const rId = log.rutinaId || 'sin-rutina';
+      if (!grouped[rId]) {
+        const rutina = rutinas ? rutinas.find(r => r.id === rId) : null;
+        grouped[rId] = {
+          titulo: log.rutinaT || (rutina ? rutina.titulo : 'Rutina'),
+          fechaInicio: rutina ? rutina.fechaInicio : null,
+          duracionDias: rutina ? (rutina.duracionDias || 30) : 30,
+          semanas: {}
+        };
+      }
+      const g = grouped[rId];
+
+      // Calcular semana relativa a la fecha de inicio de la rutina
+      let semana = log.semana || 1;
+      if (!log.semana && g.fechaInicio && log.fecha) {
+        const diffDays = Math.floor(
+          (new Date(log.fecha) - new Date(g.fechaInicio)) / 86400000
+        );
+        semana = Math.max(1, Math.ceil((diffDays + 1) / 7));
+      }
+
+      if (!g.semanas[semana]) g.semanas[semana] = {};
+      const diaKey = String(log.diaNumero || log.diaNombre || 1);
+      if (!g.semanas[semana][diaKey]) g.semanas[semana][diaKey] = [];
+      g.semanas[semana][diaKey].push(log);
+    });
+
+    return `<div style="max-width:800px; margin:0 auto">
+      ${Object.entries(grouped).map(([rId, g]) => {
+        const totalSemanas = Math.max(1, Math.ceil(g.duracionDias / 7));
+        const semanasOrdenadas = Object.keys(g.semanas).map(Number).sort((a, b) => a - b);
+
+        return `
+        <div style="margin-bottom:28px">
+          <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px; padding:12px 16px;
+                      background:rgba(255,46,46,0.08); border-radius:10px; border-left:4px solid var(--red-primary)">
+            <div style="font-size:1.3rem">💪</div>
+            <div>
+              <div style="font-size:1.1rem; font-weight:900; color:#fff">${g.titulo}</div>
+              <div style="font-size:0.78rem; color:var(--text-gray)">${totalSemanas} semanas · ${g.duracionDias} días
+                ${g.fechaInicio ? ' · Inicio: ' + new Date(g.fechaInicio).toLocaleDateString('es-AR') : ''}
+              </div>
+            </div>
+          </div>
+
+          ${Array.from({ length: totalSemanas }, (_, i) => i + 1).map(numSemana => {
+            const diasEsaSemana = g.semanas[numSemana];
+            const tieneRegistros = diasEsaSemana && Object.keys(diasEsaSemana).length > 0;
+
+            // logsEsaSemana = TODOS los workout_logs de la semana, sin importar bajo qué diaNumero quedaron agrupados
+            const logsEsaSemana = tieneRegistros ? Object.values(diasEsaSemana).flat() : [];
+
+            // "día" = fecha calendario única (zona horaria local), NO diaNumero de rutina
+            const fechasUnicas = new Set(logsEsaSemana.map(l => getFechaCalendarioLocal(l.fecha)));
+            const totalDiasCalendario = fechasUnicas.size;
+
+            // "entrenamiento" = un workout_log, sin agrupar
+            const totalEntrenamientos = logsEsaSemana.length;
+
+            const resumenSemana = totalDiasCalendario === totalEntrenamientos
+              ? `${totalDiasCalendario} ${totalDiasCalendario === 1 ? 'día' : 'días'}`
+              : `${totalDiasCalendario} ${totalDiasCalendario === 1 ? 'día' : 'días'} · ${totalEntrenamientos} entrenamientos`;
+
+            return `
+            <div style="margin-bottom:12px">
+              <div class="history-accordion-header" data-acc-id="acc-s${numSemana}-${rId.slice(0,8)}"
+                   style="display:flex; justify-content:space-between; align-items:center;
+                          background:rgba(255,255,255,0.04); border:1px solid var(--border-color);
+                          padding:10px 14px; border-radius:8px; cursor:pointer; user-select:none">
+                <span style="font-weight:800; font-size:0.95rem">📅 Semana ${numSemana}</span>
+                <span style="color:var(--text-gray); font-size:0.8rem">
+                  ${tieneRegistros ? resumenSemana : 'Sin registros'} ▼
+                </span>
+              </div>
+
+              <div class="history-accordion-body" id="acc-s${numSemana}-${rId.slice(0,8)}"
+                   style="display:none; padding:10px 0 0">
+                ${!tieneRegistros
+                  ? `<div style="text-align:center; color:var(--text-gray); font-size:0.82rem; padding:12px">
+                       Sin entrenamientos registrados esta semana.
+                     </div>`
+                  : Object.entries(diasEsaSemana).map(([diaKey, diaLogs]) => {
+                      return diaLogs.map(log => `
+                      <div class="history-item-card" style="margin-bottom:10px; border-left:3px solid var(--border-highlight)">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
+                          <div>
+                            <strong style="color:var(--green-active); font-size:1rem">✓ ${log.diaNombre}</strong>
+                            <div style="font-size:0.75rem; color:var(--text-gray)">
+                              ${new Date(log.fecha).toLocaleString('es-AR', { weekday:'short', day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' })}
+                            </div>
+                          </div>
+                          <div style="display:flex; align-items:center; gap:8px">
+                            <span class="badge badge-active">Completado</span>
+                            ${permitirEdicion && store.puedeEditarseEntrenamiento(log) ? `
+                              <button class="btn btn-secondary btn-sm btn-editar-entrenamiento-click" data-log-id="${log.id}" style="border-color:var(--yellow-warning); color:var(--yellow-warning); padding:4px 10px; font-size:0.75rem">✏️ Editar entrenamiento</button>
+                            ` : ''}
+                          </div>
+                        </div>
+
+                        ${log.comentarioGeneral ? `
+                          <div style="background:rgba(255,46,46,0.08); border-left:3px solid var(--red-primary);
+                                      padding:7px 12px; border-radius:0 6px 6px 0; margin-bottom:8px; font-size:0.82rem">
+                            💬 <strong>Comentario general:</strong> "${log.comentarioGeneral}"
+                          </div>` : ''}
+
+                        <div style="border-top:1px solid var(--border-color); padding-top:8px">
+                          ${(() => {
+                            // Agrupar series por ejercicio
+                            const ejMap = {};
+                            (log.sets || []).forEach(s => {
+                              const key = s.ejercicioNombre;
+                              if (!ejMap[key]) ejMap[key] = [];
+                              ejMap[key].push(s);
+                            });
+                            return Object.entries(ejMap).map(([ejNombre, sets]) => `
+                              <div style="margin-bottom:8px">
+                                <div style="font-size:0.88rem; font-weight:800; color:#fff; margin-bottom:4px">
+                                  🏋️ ${ejNombre}
+                                </div>
+                                ${sets.map(s => `
+                                  <div style="font-size:0.82rem; background:rgba(0,0,0,0.3);
+                                              padding:5px 10px; border-radius:6px; margin-bottom:3px">
+                                    Serie ${s.setNumero}: <strong>${s.repsRealizadas} reps</strong>
+                                    con <strong>${s.pesoUtilizado}</strong>
+                                    ${s.comentarioAlumno ? `<span style="color:var(--yellow-warning)">
+                                      · 💬 "${s.comentarioAlumno}"</span>` : ''}
+                                  </div>`).join('')}
+                              </div>`).join('');
+                          })()}
+                        </div>
+                      </div>
+                      `).join('');
+                    }).join('')
+                }
+              </div>
+            </div>`;
+          }).join('')}
+        </div>`;
+      }).join('')}
+    </div>`;
+  }
+
+  // --- DASHBOARD PROFESOR ---
+  function renderTrainerDashboard() {
+    const alumnosFiltrados = store.getAlumnosFiltrados({
+      busqueda: appState.busquedaProfesor,
+      filtro: appState.filtroProfesor
+    });
+
+    const totalAlumnos = store.data.alumnos.length;
+    const conRutina = store.data.alumnos.filter(a => store.getRutinaActiva(a.id)).length;
+    const porVencer = store.getAlumnosFiltrados({ filtro: 'por_vencer' }).length;
+    const sinRutina = totalAlumnos - conRutina;
+
+    appContainer.innerHTML = `
+      ${renderHeader()}
+
+      <main class="trainer-dashboard">
+        <div class="stats-grid">
+          <div class="stat-card"><div class="val">${totalAlumnos}</div><div class="label">Alumnos</div></div>
+          <div class="stat-card"><div class="val" style="color:var(--green-active)">${conRutina}</div><div class="label">Rutinas Activas</div></div>
+          <div class="stat-card"><div class="val" style="color:var(--yellow-warning)">${porVencer}</div><div class="label">Por Vencer 24h</div></div>
+          <div class="stat-card"><div class="val" style="color:var(--red-primary)">${sinRutina}</div><div class="label">Sin Rutina</div></div>
+        </div>
+
+        <div class="toolbar-section">
+          <div class="search-box">
+            <input type="text" id="inputSearchProf" class="form-input" placeholder="🔎 Buscar por Nombre o DNI..." value="${appState.busquedaProfesor}">
+          </div>
+
+          <div class="filter-buttons">
+            <button class="btn btn-secondary btn-sm ${appState.filtroProfesor === 'todos' ? 'active' : ''}" id="fTodos">Todos (${totalAlumnos})</button>
+            <button class="btn btn-secondary btn-sm ${appState.filtroProfesor === 'activa' ? 'active' : ''}" id="fActiva">Activas (${conRutina})</button>
+            <button class="btn btn-secondary btn-sm ${appState.filtroProfesor === 'por_vencer' ? 'active' : ''}" id="fVencer">Por Vencer ⏰ (${porVencer})</button>
+            <button class="btn btn-secondary btn-sm ${appState.filtroProfesor === 'expirada' ? 'active' : ''}" id="fSinRutina">Sin Rutina ⚠️ (${sinRutina})</button>
+          </div>
+
+          <button class="btn btn-primary" id="btnOpenNuevoAlumno">+ Registrar Nuevo Alumno 👤</button>
+        </div>
+
+        <div class="alumnos-grid">
+          ${alumnosFiltrados.map(alumno => {
+            const rutinasAlumno = store.getRutinasAlumno(alumno.id);
+            const rutinaActiva = store.getRutinaActiva(alumno.id);
+            const dRest = rutinaActiva ? store.calcularDiasRestantes(rutinaActiva.fechaVencimiento) : -1;
+
+            let badgeHtml = `<span class="badge badge-expired">Sin Rutina</span>`;
+            if (rutinaActiva) {
+              if (dRest <= 1 && dRest >= 0) badgeHtml = `<span class="badge badge-warning">⏰ Vence en ${dRest}d</span>`;
+              else if (dRest > 1) badgeHtml = `<span class="badge badge-active">● Activa (${dRest}d)</span>`;
+            }
+
+            return `
+              <div class="alumno-card-clickable" data-alumno-id="${alumno.id}">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px">
+                  <div>
+                    <div style="display:flex; align-items:center; gap:6px;">
+                      <span style="font-size:1.15rem; font-weight:800">${alumno.nombreProfesor || alumno.nombre}</span>
+                      <button class="btn-edit-nombre" data-dni="${alumno.dni}" title="Editar apodo"
+                              style="background:none; border:none; cursor:pointer; font-size:1rem; padding:0; color:var(--text-gray)">✎</button>
+                    </div>
+                    <div style="font-size:0.85rem; color:var(--text-gray)">
+                      DNI: ${alumno.dni} | 
+                      <span style="color:${alumno.estadoAutorizacion === 'autorizado' ? 'var(--green-active)' : 'var(--yellow-warning)'}">
+                        ${alumno.estadoAutorizacion === 'autorizado' ? 'Autorizado' : 'Pendiente'}
+                      </span>
+                    </div>
+                  </div>
+                  ${badgeHtml}
+                </div>
+
+                <div style="background:rgba(0,0,0,0.3); padding:10px; border-radius:8px; font-size:0.85rem; color:var(--text-gray); margin-bottom:12px">
+                  ${rutinasAlumno.length > 0 ? rutinasAlumno.map(r => {
+                    const estaDesactivada = r.estado === 'desactivada';
+                    return `
+                    <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.06); padding:6px 0; gap:8px; flex-wrap:wrap">
+                      <div>
+                        <div style="color:#fff; font-weight:700">💪 ${r.titulo} ${estaDesactivada ? '<span class="badge badge-role" style="margin-left:4px">Desactivada</span>' : ''}</div>
+                        <div style="font-size:0.72rem; color:var(--text-muted)">Vence: ${r.fechaVencimiento} | ${r.dias ? r.dias.length : 0} días</div>
+                      </div>
+                      <div style="display:flex; gap:6px; flex-wrap:wrap">
+                        <button class="btn btn-secondary btn-sm btn-editar-rutina-click" data-alumno-id="${alumno.id}" data-rutina-id="${r.id}" style="border-color:var(--yellow-warning); color:var(--yellow-warning); padding:4px 10px; font-size:0.78rem">✏️ Editar</button>
+                        <button class="btn btn-secondary btn-sm btn-toggle-estado-rutina-click" data-alumno-id="${alumno.id}" data-rutina-id="${r.id}" data-estado-actual="${r.estado}" style="border-color:var(--blue-info,#3b82f6); color:var(--blue-info,#3b82f6); padding:4px 10px; font-size:0.78rem">
+                          ${estaDesactivada ? '▶️ Activar' : '⏸️ Desactivar'}
+                        </button>
+                        <button class="btn btn-secondary btn-sm btn-borrar-rutina-click" data-alumno-id="${alumno.id}" data-rutina-id="${r.id}" style="border-color:var(--red-primary); color:var(--red-primary); padding:4px 10px; font-size:0.78rem">🗑️ Borrar</button>
+                      </div>
+                    </div>
+                  `;
+                  }).join('') : `
+                    <div>⚠️ Sin rutinas creadas aún.</div>
+                  `}
+                </div>
+
+                <div style="display:flex; flex-wrap:wrap; gap:8px">
+                  <button class="btn btn-primary btn-sm btn-crear-rutina-click" data-alumno-id="${alumno.id}">+ Crear Nueva Rutina</button>
+                  <button class="btn btn-secondary btn-sm btn-historial-click" data-alumno-id="${alumno.id}">📜 Historial Real</button>
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      </main>
+
+      ${appState.modalActivo === 'nuevo_alumno' ? renderModalNuevoAlumno() : ''}
+      ${(appState.modalActivo === 'crear_rutina' || appState.modalActivo === 'editar_rutina') ? renderModalFormularioRutina(appState.modalActivo) : ''}
+      ${appState.modalActivo === 'historial_alumno' ? renderModalHistorialAlumno() : ''}
+      ${appState.modalActivo === 'confirmar_borrado_rutina' ? renderModalConfirmarBorradoRutina() : ''}
+
+      ${renderBottomNav()}
+    `;
+
+    bindHeaderEvents();
+    bindInstallBannerEvents();
+    bindBottomNavEvents();
+
+    const inputSearch = document.getElementById('inputSearchProf');
+    inputSearch?.addEventListener('input', (e) => {
+      const cursorPos = e.target.selectionStart;
+      appState.busquedaProfesor = e.target.value;
+      renderApp();
+      const newInputSearch = document.getElementById('inputSearchProf');
+      if (newInputSearch) {
+        newInputSearch.focus();
+        newInputSearch.setSelectionRange(cursorPos, cursorPos);
+      }
+    });
+
+    document.getElementById('fTodos')?.addEventListener('click', () => { appState.filtroProfesor = 'todos'; renderApp(); });
+    document.getElementById('fActiva')?.addEventListener('click', () => { appState.filtroProfesor = 'activa'; renderApp(); });
+    document.getElementById('fVencer')?.addEventListener('click', () => { appState.filtroProfesor = 'por_vencer'; renderApp(); });
+    document.getElementById('fSinRutina')?.addEventListener('click', () => { appState.filtroProfesor = 'expirada'; renderApp(); });
+
+    document.getElementById('btnOpenNuevoAlumno')?.addEventListener('click', () => {
+      appState.modalActivo = 'nuevo_alumno';
+      renderApp();
+    });
+
+    document.querySelectorAll('.alumno-card-clickable').forEach(card => {
+      card.addEventListener('click', async (e) => {
+        const alumnoId = card.dataset.alumnoId;
+
+console.log("========== DEBUG SELECCIÓN ==========");
+console.log("CARD TEXT:", card.innerText);
+console.log("DATASET ID:", card.dataset.alumnoId);
+
+const alumnoDebug = store.getAlumnoPorId(card.dataset.alumnoId);
+
+console.log("ALUMNO RESUELTO:", {
+    id: alumnoDebug?.id,
+    dni: alumnoDebug?.dni,
+    nombre: alumnoDebug?.nombre,
+    apodo: alumnoDebug?.nombreApodoProfesor
+});
+
+console.log("====================================");
+        // Antes de mostrar/editar el detalle o la rutina de este alumno,
+        // refrescamos su estado desde Supabase (fuente de verdad) para no
+        // confiar en la copia local del profesor, que puede estar desactualizada.
+        await store.syncWithSupabase(alumnoId);
+        if (e.target.classList.contains('btn-historial-click')) {
+          e.stopPropagation();
+          // Se invalida el caché en cada apertura del historial (no solo al cambiar de alumno)
+          // para que el profesor siempre vea los registros más recientes desde Supabase.
+          appState.historialProfesorLogs = null;
+          appState.alumnoSeleccionadoId = alumnoId;
+
+console.log("🔎 DEBUG CREAR RUTINA - alumnoSeleccionadoId:", {
+    alumnoId,
+    appStateId: appState.alumnoSeleccionadoId
+});
+
+appState.rutinaEnEdicionId = null;
+appState.modalActivo = 'crear_rutina';
+          initFormBuilderForNew();
+          renderApp();
+        } else if (e.target.classList.contains('btn-toggle-estado-rutina-click')) {
+          e.stopPropagation();
+          const rId = e.target.dataset.rutinaId;
+          const estadoActual = e.target.dataset.estadoActual;
+          const nuevoEstado = estadoActual === 'desactivada' ? 'activa' : 'desactivada';
+          const profesorId = window._sessionProfesorId || appState.usuarioActual.data.id;
+          e.target.disabled = true;
+          const resultado = await store.cambiarEstadoRutina(rId, profesorId, nuevoEstado);
+          if (!resultado || resultado.ok !== true) {
+            alert("❌ No se pudo cambiar el estado de la rutina: " + ((resultado && resultado.error) || "error desconocido"));
+          }
+          renderApp();
+        } else if (e.target.classList.contains('btn-borrar-rutina-click')) {
+          e.stopPropagation();
+          appState.rutinaAEliminarId = e.target.dataset.rutinaId;
+          appState.modalActivo = 'confirmar_borrado_rutina';
+          renderApp();
+        } else if (e.target.classList.contains('btn-edit-nombre')) {
+          e.stopPropagation();
+          const dniAlumno = e.target.dataset.dni;
+          const alumnoActual = store.getAlumnoPorId(alumnoId);
+          const nombreActual = (alumnoActual && (alumnoActual.nombreProfesor || alumnoActual.nombre)) || '';
+          const nuevoNombre = prompt("Apodo para identificar a este alumno en tu panel:", nombreActual);
+          if (nuevoNombre === null) return; // cancelado
+          if (!nuevoNombre.trim()) {
+            alert("El apodo no puede estar vacío.");
+            return;
+          }
+          e.target.disabled = true;
+          try {
+            await store.editarNombreProfesor({ dni: dniAlumno, nuevoNombre: nuevoNombre.trim() });
+          } catch (err) {
+            alert("❌ No se pudo actualizar el apodo: " + err.message);
+          }
+          renderApp();
+        } else {
+          const rutina = store.getRutinaActiva(alumnoId);
+          appState.alumnoSeleccionadoId = alumnoId;
+          if (rutina) {
+            appState.rutinaEnEdicionId = rutina.id;
+            appState.modalActivo = 'editar_rutina';
+            initFormBuilderForRoutine(rutina.id);
+          } else {
+            appState.rutinaEnEdicionId = null;
+            appState.modalActivo = 'crear_rutina';
+            initFormBuilderForNew();
+          }
+          renderApp();
+        }
+      });
+    });
+
+    bindAccordionEvents();
+  }
+
+  function renderModalNuevoAlumno() {
+    return `
+      <div class="modal-overlay">
+        <div class="modal-content" style="max-width:440px">
+          <div class="modal-header">
+            <h3>👤 Registrar y Autorizar DNI</h3>
+            <button class="close-btn" id="btnCloseModal">&times;</button>
+          </div>
+          <form id="formNuevoAlumno">
+            <div class="form-group">
+              <label class="form-label">DNI del Alumno *</label>
+              <input type="text" id="newDni" class="form-input" placeholder="Ej: 55667788" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Nombre Completo *</label>
+              <input type="text" id="newNombre" class="form-input" placeholder="Ej: Rodrigo Ruiz" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Teléfono (Opcional)</label>
+              <input type="text" id="newTel" class="form-input" placeholder="Ej: 1122334455">
+            </div>
+
+            <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:20px">
+              <button type="button" class="btn btn-secondary" id="btnCancelModal">Cancelar</button>
+              <button type="submit" class="btn btn-primary">Autorizar Alumno 💾</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderModalFormularioRutina(modo) {
+    const esPropiaModo = modo === 'crear_rutina_propia' || modo === 'editar_rutina_propia';
+    const esEdicion = modo === 'editar_rutina' || modo === 'editar_rutina_propia';
+    const alumno = store.getAlumnoPorId(appState.alumnoSeleccionadoId);
+    const rutinaExistente = esEdicion ? store.getRutinaPorId(appState.rutinaEnEdicionId) : null;
+
+    const tituloModal = esPropiaModo
+      ? (esEdicion ? '✏️ Editar Mi Rutina' : '📝 Crear Mi Rutina Propia')
+      : `${esEdicion ? '✏️ Editar Rutina' : '📝 Asignar Nueva Rutina'} — ${alumno ? alumno.nombre : ''}`;
+
+    return `
+      <div class="modal-overlay">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3>${tituloModal}</h3>
+            <button class="close-btn" id="btnCloseModal">&times;</button>
+          </div>
+
+          <form id="formCrearRutina">
+            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap:12px">
+              <div class="form-group">
+                <label class="form-label">Título de la Rutina *</label>
+                <input type="text" id="routineTitle" class="form-input" value="${rutinaExistente ? rutinaExistente.titulo : 'Fuerza e Hipertrofia'}" required>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Duración (Días) *</label>
+                <input type="number" id="routineDuration" class="form-input" min="1" max="180" value="${rutinaExistente ? rutinaExistente.duracionDias : 30}" required>
+              </div>
+            </div>
+
+            <div style="display:flex; justify-content:space-between; align-items:center; margin:16px 0 10px; border-top:1px solid var(--border-color); padding-top:14px">
+              <h4 style="color:var(--red-primary); font-weight:900">Días de Entrenamiento y Ejercicios</h4>
+              <button type="button" class="btn btn-secondary btn-sm" id="btnAddDay">+ Agregar Día</button>
+            </div>
+
+            <div id="daysContainer"></div>
+
+            <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:24px">
+              <button type="button" class="btn btn-secondary" id="btnCancelModal">Cancelar</button>
+              <button type="submit" class="btn btn-primary">
+                ${esEdicion ? '💾 Guardar Cambios' : (esPropiaModo ? '🚀 Crear Mi Rutina' : '🚀 Asignar Nueva Rutina')}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderModalHistorialAlumno() {
+    const alumno = store.getAlumnoPorId(appState.alumnoSeleccionadoId);
+    if (!alumno) return '';
+
+    // Si no hay caché y Supabase está disponible, disparar fetch async
+    if (appState.historialProfesorLogs === null && window.supabaseEngine && window._sessionProfesorId) {
+      const alumnoId = alumno.id;
+      const profesorId = window._sessionProfesorId;
+      window.supabaseEngine.obtenerHistorialParaProfesor(alumnoId, profesorId)
+        .then(sbLogs => {
+          appState.historialProfesorLogs = sbLogs && sbLogs.length > 0
+            ? sbLogs
+            : store.getHistorialEntrenamientosReales(alumnoId); // fallback local
+          window.dispatchEvent(new CustomEvent('gym_store_updated'));
+        })
+        .catch(() => {
+          appState.historialProfesorLogs = store.getHistorialEntrenamientosReales(alumnoId);
+          window.dispatchEvent(new CustomEvent('gym_store_updated'));
+        });
+    }
+
+    const historialLogs = appState.historialProfesorLogs
+      ?? store.getHistorialEntrenamientosReales(alumno.id);
+
+    return `
+      <div class="modal-overlay">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3>📜 Historial: ${alumno.nombre}</h3>
+            <button class="close-btn" id="btnCloseModal">&times;</button>
+          </div>
+          ${appState.historialProfesorLogs === null
+            ? `<div style="text-align:center; padding:40px; color:var(--text-gray)">
+                <div style="font-size:2rem; margin-bottom:8px">⏳</div>
+                Cargando historial desde Supabase...
+               </div>`
+            : renderHistorialAgrupado(historialLogs, store.data.rutinas)
+          }
+        </div>
+      </div>
+    `;
+  }
+
+  function renderModalConfirmarBorradoRutina() {
+    const rutina = store.getRutinaPorId(appState.rutinaAEliminarId);
+    if (!rutina) return '';
+    return `
+      <div class="modal-overlay">
+        <div class="modal-content" style="max-width:420px">
+          <div class="modal-header">
+            <h3>🗑️ Borrar Rutina</h3>
+            <button class="close-btn" id="btnCloseModal">&times;</button>
+          </div>
+          <p style="color:var(--text-gray); font-size:0.92rem; line-height:1.5">
+            ¿Seguro que querés borrar <strong style="color:#fff">"${rutina.titulo}"</strong>?
+            Esta acción no se puede deshacer. El historial de entrenamientos ya guardado del alumno no se borra.
+          </p>
+          <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:20px">
+            <button type="button" class="btn btn-secondary" id="btnCancelModal">Cancelar</button>
+            <button type="button" class="btn btn-primary" id="btnConfirmarBorradoRutina" style="background:var(--red-primary)">Sí, Borrar 🗑️</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  let currentFormDays = [];
+
+  function initFormBuilderForNew() {
+    currentFormDays = [
+      {
+        nombre: "Día 1: Pecho, Hombro y Tríceps",
+        ejercicios: [
+          { nombre: "Press Plano con Barra", series: 4, repeticiones: "10-12", peso: "60 kg", notaProfesor: "Controlar bajada", videoUrl: "" }
+        ]
+      }
+    ];
+  }
+
+  function initFormBuilderForRoutine(rutinaId) {
+    const rutina = store.getRutinaPorId(rutinaId);
+    if (rutina && rutina.dias) {
+      currentFormDays = rutina.dias.map(d => ({
+        nombre: d.nombre,
+        ejercicios: d.ejercicios.map(e => ({
+          nombre: e.nombre,
+          series: e.seriesTarget || 3,
+          repeticiones: e.repeticionesTarget || "12",
+          peso: e.pesoSugerido || "S/D",
+          notaProfesor: e.notaProfesor || "",
+          videoUrl: e.videoUrl || ""
+        }))
+      }));
+    } else {
+      initFormBuilderForNew();
+    }
+  }
+
+  function setupRoutineFormBuilder() {
+    renderFormDays();
+    document.getElementById('btnAddDay')?.addEventListener('click', () => {
+      currentFormDays.push({
+        nombre: `Día ${currentFormDays.length + 1}: General`,
+        ejercicios: [{ nombre: "Nuevo Ejercicio", series: 3, repeticiones: "12", peso: "10 kg", notaProfesor: "", videoUrl: "" }]
+      });
+      renderFormDays();
+    });
+  }
+
+  function renderFormDays() {
+    const container = document.getElementById('daysContainer');
+    if (!container) return;
+
+    container.innerHTML = currentFormDays.map((dia, diaIdx) => `
+      <div style="background:rgba(0,0,0,0.5); border:1px solid var(--border-color); border-radius:var(--radius-sm); padding:14px; margin-bottom:14px">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; margin-bottom:10px; flex-wrap:wrap">
+          <input type="text" class="form-input" value="${dia.nombre}" onchange="window.updateFormDayName(${diaIdx}, this.value)" style="font-weight:800; flex:1; min-width:140px">
+          <div style="display:flex; gap:4px">
+            <button type="button" class="btn btn-secondary btn-sm" onclick="window.moveFormDayUp(${diaIdx})" title="Subir Día" style="padding:4px 8px">⬆️</button>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="window.moveFormDayDown(${diaIdx})" title="Bajar Día" style="padding:4px 8px">⬇️</button>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="window.addFormExercise(${diaIdx})">+ Ejercicio</button>
+            ${currentFormDays.length > 1 ? `<button type="button" class="btn btn-secondary btn-sm" onclick="window.removeFormDay(${diaIdx})" style="color:var(--red-primary); border-color:var(--red-primary); padding:4px 8px">🗑️</button>` : ''}
+          </div>
+        </div>
+
+        ${dia.ejercicios.map((ej, ejIdx) => `
+          <div style="background:rgba(255,255,255,0.03); border:1px solid var(--border-color); padding:10px; border-radius:8px; margin-bottom:8px">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; margin-bottom:6px">
+              <div class="form-group" style="margin-bottom:0; flex:1">
+                <label class="form-label" style="font-size:0.75rem">Nombre del Ejercicio</label>
+                <input type="text" class="form-input" value="${ej.nombre}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'nombre', this.value)">
+              </div>
+              <div style="display:flex; gap:4px; margin-top:16px">
+                <button type="button" class="btn btn-secondary btn-sm" onclick="window.moveFormExerciseUp(${diaIdx}, ${ejIdx})" style="padding:4px 6px" title="Subir Ejercicio">⬆️</button>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="window.moveFormExerciseDown(${diaIdx}, ${ejIdx})" style="padding:4px 6px" title="Bajar Ejercicio">⬇️</button>
+                ${dia.ejercicios.length > 1 ? `<button type="button" class="btn btn-secondary btn-sm" onclick="window.removeFormExercise(${diaIdx}, ${ejIdx})" style="color:var(--red-primary); border-color:var(--red-primary); padding:4px 6px">🗑️</button>` : ''}
+              </div>
+            </div>
+
+            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(85px, 1fr)); gap:8px; margin-bottom:6px">
+              <div class="form-group" style="margin-bottom:0">
+                <label class="form-label" style="font-size:0.72rem">Series Objetivo</label>
+                <input type="number" class="form-input" value="${ej.series}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'series', this.value)">
+              </div>
+              <div class="form-group" style="margin-bottom:0">
+                <label class="form-label" style="font-size:0.72rem">Reps Objetivo</label>
+                <input type="text" class="form-input" value="${ej.repeticiones}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'repeticiones', this.value)">
+              </div>
+              <div class="form-group" style="margin-bottom:0">
+                <label class="form-label" style="font-size:0.72rem">Peso Sugerido</label>
+                <input type="text" class="form-input" value="${ej.peso}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'peso', this.value)">
+              </div>
+            </div>
+
+            <div class="form-group" style="margin-bottom:0">
+              <label class="form-label" style="font-size:0.72rem">Indicación / Nota del Profesor</label>
+              <input type="text" class="form-input" placeholder="Ej: Controlar 2 seg de bajada" value="${ej.notaProfesor || ''}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'notaProfesor', this.value)">
+            </div>
+
+            <div class="form-group" style="margin-bottom:0; margin-top:6px">
+              <label class="form-label" style="font-size:0.72rem">🎬 URL de Video/Demo (Opcional)</label>
+              <input type="url" class="form-input" placeholder="https://youtube.com/..." value="${ej.videoUrl || ''}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'videoUrl', this.value)">
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `).join('');
+  }
+
+  window.updateFormDayName = (diaIdx, val) => { currentFormDays[diaIdx].nombre = val; };
+  window.addFormExercise = (diaIdx) => {
+    currentFormDays[diaIdx].ejercicios.push({ nombre: "Nuevo Ejercicio", series: 3, repeticiones: "12", peso: "10 kg", notaProfesor: "", videoUrl: "" });
+    renderFormDays();
+  };
+  window.removeFormExercise = (diaIdx, ejIdx) => {
+    currentFormDays[diaIdx].ejercicios.splice(ejIdx, 1);
+    renderFormDays();
+  };
+  window.removeFormDay = (diaIdx) => {
+    currentFormDays.splice(diaIdx, 1);
+    renderFormDays();
+  };
+  window.moveFormDayUp = (diaIdx) => {
+    if (diaIdx > 0) {
+      const temp = currentFormDays[diaIdx];
+      currentFormDays[diaIdx] = currentFormDays[diaIdx - 1];
+      currentFormDays[diaIdx - 1] = temp;
+      renderFormDays();
+    }
+  };
+  window.moveFormDayDown = (diaIdx) => {
+    if (diaIdx < currentFormDays.length - 1) {
+      const temp = currentFormDays[diaIdx];
+      currentFormDays[diaIdx] = currentFormDays[diaIdx + 1];
+      currentFormDays[diaIdx + 1] = temp;
+      renderFormDays();
+    }
+  };
+  window.moveFormExerciseUp = (diaIdx, ejIdx) => {
+    if (ejIdx > 0) {
+      const ejs = currentFormDays[diaIdx].ejercicios;
+      const temp = ejs[ejIdx];
+      ejs[ejIdx] = ejs[ejIdx - 1];
+      ejs[ejIdx - 1] = temp;
+      renderFormDays();
+    }
+  };
+  window.moveFormExerciseDown = (diaIdx, ejIdx) => {
+    const ejs = currentFormDays[diaIdx].ejercicios;
+    if (ejIdx < ejs.length - 1) {
+      const temp = ejs[ejIdx];
+      ejs[ejIdx] = ejs[ejIdx + 1];
+      ejs[ejIdx + 1] = temp;
+      renderFormDays();
+    }
+  };
+  window.updateFormExercise = (diaIdx, ejIdx, field, val) => {
+    currentFormDays[diaIdx].ejercicios[ejIdx][field] = val;
+  };
+
+  async function saveRoutineFromForm() {
+    const titulo = document.getElementById('routineTitle').value;
+    const duracion = document.getElementById('routineDuration').value;
+    const usuarioActualData = appState.usuarioActual.data;
+    const esModoAlumnoPropio = appState.modalActivo === 'crear_rutina_propia' || appState.modalActivo === 'editar_rutina_propia';
+
+    const formattedDays = currentFormDays.map((d, dIdx) => ({
+      id: crypto.randomUUID(),
+      diaNumero: dIdx + 1,
+      nombre: d.nombre,
+      ejercicios: d.ejercicios.map((e, idx) => ({
+        id: crypto.randomUUID(),
+        nombre: e.nombre,
+        seriesTarget: Number(e.series) || 3,
+        repeticionesTarget: e.repeticiones || "12",
+        pesoSugerido: e.peso || "S/D",
+        notaProfesor: e.notaProfesor || "",
+        profesorNotaAutor: esModoAlumnoPropio ? `${usuarioActualData.nombre} (vos)` : usuarioActualData.nombre,
+        videoUrl: e.videoUrl || ""
+      }))
+    }));
+
+    if (esModoAlumnoPropio) {
+      try {
+        if (appState.modalActivo === 'editar_rutina_propia' && appState.rutinaEnEdicionId) {
+          const resultado = await store.editarRutinaPropia({
+            rutinaId: appState.rutinaEnEdicionId,
+            alumnoId: usuarioActualData.id,
+            titulo,
+            duracionDias: duracion,
+            dias: formattedDays
+          });
+          if (resultado && resultado.ok) {
+            alert("✅ Rutina propia actualizada correctamente.");
+          } else {
+            alert("❌ No se pudo guardar la rutina: " + ((resultado && resultado.error) || "error desconocido") + ". Los cambios no se aplicaron, probá de nuevo.");
+          }
+        } else {
+          await store.crearRutinaPropia({
+            alumnoId: usuarioActualData.id,
+            titulo,
+            duracionDias: duracion,
+            dias: formattedDays
+          });
+          alert("🚀 ¡Rutina propia creada! Ya podés empezar a entrenarla desde \"Mías\".");
+        }
+      } catch (err) {
+        alert("❌ Error: " + err.message);
+      }
+    } else if (appState.modalActivo === 'editar_rutina' && appState.rutinaEnEdicionId) {
+      const resultado = await store.editarRutinaExistente({
+        rutinaId: appState.rutinaEnEdicionId,
+        profesorNombre: usuarioActualData.nombre,
+        titulo,
+        duracionDias: duracion,
+        dias: formattedDays
+      });
+      if (resultado && resultado.ok) {
+        alert("✅ Rutina actualizada correctamente. El alumno recibirá una notificación con los cambios.");
+      } else {
+        alert("❌ No se pudo guardar la rutina: " + ((resultado && resultado.error) || "error desconocido") + ". Los cambios no se aplicaron, probá de nuevo.");
+      }
+    } else {
+      store.crearOActualizarRutina({
+        alumnoId: appState.alumnoSeleccionadoId,
+        profesorNombre: usuarioActualData.nombre,
+        titulo,
+        duracionDias: duracion,
+        dias: formattedDays
+      });
+      alert("🚀 Nueva rutina asignada y activada correctamente.");
+    }
+
+    appState.modalActivo = null;
+    appState.rutinaEnEdicionId = null;
+    renderApp();
+  }
+
+  // Convierte la VAPID public key (base64url) al Uint8Array que exige
+  // pushManager.subscribe(). Esta función se invocaba en bindHeaderEvents
+  // pero no existía en ningún archivo del proyecto: cualquier dispositivo
+  // que no tuviera ya una suscripción guardada en el navegador (típicamente
+  // un dispositivo nuevo, como el celular de mamá) disparaba un
+  // ReferenceError silencioso, atrapado por el catch(), que mostraba el
+  // alert de "activadas" sin haber guardado ninguna suscripción real.
+  function urlBase64ToUint8Array(base64String) {
+    const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+    const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+    const rawData = window.atob(base64);
+    const outputArray = new Uint8Array(rawData.length);
+    for (let i = 0; i < rawData.length; ++i) {
+      outputArray[i] = rawData.charCodeAt(i);
+    }
+    return outputArray;
+  }
+
+  function toggleNotifDrawer() {
+    appState.mostrarDrawerNotifs = !appState.mostrarDrawerNotifs;
+    if (appState.usuarioActual) {
+      store.marcarNotificacionesLeidas(
+        appState.usuarioActual.rol,
+        appState.usuarioActual.rol === 'alumno' ? appState.usuarioActual.data.id : null
+      );
+    }
+    renderApp();
+  }
+
+  function bindBottomNavEvents() {
+    document.getElementById('navRutina')?.addEventListener('click', async () => {
+      appState.tabCliente = 'rutina';
+      appState.diaActivoEntrenamiento = null;
+      appState.rutinaSeleccionadaId = null;
+      appState.diaSeleccionadoId = null;
+      appState.mostrarDrawerNotifs = false;
+      renderApp(); // feedback visual inmediato de cambio de tab
+
+      // PWA / Bottom Nav: al tocar "Rutinas" forzamos la reobtención fresca
+      // desde Supabase para que el alumno siempre vea la última versión.
+      if (appState.usuarioActual?.rol === 'alumno' && window.gymStore) {
+        await window.gymStore.forceRefreshRutinas(appState.usuarioActual.data.id);
+      }
+    });
+
+    document.getElementById('navMisRutinas')?.addEventListener('click', () => {
+      appState.tabCliente = 'mis_rutinas';
+      appState.diaActivoEntrenamiento = null;
+      appState.rutinaSeleccionadaId = null;
+      appState.diaSeleccionadoId = null;
+      appState.mostrarDrawerNotifs = false;
+      renderApp();
+    });
+
+    document.getElementById('navRanking')?.addEventListener('click', async () => {
+      appState.tabCliente = 'ranking';
+      appState.mostrarDrawerNotifs = false;
+
+      if (appState.usuarioActual?.rol === 'alumno' && window.gymStore) {
+        await window.gymStore.syncWithSupabase(appState.usuarioActual.data.id);
+      }
+
+      renderApp();
+    });
+
+    document.getElementById('navHistorial')?.addEventListener('click', () => {
+      appState.tabCliente = 'historial';
+      appState.mostrarDrawerNotifs = false;
+      renderApp();
+    });
+
+    document.getElementById('navAvisosAlumno')?.addEventListener('click', toggleNotifDrawer);
+    document.getElementById('navAvisosProf')?.addEventListener('click', toggleNotifDrawer);
+
+    document.getElementById('navAlumnos')?.addEventListener('click', () => {
+      appState.modalActivo = null;
+      appState.mostrarDrawerNotifs = false;
+      renderApp();
+    });
+  }
+
+  function bindHeaderEvents() {
+    document.getElementById('btnLogout')?.addEventListener('click', async () => {
+      // Cerrar sesión en Supabase Auth (fire-and-forget: si falla, la sesión
+      // local se limpia igual y el usuario queda deslogueado en la app).
+      // A propósito NO se llama a reg.pushManager.getSubscription().unsubscribe()
+      // acá. La suscripción física del navegador es del dispositivo, no de la
+      // sesión de la app: si la desuscribiéramos en cada logout, el próximo
+      // usuario que loguee en este mismo dispositivo dispararía SIEMPRE una
+      // resuscripción nueva (más lento, y en iOS puede pedir permiso de nuevo).
+      // Ahora que guardar_push_subscription reasigna el endpoint por UPSERT
+      // (ver SQL), el problema de "queda asociado al usuario viejo" se
+      // resuelve en el próximo login+activación sin necesidad de desuscribir
+      // acá. Solo se limpia el estado de sesión de la app.
+      if (window.supabaseEngine) {
+        window.supabaseEngine.authSignOut(); // no se espera (fire-and-forget)
+      }
+      // Borrador de entrenamiento: se elimina en logout SOLO si pertenece al
+      // alumno que se está desloguéando ahora mismo (nunca el de otro usuario).
+      const borradorPropioAlCerrarSesion = getBorradorPropio();
+      if (borradorPropioAlCerrarSesion) clearWorkoutDraft();
+      window._sessionAlumnoId  = null;
+      window._sessionProfesorId = null;
+      appState.usuarioActual = null;
+      appState.historialProfesorLogs = null;
+      renderApp();
+    });
+
+    document.getElementById('btnHeaderHome')?.addEventListener('click', () => renderApp());
+
+    document.getElementById('btnNotifBell')?.addEventListener('click', () => {
+      const pushConcedido = 'Notification' in window && Notification.permission === 'granted';
+
+      // Push ya activado -> la campana funciona como antes: abre el drawer
+      if (pushConcedido) {
+        toggleNotifDrawer();
+        return;
+      }
+
+      // Push NO activado todavía -> tocar la campana dispara el mismo flujo
+      // que antes tenía el botón de texto "Activar Push" (funcionalidad
+      // intacta, solo cambia el disparador visual).
+      if ('Notification' in window) {
+        Notification.requestPermission().then(permission => {
+          if (permission === 'granted') {
+            if ('serviceWorker' in navigator && window.supabaseEngine) {
+              navigator.serviceWorker.ready.then(async reg => {
+                try {
+                  let sub = await reg.pushManager.getSubscription();
+                  if (!sub) {
+                    // La VAPID public key real se pide al backend (no es secreta,
+                    // pero no vive hardcodeada en el frontend). Si no está
+                    // configurada en el servidor, cortamos acá con un error
+                    // explícito en vez de caer a una key dummy inválida.
+                    const vapidKey = await window.supabaseEngine.getVapidPublicKey();
+                    if (!vapidKey) {
+                      throw new Error("No se pudo obtener la clave pública VAPID del servidor (falta configurar VAPID_PUBLIC_KEY en Vercel).");
+                    }
+                    sub = await reg.pushManager.subscribe({
+                      userVisibleOnly: true,
+                      applicationServerKey: urlBase64ToUint8Array(vapidKey)
+                    });
+                  }
+                  if (sub && appState.usuarioActual) {
+                    // Esta llamada ahora propaga el error real si la RPC falla
+                    // (ver registerPushSubscription en supabase.js): antes,
+                    // cualquier falla acá quedaba enmascarada por el catch de
+                    // abajo, que siempre mostraba un mensaje de "activadas"
+                    // aunque la suscripción nunca se hubiera guardado en la DB.
+                    // Esto era la causa de "se activan pero no llegan".
+                    await window.supabaseEngine.registerPushSubscription(appState.usuarioActual.data.id, sub.toJSON());
+                    alert("🔔 Suscripción Web Push activa y vinculada a tu cuenta correctamente.");
+                  }
+                } catch (e) {
+                  console.error("❌ No se pudo activar/guardar la suscripción Web Push:", e);
+                  alert("⚠️ No se pudo activar la notificación push: " + ((e && e.message) || "error desconocido") + ". Probá de nuevo o contactá al profesor.");
+                }
+                renderApp();
+              });
+            } else {
+              alert("🔔 Notificaciones habilitadas.");
+              renderApp();
+            }
+          } else {
+            alert("⚠️ Permiso de notificaciones denegado. Puedes habilitarlo desde la configuración de tu navegador.");
+          }
         });
       }
-
-      rutinasFrescas.forEach(sbRutina => {
-        // Mismo fix que en syncWithSupabase: recalcular esPropia/alumnoCreadorId
-        // desde profesorId, porque Supabase no devuelve esos campos locales y
-        // pisar el objeto entero borraría la marca de rutina propia.
-        const esRutinaPropia = sbRutina.profesorId === null;
-        sbRutina.esPropia = esRutinaPropia;
-        sbRutina.alumnoCreadorId = esRutinaPropia ? sbRutina.alumnoId : undefined;
-
-        const idx = this.data.rutinas.findIndex(rt => rt.id === sbRutina.id);
-        if (idx >= 0) {
-          this.data.rutinas[idx] = sbRutina;
-        } else {
-          this.data.rutinas.push(sbRutina);
-        }
-      });
-      huboCambios = true;
     });
 
-    if (huboCambios) {
-      console.log("🟢 Rutinas del profesor sincronizadas desde Supabase (Fuente de Verdad).");
-      this.saveData();
-    }
-  }
+    document.getElementById('btnCloseNotifs')?.addEventListener('click', () => {
+      appState.mostrarDrawerNotifs = false;
+      renderApp();
+    });
 
-  listenSupabaseRealtime() {
-    window.addEventListener('supabase_realtime_change', async (e) => {
-      console.log("⚡ Actualización Supabase recibida en tiempo real:", e.detail);
-      // Pasar el alumnoId del usuario logueado si está disponible en sesión
-      const alumnoId = (window._sessionAlumnoId) || null;
-      await this.syncWithSupabase(alumnoId);
-      // Realtime es solo AVISO: si hay sesión de profesor activa, volvemos a
-      // consultar Supabase (no this.data) para traer las rutinas actualizadas.
-      if (window._sessionProfesorId) {
-        await this.syncRutinasProfesor();
+    document.getElementById('btnCancelWorkout')?.addEventListener('click', () => {
+      if (confirm("¿Deseas cancelar la sesión de entrenamiento actual?")) {
+        clearWorkoutDraft();
+        appState.diaActivoEntrenamiento = null;
+        renderApp();
       }
     });
 
-    window.addEventListener('storage', (e) => {
-      if (e.key === STORAGE_KEY && e.newValue) {
-        // No confiamos ciegamente en el contenido de localStorage escrito por otra
-        // pestaña: puede pertenecer a otra sesión (alumno/profesor) o estar
-        // desactualizado. En vez de sobrescribir this.data directamente,
-        // forzamos una resincronización real contra Supabase (fuente de verdad)
-        // respetando el rol de ESTA pestaña.
-        const alumnoId = window._sessionAlumnoId || null;
-        this.syncWithSupabase(alumnoId);
-        if (window._sessionProfesorId) {
-          this.syncRutinasProfesor();
-        }
-      }
-    });
-
-    // --- PWA ANCLADA AL INICIO: refetch automático al volver a primer plano ---
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') {
-        const alumnoId = window._sessionAlumnoId || null;
-        console.log("🔄 PWA volvió a primer plano (visibilitychange) → refetch automático con Supabase.");
-        this.syncWithSupabase(alumnoId);
-        if (window._sessionProfesorId) {
-          this.syncRutinasProfesor();
-        }
-      }
-    });
-
-    document.addEventListener('resume', () => {
-      const alumnoId = window._sessionAlumnoId || null;
-      console.log("🔄 Evento 'resume' (PWA nativa) → refetch automático con Supabase.");
-      this.syncWithSupabase(alumnoId);
-      if (window._sessionProfesorId) {
-        this.syncRutinasProfesor();
-      }
-    }, false);
-
-    window.addEventListener('pageshow', (e) => {
-      if (e.persisted) {
-        const alumnoId = window._sessionAlumnoId || null;
-        console.log("🔄 Evento 'pageshow' (bfcache) → refetch automático con Supabase.");
-        this.syncWithSupabase(alumnoId);
-        if (window._sessionProfesorId) {
-          this.syncRutinasProfesor();
-        }
-      }
-    });
-
-    // Sincronización inicial diferida (sin alumnoId — perfil y dnis)
-    setTimeout(() => this.syncWithSupabase(null), 400);
-  }
-
-  // --- REFETCH FORZADO AL TOCAR "RUTINAS" EN BOTTOM NAV O AL ABRIR UNA NOTIFICACIÓN ---
-  async forceRefreshRutinas(alumnoId = null) {
-    const idAUsar = alumnoId || window._sessionAlumnoId || null;
-    console.log("🔄 Forzando reobtención fresca de Rutinas desde Supabase (tab Rutinas / notificación).");
-    return this.syncWithSupabase(idAUsar);
-  }
-
-  // --- REFETCH FORZADO DEL RANKING (tras registrar puntos de un entrenamiento) ---
-  // Más liviano que forceRefreshRutinas()/syncWithSupabase(): solo llama a la
-  // RPC pública get_ranking_publico() y repuebla rankingCache, sin tocar
-  // alumnos, rutinas ni el resto del estado. Se usa inmediatamente después de
-  // que el servidor confirma puntos en guardarEntrenamientoReal(), para que
-  // el ranking los refleje sin esperar al próximo visibilitychange/sync
-  // completo. Si falla (offline, etc.) conserva el rankingCache anterior.
-  async forceRefreshRanking() {
-    if (!window.supabaseEngine) {
-      console.warn("⚠️ forceRefreshRanking: No hay supabaseEngine disponible");
-      return;
-    }
-    try {
-      console.log("🔄 forceRefreshRanking: Consultando ranking fresco desde Supabase...");
-      const rankingFresco = await window.supabaseEngine.fetchRankingPublico();
-      
-      if (rankingFresco && rankingFresco.ok) {
-        this.data.rankingCache = rankingFresco.data || [];
-        console.log(`✅ forceRefreshRanking: Ranking actualizado correctamente con ${this.data.rankingCache.length} alumno(s).`);
-      } else {
-        console.warn("❌ forceRefreshRanking: fetchRankingPublico retornó error:", rankingFresco?.error);
-      }
-    } catch (err) {
-      console.error("❌ forceRefreshRanking: Excepción al actualizar ranking:", err);
-    }
-  }
-
-  // --- AUTENTICACIÓN Y AUTORIZACIÓN POR DNI ---
-  // Async a propósito: la secuencia deseada es (1) sincronizar con Supabase,
-  // (2) actualizar el estado local, (3) recién ahí validar credenciales.
-  //
-  // --- SUPABASE AUTH (Etapa 1) ---
-  // Después de identificar el rol por DNI, se intenta authSignIn contra
-  // Supabase Auth. Si tiene éxito, se registra el authUserId en el perfil
-  // local y se llama a la RPC de vinculación para persistirlo en la DB.
-  // Si Supabase Auth falla (cuenta todavía no creada), se cae al flujo
-  // legacy de validación por contraseña, que sigue intacto.
-  // La contraseña legacy NUNCA se borra en esta etapa.
-  //
-  // syncWithSupabase() nunca rechaza (atrapa sus propios errores) y no hace
-  // nada si no hay window.supabaseEngine (offline/no inicializado), así que
-  // este await no puede trabar el login ni romper el funcionamiento offline.
-  async login(dni, password) {
-    const cleanDni = String(dni).trim();
-    const cleanPass = String(password).trim();
-
-    // --- INSTRUMENTACIÓN TEMPORAL: LOGIN START ---
-    const alumnoPreSync = this.data.alumnos?.find(a => a.dni === cleanDni);
-    const profesorPreSync = this.data.profesores?.find(p => p.dni === cleanDni);
-    console.log('=== LOGIN START ===', {
-      dni: cleanDni,
-      alumnosCount: this.data.alumnos?.length ?? 0,
-      profesoresCount: this.data.profesores?.length ?? 0,
-      alumnoPerfil: alumnoPreSync ? {
-        existe: true,
-        authUserId: alumnoPreSync.authUserId ?? null,
-        hasPassword: 'password' in alumnoPreSync && alumnoPreSync.password !== undefined
-      } : { existe: false },
-      profesorPerfil: profesorPreSync ? {
-        existe: true,
-        authUserId: profesorPreSync.authUserId ?? null,
-        hasPassword: 'password' in profesorPreSync && profesorPreSync.password !== undefined
-      } : { existe: false }
-    });
-    // --- FIN INSTRUMENTACIÓN ---
-
-    // 1. Sincronizar con Supabase y esperar a que termine.
-    await this.syncWithSupabase();
-
-    // --- INSTRUMENTACIÓN TEMPORAL: SYNC RESULT ---
-    const alumnoPostSync = this.data.alumnos?.find(a => a.dni === cleanDni);
-    const profesorPostSync = this.data.profesores?.find(p => p.dni === cleanDni);
-    console.log('=== SYNC RESULT ===', {
-      freshDataAlumnos: 'ver syncWithSupabase logs',
-      freshDataProfesores: 'ver syncWithSupabase logs',
-      ambosVacios: 'ver syncWithSupabase logs',
-      alumnoEncontrado: alumnoPostSync ? {
-        existe: true,
-        authUserId: alumnoPostSync.authUserId ?? null,
-        hasPassword: 'password' in alumnoPostSync && alumnoPostSync.password !== undefined
-      } : { existe: false },
-      profesorEncontrado: profesorPostSync ? {
-        existe: true,
-        authUserId: profesorPostSync.authUserId ?? null,
-        hasPassword: 'password' in profesorPostSync && profesorPostSync.password !== undefined
-      } : { existe: false }
-    });
-    // --- FIN INSTRUMENTACIÓN ---
-
-    // 2. Detectar rol por DNI (necesario para generar el email interno de Auth).
-    const profesor = this.data.profesores.find(p => p.dni === cleanDni);
-    const alumno   = this.data.alumnos.find(a => a.dni === cleanDni);
-
-    // 3. Intentar Supabase Auth si hay motor disponible y el rol es conocido.
-    //    El resultado de Supabase Auth NO reemplaza la validación de contraseña
-    //    legacy en esta etapa: solo agrega el authUserId al perfil.
-    const engine = window.supabaseEngine;
-    if (engine && (profesor || alumno)) {
-      const rol = profesor ? 'profesor' : 'alumno';
-      const perfil = profesor || alumno;
-
-      // --- INSTRUMENTACIÓN TEMPORAL: AUTH SIGNIN START ---
-      console.log('=== AUTH SIGNIN START ===', {
-        rol,
-        perfilEncontrado: perfil ? {
-          existe: true,
-          authUserId: perfil.authUserId ?? null,
-          hasPassword: 'password' in perfil && perfil.password !== undefined
-        } : { existe: false }
-      });
-      // --- FIN INSTRUMENTACIÓN ---
-
-      const authRes = await engine.authSignIn(cleanDni, rol, cleanPass);
-
-      // --- INSTRUMENTACIÓN TEMPORAL: AUTH SIGNIN RESULT ---
-      console.log('=== AUTH SIGNIN RESULT ===', {
-        ok: authRes.ok,
-        errorCode: authRes.error?.code ?? authRes.error ?? null,
-        errorMessage: authRes.error?.message ?? authRes.error ?? null,
-        errorStatus: authRes.error?.status ?? null
-      });
-      // --- FIN INSTRUMENTACIÓN ---
-
-      if (authRes.ok && authRes.user) {
-        // Supabase Auth validó la contraseña correctamente.
-        const authUserId = authRes.user.id;
-        console.log(`🔑 Supabase Auth OK (${rol} ${cleanDni}) → authUserId: ${authUserId}`);
-
-        // Persistir authUserId en el perfil local si no lo tenía ya.
-        if (!perfil.authUserId) {
-          perfil.authUserId = authUserId;
-          this.saveData();
-
-          // Vincular en la DB (fire-and-forget: si falla, el perfil local ya
-          // tiene el authUserId y la próxima sync lo re-intentará via RPC).
-          // authUserId localmente se usa para sesión, pero las RPCs usan auth.uid() interno.
-          if (rol === 'profesor') {
-            engine.vincularPerfilProfesor(cleanDni)
-              .then(r => { if (!r.ok) console.warn('⚠️ vincularPerfilProfesor falló (no crítico):', r.error); });
-          } else {
-            engine.vincularPerfilAlumno(cleanDni, perfil.telefono || '')
-              .then(r => { if (!r.ok) console.warn('⚠️ vincularPerfilAlumno falló (no crítico):', r.error); });
-          }
-        }
-
-        // Retornar sesión usando el perfil local ya actualizado (que tiene
-        // la contraseña legacy intacta).
-        if (profesor) {
-          console.log('=== LOGIN END ===', { success: true, rol: 'profesor', error: null });
-          return { rol: 'profesor', data: perfil };
-        }
-        if (alumno) {
-          console.log('=== LOGIN END ===', { success: true, rol: 'alumno', error: null });
-          return { rol: 'alumno', data: perfil };
-        }
-      }
-      // authSignIn devolvió ok:false → la cuenta Supabase Auth todavía no
-      // existe o la contraseña no coincide. Caemos al flujo legacy.
-      console.log(`ℹ️ authSignIn no tuvo éxito para ${rol} ${cleanDni} → usando flujo legacy.`);
-    }
-
-    // --- INSTRUMENTACIÓN TEMPORAL: LEGACY FALLBACK ---
-    const profesorLegacyCheck = this.data.profesores.find(p => p.dni === cleanDni);
-    const alumnoLegacyCheck = this.data.alumnos.find(a => a.dni === cleanDni);
-    console.log('=== LEGACY FALLBACK ===', {
-      profesorEncontrado: profesorLegacyCheck ? {
-        existe: true,
-        hasPassword: 'password' in profesorLegacyCheck && profesorLegacyCheck.password !== undefined
-      } : { existe: false },
-      alumnoEncontrado: alumnoLegacyCheck ? {
-        existe: true,
-        hasPassword: 'password' in alumnoLegacyCheck && alumnoLegacyCheck.password !== undefined
-      } : { existe: false },
-      legacyResult: 'pending'
-    });
-    // --- FIN INSTRUMENTACIÓN ---
-
-    // 4. Flujo legacy intacto — validación por DNI + contraseña en local.
-    // Si el usuario valida por legacy (cuenta Auth todavía no creada), se
-    // intenta la migración automática a Supabase Auth en este mismo instante.
-    // La contraseña solo existe en memoria durante esta función: nunca se
-    // imprime, nunca se escribe en un log, nunca se persiste de nuevo.
-
-    // 4a. Buscar en Profesores
-    const profesorLegacy = this.data.profesores.find(p => p.dni === cleanDni && p.password === cleanPass);
-    if (profesorLegacy) {
-      // Migración automática: intentar crear cuenta Auth con la contraseña que
-      // el usuario acaba de tipear (está en memoria, nunca se guarda de nuevo).
-      if (engine) {
-        this._intentarMigracionLegacy(profesorLegacy, 'profesor', cleanDni, cleanPass, engine);
-      }
-      console.log('=== LOGIN END ===', { success: true, rol: 'profesor', error: null });
-      return { rol: 'profesor', data: profesorLegacy };
-    }
-
-    // 4b. Buscar en Alumnos
-    const alumnoLegacy = this.data.alumnos.find(a => a.dni === cleanDni && a.password !== null && a.password === cleanPass);
-    if (alumnoLegacy) {
-      if (engine) {
-        this._intentarMigracionLegacy(alumnoLegacy, 'alumno', cleanDni, cleanPass, engine);
-      }
-      console.log('=== LOGIN END ===', { success: true, rol: 'alumno', error: null });
-      return { rol: 'alumno', data: alumnoLegacy };
-    }
-
-    // --- INSTRUMENTACIÓN TEMPORAL: LOGIN END ---
-    console.log('=== LOGIN END ===', {
-      success: false,
-      rol: null,
-      error: 'No se encontró perfil válido (ni Auth ni legacy)'
-    });
-    // --- FIN INSTRUMENTACIÓN ---
-
-    return null;
-  }
-
-  // --- LOGIN POR DNI — flujo mínimo (sesión real de Supabase Auth) ---
-  // Delega la autenticación en engine.loginConDni() (generateLink +
-  // verifyOtp) y luego reutiliza syncWithSupabase() sin modificarla para
-  // repoblar this.data.alumnos/profesores con los objetos locales de
-  // siempre. Devuelve la MISMA forma { rol, data } que login(), para que
-  // el resto de app.js (asignación de sesión, sync de rutinas, etc.)
-  // funcione sin cambios.
-  // No toca login(), _intentarMigracionLegacy() ni el flujo legacy.
-  async loginConDni(dni) {
-    const cleanDni = String(dni).trim();
-    const engine = window.supabaseEngine;
-    if (!engine) {
-      console.warn('⚠️ loginConDni: supabaseEngine no disponible.');
-      return null;
-    }
-
-    const authRes = await engine.loginConDni(cleanDni);
-    if (!authRes.ok) {
-      console.warn('⚠️ loginConDni (DataManager): falló en engine:', authRes.error);
-      return null;
-    }
-
-    // Repoblar this.data.alumnos/profesores ya con la sesión activa.
-    await this.syncWithSupabase();
-
-    if (authRes.rol === 'profesor') {
-      const profesor = this.data.profesores.find(p => p.dni === cleanDni);
-      if (!profesor) {
-        console.warn('⚠️ loginConDni: autenticado pero no se encontró el profesor localmente tras sync.');
-        return null;
-      }
-      return { rol: 'profesor', data: profesor };
-    }
-
-    const alumno = this.data.alumnos.find(a => a.dni === cleanDni);
-    if (!alumno) {
-      console.warn('⚠️ loginConDni: autenticado pero no se encontró el alumno localmente tras sync.');
-      return null;
-    }
-    return { rol: 'alumno', data: alumno };
-  }
-
-  // Migración automática de usuario legacy a Supabase Auth.
-  // Se llama en background (fire-and-forget desde login()) cuando un usuario
-  // entra por fallback legacy. La contraseña solo vive en esta función.
-  // Si TODA la cadena tiene éxito, elimina el password del objeto local.
-  // Si CUALQUIER paso falla, el password se preserva y el usuario puede
-  // seguir usando el fallback en el próximo login.
-  // NUNCA imprime la contraseña en ningún log.
-  async _intentarMigracionLegacy(perfil, rol, dni, password, engine) {
-    try {
-      console.log(`🔄 Iniciando migración legacy → Supabase Auth para ${rol} ${dni}`);
-
-      // 1. Crear cuenta en Supabase Auth
-      const authRes = await engine.authSignUp(dni, rol, password);
-      if (!authRes.ok || !authRes.user) {
-        console.log(`ℹ️ Migración legacy: authSignUp no OK para ${rol} ${dni}:`, authRes.error);
-        return; // Preservar password legacy — no se migra en este intento
-      }
-
-      // 2. Vincular perfil en la DB via RPC
-      let linkRes;
-      if (rol === 'profesor') {
-        linkRes = await engine.vincularPerfilProfesor(dni);
-      } else {
-        linkRes = await engine.vincularPerfilAlumno(dni, perfil.telefono || '');
-      }
-
-      if (!linkRes.ok) {
-        console.warn(`⚠️ Migración legacy: vincular${rol === 'profesor' ? 'Profesor' : 'Alumno'} falló para ${dni}:`, linkRes.error);
-        return; // No eliminar password — la migración no se completó
-      }
-
-      // 3. Éxito total: confirmar authUserId y eliminar password del localStorage
-      const authUserId = authRes.user.id;
-      perfil.authUserId = authUserId;
-      // Eliminar el password del objeto local: la contraseña ya vive en Supabase Auth
-      delete perfil.password;
-      this.saveData();
-
-      console.log(`✅ Migración legacy completa para ${rol} ${dni} → authUserId: ${authUserId}. Password eliminado del localStorage.`);
-    } catch (e) {
-      console.warn(`⚠️ Excepción en migración legacy para ${rol} ${dni} (no crítico — password preservado):`, e);
-    }
-  }
-
-  // ETAPA 2 — registrarseAlumno: Supabase Auth es la fuente de autenticación.
-  // La contraseña solo vive en memoria durante esta función. Nunca se imprime.
-  // Si Auth+RPC tienen éxito: se guarda authUserId, sin password en localStorage.
-  // Si Auth falla (offline, error): se guarda password temporalmente como fallback
-  // legacy para que el usuario pueda entrar. La migración se completará en el
-  // próximo login exitoso via _intentarMigracionLegacy().
-  async registrarseAlumno({ dni, password, nombre, telefono }) {
-    const cleanDni = String(dni).trim();
-    const cleanPass = String(password).trim();
-
-    // Validación de longitud de contraseña
-    if (cleanPass.length < 2) {
-      throw new Error('La contraseña debe tener al menos 2 caracteres.');
-    }
-    if (cleanPass.length > 128) {
-      throw new Error('La contraseña es demasiado larga (máximo 128 caracteres).');
-    }
-
-    const existente = this.data.alumnos.find(a => a.dni === cleanDni);
-
-    if (existente) {
-      // Caso B: alumno precreado por el profesor.
-      // Nuevo criterio: no tiene authUserId Y no tiene password (registro incompleto).
-      // Un alumno con authUserId ya está migrado; con password ya completó el registro.
-      if (!existente.authUserId && existente.password === null) {
-        existente.nombre = nombre.trim();
-        existente.telefono = telefono ? telefono.trim() : (existente.telefono || "");
-        // NO guardar password en el objeto todavía — solo en memoria (cleanPass).
-
-        // Persistir perfil en Supabase DB sin password (columna no existe).
-        if (window.supabaseEngine) {
-          window.supabaseEngine.registrarPerfilEnSupabase(existente);
-        }
-
-        console.log('REGISTER DEBUG supabaseEngine:', !!window.supabaseEngine);
-        console.log('REGISTER DEBUG client:', !!window.supabaseEngine?.client);
-
-        let authExitoso = false;
-        if (window.supabaseEngine) {
-          try {
-            // 1. Verificar datos (DNI + Teléfono) antes de Auth
-            const verifyRes = await window.supabaseEngine.verificarDatosActivacionAlumno(cleanDni, telefono);
-            if (verifyRes.ok) {
-              // 2. Crear Auth user (contraseña solo en memoria, nunca se guarda)
-              const authRes = await window.supabaseEngine.authSignUp(cleanDni, 'alumno', cleanPass);
-              if (authRes.ok && authRes.user) {
-                // 3. Vincular perfil (AWAIT)
-                const linkRes = await window.supabaseEngine.vincularPerfilAlumno(cleanDni, existente.telefono || '');
-                if (linkRes.ok) {
-                  // 4. Éxito total: guardar authUserId SIN password
-                  existente.authUserId = authRes.user.id;
-                  authExitoso = true;
-                  console.log('✅ Registro Auth OK (caso B precreado) → authUserId:', authRes.user.id, '| password NO guardado en localStorage.');
-                } else {
-                  console.warn('⚠️ Registro: authSignUp OK pero vincularPerfilAlumno (caso B) falló:', linkRes.error);
-                }
-              } else {
-                console.log('ℹ️ Registro: authSignUp no OK (caso B):', authRes.error);
-              }
-            } else {
-              console.log('ℹ️ Registro: verificarDatosActivacionAlumno falló (caso B):', verifyRes.error);
-            }
-          } catch (e) {
-            console.warn('⚠️ Registro: excepción en Auth (caso B, no crítico):', e);
-          }
-        }
-
-        if (!authExitoso) {
-          // Fallback: guardar password temporalmente para que el usuario pueda entrar.
-          // Se migrará automáticamente en el próximo login exitoso.
-          existente.password = cleanPass;
-          console.log('ℹ️ Registro: Auth no disponible — password guardado temporalmente como fallback legacy.');
-        }
-
-        this.saveData();
-        return existente;
-      }
-
-      // El alumno ya tiene authUserId o ya tiene password → ya completó su registro.
-      if (existente.authUserId) {
-        throw new Error("Esta cuenta ya fue activada. Usá el inicio de sesión.");
-      }
-      throw new Error("Ya existe una cuenta creada con ese DNI.");
-    }
-
-    // Caso A: DNI nuevo.
-    const estaAutorizado = this.data.dnisAutorizados.some(d => d.dni === cleanDni);
-    const generatedId = (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() : ("al-" + Date.now());
-
-    // NO incluir password en el objeto — solo en memoria durante authSignUp.
-    const nuevoAlumno = {
-      id: generatedId,
-      dni: cleanDni,
-      nombre: nombre.trim(),
-      telefono: telefono ? telefono.trim() : "",
-      estadoAutorizacion: estaAutorizado ? 'autorizado' : 'pendiente',
-      fechaRegistro: new Date().toISOString().split('T')[0],
-      rutinaActivaId: null
-    };
-
-    this.data.alumnos.push(nuevoAlumno);
-
-    // Persistir nuevo perfil en Supabase DB (sin password)
-    if (window.supabaseEngine) {
-      window.supabaseEngine.registrarPerfilEnSupabase(nuevoAlumno);
-    }
-
-    console.log('REGISTER DEBUG supabaseEngine:', !!window.supabaseEngine);
-    console.log('REGISTER DEBUG client:', !!window.supabaseEngine?.client);
-
-    let authExitosoA = false;
-    if (window.supabaseEngine) {
-      try {
-        const authRes = await window.supabaseEngine.authSignUp(cleanDni, 'alumno', cleanPass);
-        if (authRes.ok && authRes.user) {
-          const linkRes = await window.supabaseEngine.vincularPerfilAlumno(cleanDni, nuevoAlumno.telefono || '');
-          if (linkRes.ok) {
-            nuevoAlumno.authUserId = authRes.user.id;
-            authExitosoA = true;
-            console.log('✅ Registro Auth OK (caso A nuevo) → authUserId:', authRes.user.id, '| password NO guardado en localStorage.');
-          } else {
-            console.warn('⚠️ Registro: authSignUp OK pero vincularPerfilAlumno (caso A) falló:', linkRes.error);
-          }
-        } else {
-          console.log('ℹ️ Registro: authSignUp no OK (caso A):', authRes.error);
-        }
-      } catch (e) {
-        console.warn('⚠️ Registro: excepción en Auth (caso A, no crítico):', e);
-      }
-    }
-
-    if (!authExitosoA) {
-      // Fallback: guardar password temporalmente para que el usuario pueda entrar.
-      // Se migrará automáticamente en el próximo login exitoso.
-      nuevoAlumno.password = cleanPass;
-      console.log('ℹ️ Registro: Auth no disponible — password guardado temporalmente como fallback legacy.');
-    }
-
-    this.saveData();
-    return nuevoAlumno;
-  }
-
-  autorizarOAgregarAlumnoPorProfesor({ dni, nombre, telefono }) {
-    const cleanDni = String(dni).trim();
-    
-    // 1. Persistir en Supabase DB (fuente de verdad)
-    if (window.supabaseEngine) {
-      window.supabaseEngine.autorizarDniEnSupabase(cleanDni, nombre);
-    }
-
-    // 2. Registrar DNI en la lista local
-    if (!this.data.dnisAutorizados.some(d => d.dni === cleanDni)) {
-      this.data.dnisAutorizados.push({ dni: cleanDni, nombre: nombre.trim() });
-    }
-
-    let alumno = this.data.alumnos.find(a => a.dni === cleanDni);
-    if (alumno) {
-      alumno.estadoAutorizacion = 'autorizado';
-      // NUNCA pisar el nombre real (profiles.nombre / alumno.nombre): el
-      // texto que tipeó el profesor acá es su apodo/etiqueta personal.
-      alumno.nombreProfesor = nombre.trim();
-    } else {
-      const newId = (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() : ("al-" + Date.now());
-      alumno = {
-        id: newId,
-        dni: cleanDni,
-        password: null,
-        // Todavía no existe fila en profiles (el alumno no se registró): se
-        // usa el texto del profesor como placeholder de nombre real hasta que
-        // el alumno se registre y el próximo sync traiga profiles.nombre.
-        nombre: nombre.trim(),
-        nombreProfesor: nombre.trim(),
-        telefono: telefono ? telefono.trim() : "",
-        estadoAutorizacion: 'autorizado',
-        fechaRegistro: new Date().toISOString().split('T')[0],
-        rutinaActivaId: null
-      };
-      this.data.alumnos.push(alumno);
-    }
-
-    this.saveData();
-    return alumno;
-  }
-
-  // --- EDITAR NOMBRE PERSONALIZADO DEL PROFESOR (apodo, vía RPC segura) ---
-  // Actualiza ÚNICAMENTE authorized_dnis.nombre (el apodo con el que el
-  // profesor identifica al alumno en SU interfaz). NUNCA toca profiles.nombre
-  // (nombre real de la cuenta, que el alumno sigue viendo intacto).
-  async editarNombreProfesor({ dni, nuevoNombre }) {
-    const cleanDni = String(dni).trim();
-    const cleanNombre = String(nuevoNombre).trim();
-    if (!cleanNombre) {
-      throw new Error("El apodo no puede estar vacío.");
-    }
-    if (!window.supabaseEngine) {
-      throw new Error("Sin conexión a Supabase: no se pudo guardar el apodo.");
-    }
-
-    const resultado = await window.supabaseEngine.editarNombreProfesor(cleanDni, cleanNombre);
-    if (!resultado || resultado.ok !== true) {
-      throw new Error((resultado && resultado.error) || "No se pudo actualizar el apodo.");
-    }
-
-    // Reflejar el cambio localmente recién DESPUÉS de que Supabase confirmó éxito.
-    const alumno = this.data.alumnos.find(a => a.dni === cleanDni);
-    if (alumno) {
-      alumno.nombreProfesor = cleanNombre;
-    }
-    const dniAuth = this.data.dnisAutorizados.find(d => d.dni === cleanDni);
-    if (dniAuth) {
-      dniAuth.nombre = cleanNombre;
-    } else {
-      this.data.dnisAutorizados.push({ dni: cleanDni, nombre: cleanNombre });
-    }
-
-    this.saveData();
-    return alumno;
-  }
-
-  // --- CONSULTAS ---
-  getAlumnoPorId(id) {
-    return this.data.alumnos.find(a => a.id === id) || null;
-  }
-
-  // Clasificación por profesorId (dato real, sincronizado siempre desde
-  // routines.profesor_id) y NO por esPropia/alumnoCreadorId: esos dos son
-  // campos derivados que solo viven en el objeto JS local y no son columnas
-  // reales, así que son frágiles ante cualquier merge que no los reconstruya
-  // perfectamente. profesorId es la fuente de verdad: null → propia.
-  getRutinasAlumno(alumnoId) {
-    return this.data.rutinas
-      .filter(r => r.alumnoId === alumnoId && r.profesorId != null)
-      .sort((a, b) => (b.estado === 'activa' ? 1 : 0) - (a.estado === 'activa' ? 1 : 0));
-  }
-
-  // --- FEATURE "MIS RUTINAS": rutinas auto-gestionadas por el propio alumno ---
-  getRutinasPropiasAlumno(alumnoId) {
-    return this.data.rutinas.filter(r => r.alumnoId === alumnoId && r.profesorId == null);
-  }
-
-  getRutinaPorId(rutinaId) {
-    return this.data.rutinas.find(r => r.id === rutinaId) || null;
-  }
-
-  getRutinaActiva(alumnoId) {
-    const alumno = this.getAlumnoPorId(alumnoId);
-    if (!alumno || alumno.estadoAutorizacion !== 'autorizado') return null;
-    if (alumno.rutinaActivaId) {
-      const rut = this.data.rutinas.find(r => r.id === alumno.rutinaActivaId && r.estado === 'activa');
-      if (rut) return rut;
-    }
-    // Fallback: Retornar la rutina activa más reciente asignada al alumno (excluye rutinas propias)
-    return this.data.rutinas
-      .filter(r => (r.alumnoId === alumno.id || r.alumnoId === alumno.dni) && r.profesorId != null && (r.estado === 'activa' || !r.estado))
-      .sort((a, b) => new Date(b.fechaInicio || 0) - new Date(a.fechaInicio || 0))[0] || null;
-  }
-
-  // Historial = todas las rutinas del alumno que NO están activas ahora
-  // mismo (desactivada, completada o expirada). Antes filtraba por
-  // "distinta de rutinaActivaId", lo cual dejaba afuera del historial a
-  // cualquier rutina vieja cuyo id todavía coincidiera con rutinaActivaId
-  // por datos desactualizados, y de paso metía en el historial rutinas
-  // activas que el alumno nunca marcó como tal. Filtrar por estado real
-  // es correcto en los dos sentidos.
-  getHistorialRutinas(alumnoId) {
-    return this.data.rutinas.filter(r => r.alumnoId === alumnoId && r.estado !== 'activa');
-  }
-
-  getHistorialEntrenamientosReales(alumnoId) {
-    return this.data.workoutLogs.filter(w => w.alumnoId === alumnoId && w.estado === 'completado');
-  }
-
-  getAlumnosFiltrados({ busqueda = '', filtro = 'todos' }) {
-    const query = busqueda.toLowerCase().trim();
-    return this.data.alumnos.filter(alumno => {
-      const matchQuery = !query || alumno.nombre.toLowerCase().includes(query) || alumno.dni.includes(query);
-      if (!matchQuery) return false;
-      const rutina = this.getRutinaActiva(alumno.id);
-      if (filtro === 'activa') return !!rutina;
-      if (filtro === 'por_vencer') {
-        if (!rutina) return false;
-        const d = this.calcularDiasRestantes(rutina.fechaVencimiento);
-        return d >= 0 && d <= 1;
-      }
-      if (filtro === 'expirada') {
-        if (!rutina) return true;
-        const d = this.calcularDiasRestantes(rutina.fechaVencimiento);
-        return d < 0;
-      }
-      return true;
-    });
-  }
-
-  // --- CREAR NUEVA RUTINA (PERMITIENDO MÚLTIPLES RUTINAS POR ALUMNO) ---
-  crearOActualizarRutina({ alumnoId, profesorNombre, titulo, duracionDias, dias }) {
-    console.log("🔎 DEBUG crearOActualizarRutina - recibió:", {
-    alumnoId
-});
-    const alumno = this.getAlumnoPorId(alumnoId);
-    if (!alumno) return;
-
-    const hoy = new Date();
-    const fechaVenc = new Date(hoy.getTime() + Number(duracionDias) * 86400000);
-
-    const routineUuid = (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() : ("rut-" + Date.now());
-
-    const nuevaRutina = {
-      id: routineUuid,
-      alumnoId,
-      // UUID real del profesor (del perfil en Supabase), para routines.profesor_id
-      profesorId: window._sessionProfesorId || null,
-      profesorCreadorNombre: profesorNombre || "Profesor de Estudio Fitness",
-      titulo: titulo || "Rutina Personalizada",
-      duracionDias: Number(duracionDias),
-      fechaInicio: hoy.toISOString().split('T')[0],
-      fechaVencimiento: fechaVenc.toISOString().split('T')[0],
-      estado: "activa",
-      dias
-    };
-
-    this.data.rutinas.push(nuevaRutina);
-    alumno.rutinaActivaId = nuevaRutina.id;
-
-    // Persistir en Supabase DB
-   if (window.supabaseEngine) {
-
-    console.log("🔎 DEBUG ANTES PERSISTIR:", {
-        nuevaRutinaAlumnoId: nuevaRutina.alumnoId,
-        nuevaRutina: nuevaRutina
-    });
-
-    window.supabaseEngine.persistirNuevaRutinaEnSupabase(nuevaRutina);
-}
-    // Enviar notificación Push al alumno
-    this.crearNotificacion({
-      destinatarioRol: "alumno",
-      alumnoId,
-      mensaje: `🔥 Tu profesor ${profesorNombre || ''} te asignó la rutina "${nuevaRutina.titulo}".`,
-      rutaDestino: "rutina",
-      rutinaId: nuevaRutina.id
-    });
-
-    this.saveData();
-    return nuevaRutina;
-  }
-
-  // --- EDITAR RUTINA EXISTENTE CONSERVANDO HISTORIAL Y MULTI-RUTINAS ---
-  async editarRutinaExistente({ rutinaId, profesorNombre, titulo, duracionDias, dias }) {
-    const rutina = this.getRutinaPorId(rutinaId);
-    if (!rutina) throw new Error("La rutina a editar no fue encontrada.");
-
-    // Guardamos los valores originales antes de mutar, para poder revertir
-    // en memoria si Supabase rechaza el guardado (rutina es la referencia
-    // real del store, así que cualquier asignación de acá en más ya "pisa"
-    // el estado en memoria antes de confirmar nada con el servidor).
-    const original = {
-      titulo: rutina.titulo,
-      duracionDias: rutina.duracionDias,
-      fechaVencimiento: rutina.fechaVencimiento,
-      dias: rutina.dias,
-      profesorCreadorNombre: rutina.profesorCreadorNombre,
-      profesorId: rutina.profesorId
-    };
-
-    rutina.titulo = titulo || rutina.titulo;
-    rutina.duracionDias = Number(duracionDias) || rutina.duracionDias;
-
-    // Recalcular vencimiento desde la fecha de inicio
-    const fInicio = rutina.fechaInicio ? new Date(rutina.fechaInicio) : new Date();
-    const fechaVenc = new Date(fInicio.getTime() + Number(rutina.duracionDias) * 86400000);
-    rutina.fechaVencimiento = fechaVenc.toISOString().split('T')[0];
-    rutina.dias = dias;
-
-    if (profesorNombre) rutina.profesorCreadorNombre = profesorNombre;
-
-    // Asegurar que profesorId esté presente para que guardar_rutina_profesor
-    // actualice routines.profesor_id con el UUID real del profesor
-    if (window._sessionProfesorId && !rutina.profesorId) {
-      rutina.profesorId = window._sessionProfesorId;
-    }
-
-    // Persistir en Supabase DB y ESPERAR confirmación real antes de
-    // notificar al alumno o persistir localmente. Si Supabase rechaza el
-    // guardado, revertimos la mutación en memoria (no dejamos "confirmado"
-    // algo que el servidor no aceptó).
-    if (window.supabaseEngine) {
-      const resultado = await window.supabaseEngine.persistirEdicionRutinaEnSupabase(rutina);
-
-      if (!resultado || resultado.ok !== true) {
-        rutina.titulo = original.titulo;
-        rutina.duracionDias = original.duracionDias;
-        rutina.fechaVencimiento = original.fechaVencimiento;
-        rutina.dias = original.dias;
-        rutina.profesorCreadorNombre = original.profesorCreadorNombre;
-        rutina.profesorId = original.profesorId;
-
-        return { ok: false, error: (resultado && resultado.error) || 'error_desconocido' };
-      }
-    }
-
-    // Enviar notificación Push al alumno
-    this.crearNotificacion({
-      destinatarioRol: "alumno",
-      alumnoId: rutina.alumnoId,
-      mensaje: `Tu profesor ${profesorNombre || ''} actualizó tu rutina "${rutina.titulo}" 💪`,
-      rutaDestino: "rutina",
-      rutinaId: rutina.id
-    });
-
-    this.saveData();
-    return { ok: true, data: rutina };
-  }
-
-  // --- ACTIVAR/DESACTIVAR RUTINA ASIGNADA POR EL PROFESOR ---
-  // No confundir con eliminarRutinaPropia/editarRutinaPropia (rutinas
-  // 100% locales del alumno): esto es para rutinas asignadas por un
-  // profesor, con la misma lógica de "esperar confirmación real del
-  // servidor y revertir en memoria si falla" que editarRutinaExistente.
-  async cambiarEstadoRutina(rutinaId, profesorId, nuevoEstado) {
-    const rutina = this.getRutinaPorId(rutinaId);
-    if (!rutina) throw new Error("La rutina no fue encontrada.");
-    if (nuevoEstado !== 'activa' && nuevoEstado !== 'desactivada') {
-      throw new Error("Estado inválido.");
-    }
-
-    const estadoOriginal = rutina.estado;
-    rutina.estado = nuevoEstado;
-
-    if (window.supabaseEngine) {
-      const resultado = await window.supabaseEngine.cambiarEstadoRutinaEnSupabase(rutinaId, profesorId, nuevoEstado);
-      if (!resultado || resultado.ok !== true) {
-        rutina.estado = estadoOriginal;
-        return { ok: false, error: (resultado && resultado.error) || 'error_desconocido' };
-      }
-    }
-
-    // Si se desactiva la rutina que el alumno tenía marcada como activa,
-    // se le quita esa marca (getRutinaActiva ya no la devolvería igual,
-    // pero mantenemos rutinaActivaId consistente con el estado real).
-    if (nuevoEstado === 'desactivada') {
-      const alumno = this.getAlumnoPorId(rutina.alumnoId);
-      if (alumno && alumno.rutinaActivaId === rutinaId) alumno.rutinaActivaId = null;
-    }
-
-    this.saveData();
-    return { ok: true, data: rutina };
-  }
-
-  // --- BORRAR RUTINA ASIGNADA POR EL PROFESOR ---
-  async eliminarRutina(rutinaId, profesorId) {
-    const rutina = this.getRutinaPorId(rutinaId);
-    if (!rutina) throw new Error("La rutina no fue encontrada.");
-
-    if (window.supabaseEngine) {
-      const resultado = await window.supabaseEngine.eliminarRutinaEnSupabase(rutinaId, profesorId);
-      if (!resultado || resultado.ok !== true) {
-        return { ok: false, error: (resultado && resultado.error) || 'error_desconocido' };
-      }
-    }
-
-    const idx = this.data.rutinas.findIndex(r => r.id === rutinaId);
-    if (idx !== -1) this.data.rutinas.splice(idx, 1);
-
-    const alumno = this.getAlumnoPorId(rutina.alumnoId);
-    if (alumno && alumno.rutinaActivaId === rutinaId) alumno.rutinaActivaId = null;
-
-    this.saveData();
-    return { ok: true };
-  }
-
-  // --- CREAR/EDITAR/ELIMINAR RUTINA PROPIA (AUTO-GESTIÓN DEL ALUMNO) ---
-  // Las rutinas propias SÍ se persisten en Supabase (tabla routines, con
-  // profesor_id = NULL), pero por una vía separada de la del profesor:
-  // las RPCs guardar_rutina_propia_alumno / eliminar_rutina_propia_alumno
-  // (SECURITY DEFINER) validan la identidad del alumno vía auth.uid() en
-  // vez de depender de window._sessionProfesorId (que el alumno no tiene).
-  // Mismo patrón de "esperar confirmación real del servidor y revertir en
-  // memoria si falla" que usa editarRutinaExistente para rutinas de profesor.
-  async crearRutinaPropia({ alumnoId, titulo, duracionDias, dias }) {
-    const alumno = this.getAlumnoPorId(alumnoId);
-    if (!alumno) throw new Error("Alumno no encontrado.");
-
-    const hoy = new Date();
-    const fechaVenc = new Date(hoy.getTime() + Number(duracionDias) * 86400000);
-    const routineUuid = (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() : ("rutp-" + Date.now());
-
-    const nuevaRutina = {
-      id: routineUuid,
-      alumnoId,
-      // Rutina propia del alumno: nunca tiene profesor asociado en Supabase.
-      profesorId: null,
-      esPropia: true,
-      alumnoCreadorId: alumnoId,
-      profesorCreadorNombre: "Auto-gestionada por el alumno",
-      titulo: titulo || "Mi Rutina Personal",
-      duracionDias: Number(duracionDias) || 30,
-      fechaInicio: hoy.toISOString().split('T')[0],
-      fechaVencimiento: fechaVenc.toISOString().split('T')[0],
-      estado: "activa",
-      dias
-    };
-
-    if (window.supabaseEngine) {
-      const resultado = await window.supabaseEngine.persistirRutinaPropiaEnSupabase(nuevaRutina);
-
-      if (!resultado || resultado.ok !== true) {
-        throw new Error(
-          (resultado && resultado.error) || "No se pudo guardar la rutina en Supabase."
-        );
-      }
-
-      console.log("✅ Rutina propia guardada en Supabase:", resultado);
-    }
-
-    this.data.rutinas.push(nuevaRutina);
-    this.saveData();
-    return nuevaRutina;
-  }
-
-  async editarRutinaPropia({ rutinaId, alumnoId, titulo, duracionDias, dias }) {
-    const rutina = this.getRutinaPorId(rutinaId);
-    if (!rutina || !rutina.esPropia || rutina.alumnoCreadorId !== alumnoId) {
-      throw new Error("No tenés permiso para editar esta rutina.");
-    }
-
-    // Guardamos los valores originales antes de mutar, para poder revertir
-    // en memoria si Supabase rechaza el guardado (mismo patrón que
-    // editarRutinaExistente para rutinas de profesor).
-    const original = {
-      titulo: rutina.titulo,
-      duracionDias: rutina.duracionDias,
-      fechaVencimiento: rutina.fechaVencimiento,
-      dias: rutina.dias
-    };
-
-    rutina.titulo = titulo || rutina.titulo;
-    rutina.duracionDias = Number(duracionDias) || rutina.duracionDias;
-    const fInicio = rutina.fechaInicio ? new Date(rutina.fechaInicio) : new Date();
-    rutina.fechaVencimiento = new Date(fInicio.getTime() + Number(rutina.duracionDias) * 86400000).toISOString().split('T')[0];
-    rutina.dias = dias;
-
-    if (window.supabaseEngine) {
-      const resultado = await window.supabaseEngine.persistirRutinaPropiaEnSupabase(rutina);
-
-      if (!resultado || resultado.ok !== true) {
-        // Revertir: la persistencia falló, no dejamos "confirmado" en memoria
-        // algo que el servidor no aceptó.
-        rutina.titulo = original.titulo;
-        rutina.duracionDias = original.duracionDias;
-        rutina.fechaVencimiento = original.fechaVencimiento;
-        rutina.dias = original.dias;
-        return { ok: false, error: (resultado && resultado.error) || 'error_desconocido' };
-      }
-    }
-
-    this.saveData();
-    return { ok: true, data: rutina };
-  }
-
-  async eliminarRutinaPropia(rutinaId, alumnoId) {
-    const idx = this.data.rutinas.findIndex(r => r.id === rutinaId);
-    if (idx === -1) throw new Error("Rutina no encontrada.");
-    const rutina = this.data.rutinas[idx];
-    // Clasificación por profesorId (dato real, columna routines.profesor_id)
-    // y ownership por alumnoId (dato real, columna routines.alumno_id), NO
-    // por esPropia/alumnoCreadorId: esos son campos derivados que solo viven
-    // en el objeto JS local, y pueden quedar desactualizados si un sync pisó
-    // el objeto sin reconstruirlos exactamente. Mismo criterio que ya usan
-    // getRutinasAlumno()/getRutinasPropiasAlumno() para el listado.
-    if (rutina.profesorId != null || rutina.alumnoId !== alumnoId) {
-      throw new Error("No tenés permiso para eliminar esta rutina.");
-    }
-
-    // Confirmar eliminación en Supabase PRIMERO; recién si el servidor
-    // confirma, se elimina localmente. Si falla, la rutina queda intacta.
-    if (window.supabaseEngine) {
-      const resultado = await window.supabaseEngine.eliminarRutinaPropiaEnSupabase(rutinaId, alumnoId);
-      if (!resultado || resultado.ok !== true) {
-        return { ok: false, error: (resultado && resultado.error) || 'error_desconocido' };
-      }
-    }
-
-    this.data.rutinas.splice(idx, 1);
-    const alumno = this.getAlumnoPorId(alumnoId);
-    if (alumno && alumno.rutinaActivaId === rutinaId) alumno.rutinaActivaId = null;
-    this.saveData();
-    return { ok: true };
-  }
-
-  // --- SISTEMA DE PUNTUACIÓN Y RACHA SEMANAL ---
-  // Clave de semana ISO (YYYY-Www), estable independientemente del día exacto.
-  getWeekKey(date) {
-    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
-    const dayNum = d.getUTCDay() || 7;
-    d.setUTCDate(d.getUTCDate() + 4 - dayNum);
-    const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-    const weekNo = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
-    return `${d.getUTCFullYear()}-W${weekNo}`;
-  }
-
-  // +100 Base + Σ(peso × reps) por cada serie registrada / 100
-  // (equivale a Peso × Reps × Series / 100 cuando peso/reps son constantes entre series)
-  calcularPuntosSesion(setsLog) {
-    let volumen = 0;
-    (setsLog || []).forEach(s => {
-      const pesoNum = parseFloat(String(s.pesoUtilizado).replace(',', '.')) || 0;
-      const repsNum = Number(s.repsRealizadas) || 0;
-      volumen += pesoNum * repsNum;
-    });
-    return Math.round((100 + volumen / 100) * 100) / 100;
-  }
-
-  // Actualiza la racha semanal del alumno y suma los puntos totales.
-  // +50 puntos extra si esta sesión continúa una racha de 2+ semanas consecutivas.
-  actualizarRachaYSumarPuntos(alumno, fechaISO, puntosBase) {
-    const semanaActual = this.getWeekKey(new Date(fechaISO));
-    if (!alumno.rachaSemanal) alumno.rachaSemanal = { semanas: 0, ultimaSemana: null };
-
-    let bonusRacha = 0;
-    if (alumno.rachaSemanal.ultimaSemana !== semanaActual) {
-      const semanaAnteriorEsperada = this.getWeekKey(new Date(new Date(fechaISO).getTime() - 7 * 86400000));
-      alumno.rachaSemanal.semanas = (alumno.rachaSemanal.ultimaSemana === semanaAnteriorEsperada)
-        ? alumno.rachaSemanal.semanas + 1
-        : 1;
-      alumno.rachaSemanal.ultimaSemana = semanaActual;
-      if (alumno.rachaSemanal.semanas >= 2) bonusRacha = 50;
-    }
-
-    alumno.puntosTotal = Math.round(((alumno.puntosTotal || 0) + puntosBase + bonusRacha) * 100) / 100;
-    return bonusRacha;
-  }
-
-  // --- RANKING PÚBLICO (fuente: RPC get_ranking_publico vía Supabase) ---
-  // rankingCache se puebla en cada syncWithSupabase() y vive SOLO en memoria
-  // — nunca se serializa a localStorage (ver saveData() y loadData()).
-  // Los datos vienen de la RPC (SECURITY DEFINER, ignora RLS) y contienen
-  // únicamente las 5 columnas públicas: id, nombre, puntos_total,
-  // racha_semanas, racha_ultima_semana. Sin DNI, teléfono ni datos privados.
-  // La conversión snake_case → camelCase es necesaria porque renderRankingView()
-  // en app.js espera puntosTotal / rachaSemanal.semanas / rachaSemanal.ultimaSemana.
-  getRanking() {
-    if (!this.data.rankingCache || this.data.rankingCache.length === 0) {
-      return [];
-    }
-    return this.data.rankingCache.map((r, idx) => ({
-      id: r.id,
-      nombre: r.nombre,
-      puntosTotal: Number(r.puntos_total) || 0,
-      rachaSemanal: (r.racha_semanas || r.racha_ultima_semana)
-        ? { semanas: Number(r.racha_semanas) || 0, ultimaSemana: r.racha_ultima_semana || null }
-        : undefined,
-      posicion: idx + 1
-    }));
-  }
-
-  // Ventana de 2hs para poder editar un entrenamiento ya guardado.
-  puedeEditarseEntrenamiento(log) {
-    if (!log || !log.fecha) return false;
-    const transcurridoMs = Date.now() - new Date(log.fecha).getTime();
-    return transcurridoMs >= 0 && transcurridoMs <= 2 * 60 * 60 * 1000;
-  }
-
-  // Devuelve true si ya existe, ENTRE LOS DATOS QUE TENEMOS LOCALMENTE, un
-  // entrenamiento completado del alumno en el mismo día calendario (hora
-  // local del dispositivo) que fechaISO. Es la versión offline/optimista
-  // de la regla "el primer entrenamiento del día otorga los puntos": el
-  // servidor (RPC registrar_puntos_entrenamiento_alumno) es quien decide
-  // de forma autoritativa y atómica en zona horaria Argentina — esto solo
-  // se usa para no mostrarle al alumno una estimación de puntos que el
-  // servidor casi seguro va a corregir a 0 apenas haya conexión.
-  _yaHayEntrenamientoHoyLocal(alumnoId, fechaISO) {
-    const diaCal = new Date(fechaISO);
-    const y = diaCal.getFullYear(), m = diaCal.getMonth(), d = diaCal.getDate();
-    return this.data.workoutLogs.some(w => {
-      if (w.alumnoId !== alumnoId || w.estado !== 'completado') return false;
-      const f = new Date(w.fecha);
-      return f.getFullYear() === y && f.getMonth() === m && f.getDate() === d;
-    });
-  }
-
-  // --- GUARDADO DE SESIÓN DE ENTRENAMIENTO REAL POR SERIES Y COMENTARIO GENERAL ---
-  // Async: guarda localmente de forma optimista (para que la UI responda al
-  // instante incluso sin red) y, si hay conexión, corrige puntos/racha con
-  // el valor AUTORITATIVO que devuelve la RPC registrar_puntos_entrenamiento_alumno
-  // (servidor decide, en zona horaria Argentina, si este es el primer
-  // entrenamiento del día — la única fuente de verdad real ante múltiples
-  // dispositivos compitiendo casi al mismo tiempo).
-  async guardarEntrenamientoReal({ alumnoId, rutinaId, diaId, diaNombre, diaNumero, setsLog, comentarioGeneral = "" }) {
-    // UUID nativo desde el inicio: mismo ID en localStorage y en Supabase
-    const logId = (window.crypto && window.crypto.randomUUID)
-      ? window.crypto.randomUUID()
-      : ("log-" + Date.now());
-
-    const fechaISO = new Date().toISOString();
-    const alumno = this.getAlumnoPorId(alumnoId);
-
-    // --- ESTIMACIÓN LOCAL (optimista, puede quedar sobreescrita por el servidor) ---
-    const puntosBase = this.calcularPuntosSesion(setsLog);
-    const esPrimerEntrenamientoDelDiaLocal = alumno ? !this._yaHayEntrenamientoHoyLocal(alumnoId, fechaISO) : false;
-    let bonusRacha = 0;
-    let puntosSesion = 0;
-    if (alumno && esPrimerEntrenamientoDelDiaLocal) {
-      bonusRacha = this.actualizarRachaYSumarPuntos(alumno, fechaISO, puntosBase);
-      puntosSesion = puntosBase + bonusRacha;
-    }
-
-    const nuevoLog = {
-      id: logId,
-      alumnoId,
-      rutinaId,
-      diaId,
-      diaNombre,
-      diaNumero: diaNumero || 1,
-      fecha: fechaISO,
-      estado: "completado",
-      comentarioGeneral: comentarioGeneral || "",
-      sets: setsLog,
-      puntos: puntosSesion,
-      bonusRacha,
-      puntosConfirmadosPorServidor: false
-    };
-
-    this.data.workoutLogs.unshift(nuevoLog);
-
-    if (alumno) {
-      this.crearNotificacion({
-        destinatarioRol: "profesor",
-        alumnoId: alumno.id,
-        mensaje: `✅ ${alumno.nombre} completó su entrenamiento: ${diaNombre}.`,
-        rutaDestino: "historial"
-      });
-    }
-
-    this.saveData();
-
-    // --- CONFIRMACIÓN AUTORITATIVA DEL SERVIDOR ---
-    let resultadoPuntos = null;
-    if (window.supabaseEngine) {
-      await window.supabaseEngine.guardarWorkoutLogEnSupabase(nuevoLog);
-      resultadoPuntos = await window.supabaseEngine.registrarPuntosEntrenamientoEnSupabase(logId, alumnoId);
-
-      if (resultadoPuntos && resultadoPuntos.ok && alumno) {
-        // El servidor manda: se pisa la estimación local (incluyendo el caso
-        // "ya había otro entrenamiento hoy" → puntosGanados/bonusRacha en 0).
-        nuevoLog.puntos = Number(resultadoPuntos.puntosGanados) || 0;
-        nuevoLog.bonusRacha = Number(resultadoPuntos.bonusRacha) || 0;
-        nuevoLog.puntosConfirmadosPorServidor = true;
-        alumno.puntosTotal = Number(resultadoPuntos.puntosTotal) || 0;
-        this.saveData();
-        // Refresca el ranking en memoria para que el puntaje recién ganado
-        // se vea de inmediato, sin esperar al próximo visibilitychange/sync.
-        await this.forceRefreshRanking();
-        
-        // Fuerza el re-renderizado de la UI con el ranking actualizado
-        if (typeof window.renderApp === 'function') {
-          console.log("🎨 guardarEntrenamientoReal: Re-renderizando UI con ranking actualizado...");
-          window.renderApp();
-        }
-      }
-    }
-
-    const yaHuboEntrenamientoHoy = (resultadoPuntos && resultadoPuntos.ok)
-      ? !!resultadoPuntos.yaHuboEntrenamientoHoy
-      : !esPrimerEntrenamientoDelDiaLocal;
-
-    return { ...nuevoLog, yaHuboEntrenamientoHoy };
-  }
-
-  // --- EDITAR ENTRENAMIENTO YA GUARDADO (solo dentro de la ventana de 2hs) ---
-  // No recalcula ni toca puntos: quedan fijados en el momento del primer
-  // guardado, tal como se decidió para el sistema de puntos/ranking.
-  async editarEntrenamientoReciente({ logId, alumnoId, setsLog, comentarioGeneral }) {
-    const log = this.data.workoutLogs.find(w => w.id === logId);
-    if (!log) throw new Error("Entrenamiento no encontrado.");
-    if (log.alumnoId !== alumnoId) throw new Error("No tenés permiso para editar este entrenamiento.");
-    if (!this.puedeEditarseEntrenamiento(log)) {
-      throw new Error("Ya pasaron más de 2 horas desde que se guardó este entrenamiento, no se puede editar.");
-    }
-
-    if (window.supabaseEngine) {
-      const resultado = await window.supabaseEngine.editarWorkoutLogSetsEnSupabase(logId, alumnoId, setsLog, comentarioGeneral);
-      if (!resultado || resultado.ok !== true) {
-        return { ok: false, error: (resultado && resultado.error) || 'error_desconocido' };
-      }
-    }
-
-    log.sets = setsLog;
-    if (comentarioGeneral !== undefined && comentarioGeneral !== null) {
-      log.comentarioGeneral = comentarioGeneral;
-    }
-    this.saveData();
-    return { ok: true, data: log };
-  }
-
-  crearNotificacion({ destinatarioRol, alumnoId, mensaje, rutaDestino = "rutina", rutinaId = null }) {
-    const notif = {
-      id: "notif-" + Date.now() + Math.random().toString(36).substr(2, 4),
-      destinatarioRol,
-      alumnoId,
-      mensaje,
-      rutaDestino,
-      rutinaId,
-      fecha: new Date().toISOString(),
-      leido: false
-    };
-
-    this.data.notificaciones.unshift(notif);
-
-    // Enviar Web Push real si es un alumno y Supabase Engine está activo
-    if (destinatarioRol === "alumno" && alumnoId && window.supabaseEngine) {
-      window.supabaseEngine.enviarPushNotificationAAlumno(alumnoId, {
-        title: '🏋️ Estudio Fitness',
-        body: mensaje,
-        url: './index.html',
-        routineId: rutinaId
-      });
-    }
-
-    this.dispararNotificacionPushNativa(mensaje);
-    this.saveData();
-  }
-
-  getNotificacionesPorRol(rol, alumnoId = null) {
-    return this.data.notificaciones.filter(n => {
-      if (n.destinatarioRol !== rol) return false;
-      if (rol === 'alumno' && n.alumnoId !== alumnoId) return false;
-      return true;
-    });
-  }
-
-  marcarNotificacionesLeidas(rol, alumnoId = null) {
-    this.data.notificaciones.forEach(n => {
-      if (n.destinatarioRol === rol) {
-        if (rol === 'alumno' && n.alumnoId !== alumnoId) return;
-        n.leido = true;
-      }
-    });
-    this.saveData();
-  }
-
-  checkExpirationsAndNotify() {
-    let huboCambios = false;
-    const hoy = new Date();
-    this.data.rutinas.forEach(rutina => {
-      if (rutina.estado === 'activa') {
-        const d = this.calcularDiasRestantes(rutina.fechaVencimiento);
-        if (d <= 1 && d >= 0) {
-          const alumno = this.getAlumnoPorId(rutina.alumnoId);
-          if (alumno) {
-            const yaNotificado = this.data.notificaciones.some(
-              n => n.destinatarioRol === 'profesor' && 
-                   n.alumnoId === alumno.id && 
-                   n.mensaje.includes('vence mañana') &&
-                   this.esMismoDia(new Date(n.fecha), hoy)
-            );
-            if (!yaNotificado) {
-              this.crearNotificacion({
-                destinatarioRol: "profesor",
-                alumnoId: alumno.id,
-                mensaje: `⏰ La rutina de ${alumno.nombre} (DNI ${alumno.dni}) vence mañana.`
-              });
-              this.crearNotificacion({
-                destinatarioRol: "alumno",
-                alumnoId: alumno.id,
-                mensaje: `⏰ Tu rutina "${rutina.titulo}" vence mañana. ¡Contacta a tu profe!`
-              });
-              huboCambios = true;
-            }
-          }
-        } else if (d < 0) {
-          rutina.estado = 'expirada';
-          huboCambios = true;
-        }
-      }
-    });
-    if (huboCambios) this.saveData();
-  }
-
-  calcularDiasRestantes(fechaVencStr) {
-    const hoy = new Date(); hoy.setHours(0,0,0,0);
-    const venc = new Date(fechaVencStr); venc.setHours(0,0,0,0);
-    return Math.ceil((venc.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24));
-  }
-
-  esMismoDia(d1, d2) {
-    return d1.getFullYear() === d2.getFullYear() && d1.getMonth() === d2.getMonth() && d1.getDate() === d2.getDate();
-  }
-
-  dispararNotificacionPushNativa(mensaje) {
-    if ('Notification' in window && Notification.permission === 'granted') {
-      try {
-        if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
-          navigator.serviceWorker.ready.then(reg => {
-            reg.showNotification('Estudio Fitness 🏋️‍♂️', {
-              body: mensaje,
-              icon: './icons/icon-192x192.png',
-              badge: './icons/icon-192x192.png',
-              tag: 'estudio-fitness-' + Date.now()
-            });
+    document.getElementById('btnFinishWorkout')?.addEventListener('click', async (e) => {
+      const dia = appState.diaActivoEntrenamiento;
+      const alumno = appState.usuarioActual.data;
+      const rutinaActiva = store.getRutinaPorId(appState.rutinaSeleccionadaId) || store.getRutinaActiva(alumno.id);
+
+      const setsLogArr = [];
+      Object.keys(appState.workoutDraftSets).forEach(ejId => {
+        const ejData = appState.workoutDraftSets[ejId];
+        ejData.sets.forEach(s => {
+          setsLogArr.push({
+            ejercicioId:       ejId,              // para vincular exercise_goal_id en Supabase
+            ejercicioNombre:   ejData.nombre,
+            setNumero:         s.setNumero,
+            repsRealizadas:    s.reps,
+            pesoUtilizado:     s.peso,
+            comentarioAlumno:  s.comentarioSet || ''
           });
-        }
-      } catch (e) {
-        console.warn("Push error:", e);
+        });
+      });
+
+      // VALIDACIÓN CRÍTICA: Verificar que existe una rutina activa válida
+      // Si no hay rutina en Supabase, el alumno debe contactar al profesor
+      if (!rutinaActiva) {
+        alert('❌ No tienes una rutina activa asignada.\n\nContacta a tu profesor para que te asigne una rutina de entrenamiento.');
+        renderApp();
+        return;
       }
+
+      // guardarEntrenamientoReal es async: guarda local de forma optimista y
+      // espera la confirmación autoritativa del servidor (RPC de puntos) antes
+      // de mostrar el mensaje final, así el alumno nunca ve un número de
+      // puntos que el servidor va a corregir un segundo después.
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      btn.textContent = '⏳ Guardando...';
+
+      const logGuardado = await store.guardarEntrenamientoReal({
+        alumnoId:         alumno.id,
+        rutinaId:         rutinaActiva.id,
+        diaId:            dia.id,
+        diaNombre:        dia.nombre,
+        diaNumero:        dia.diaNumero || 1,    // número real del día en la rutina
+        setsLog:          setsLogArr,
+        comentarioGeneral: appState.workoutGeneralComment || ''
+      });
+
+      // VALIDACIÓN CRÍTICA: Verificar que la RPC confirmó los puntos en el servidor
+      const puntosConfirmadosPorServidor = logGuardado?.puntosConfirmadosPorServidor === true;
+      
+      if (!puntosConfirmadosPorServidor) {
+        // La RPC falló silenciosamente → No se pueden dar por válidos los puntos
+        alert(`⚠️ Entrenamiento guardado en tu historial, pero no se pudieron guardar los puntos en el servidor.\n\nIntentaremos de nuevo automáticamente. Si el problema persiste, contactá al profesor.`);
+      } else {
+        // La RPC fue exitosa → Mostrar el mensaje de éxito real
+        const puntosGanados = Math.round((logGuardado?.puntos || 0));
+        const bonusTexto = logGuardado?.bonusRacha ? ` (incluye +${logGuardado.bonusRacha} 🔥 bonus por racha semanal)` : '';
+        const mensajePuntos = logGuardado?.yaHuboEntrenamientoHoy
+          ? `Ya sumaste puntos hoy con otro entrenamiento — este quedó guardado en tu historial, pero no otorga puntos adicionales (solo se otorgan puntos una vez por día).`
+          : `+${puntosGanados} puntos ganados${bonusTexto}`;
+        alert(`🏆 ¡Entrenamiento completado y guardado en tu historial!\n${mensajePuntos}`);
+      }
+      clearWorkoutDraft();
+      appState.diaActivoEntrenamiento = null;
+      appState.tabCliente = 'historial';
+      renderApp();
+    });
+
+    const cerrarModalGenerico = () => {
+      appState.modalActivo = null;
+      appState.rutinaAEliminarId = null;
+      appState.logEnEdicionId = null;
+      appState.editDraftSets = null;
+      appState.editDraftComentario = '';
+      renderApp();
+    };
+    document.getElementById('btnCloseModal')?.addEventListener('click', cerrarModalGenerico);
+    document.getElementById('btnCancelModal')?.addEventListener('click', cerrarModalGenerico);
+
+    document.getElementById('btnGuardarEdicionEntrenamiento')?.addEventListener('click', async () => {
+      const alumno = appState.usuarioActual.data;
+      try {
+        const resultado = await store.editarEntrenamientoReciente({
+          logId: appState.logEnEdicionId,
+          alumnoId: alumno.id,
+          setsLog: appState.editDraftSets,
+          comentarioGeneral: appState.editDraftComentario
+        });
+        if (resultado && resultado.ok) {
+          alert("✅ Entrenamiento actualizado correctamente.");
+        } else {
+          alert("❌ No se pudo guardar la edición: " + ((resultado && resultado.error) || "error desconocido"));
+        }
+      } catch (err) {
+        alert("❌ Error: " + err.message);
+      }
+      cerrarModalGenerico();
+    });
+
+    document.getElementById('btnConfirmarBorradoRutina')?.addEventListener('click', async () => {
+      const rId = appState.rutinaAEliminarId;
+      const profesorId = window._sessionProfesorId || appState.usuarioActual.data.id;
+      const resultado = await store.eliminarRutina(rId, profesorId);
+      appState.modalActivo = null;
+      appState.rutinaAEliminarId = null;
+      if (!resultado || resultado.ok !== true) {
+        alert("❌ No se pudo borrar la rutina: " + ((resultado && resultado.error) || "error desconocido"));
+      }
+      renderApp();
+    });
+
+    const formNuevo = document.getElementById('formNuevoAlumno');
+    if (formNuevo) {
+      formNuevo.addEventListener('submit', (e) => {
+        e.preventDefault();
+        try {
+          const dni = document.getElementById('newDni').value;
+          const nombre = document.getElementById('newNombre').value;
+          const tel = document.getElementById('newTel').value;
+          store.autorizarOAgregarAlumnoPorProfesor({ dni, nombre, telefono: tel });
+          alert("✅ Alumno registrado y DNI autorizado correctamente.");
+          appState.modalActivo = null;
+          renderApp();
+        } catch (err) {
+          alert("❌ Error: " + err.message);
+        }
+      });
+    }
+
+    const formRutina = document.getElementById('formCrearRutina');
+    if (formRutina) {
+      setupRoutineFormBuilder();
+      formRutina.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        await saveRoutineFromForm();
+      });
     }
   }
-}
 
-window.gymStore = new GymStore();
+  function bindAccordionEvents() {
+    document.querySelectorAll('.history-accordion-header').forEach(header => {
+      header.addEventListener('click', () => {
+        const accId = header.dataset.accId;
+        const body = document.getElementById(accId);
+        if (body) {
+          const estaAbierto = body.style.display === 'block';
+          body.style.display = estaAbierto ? 'none' : 'block';
+        }
+      });
+    });
+  }
+
+  // --- RECUPERAR SESIÓN DE SUPABASE AUTH AL INICIO (Etapa 1) ---
+  // Se ejecuta como IIFE async para poder usar await antes del primer renderApp().
+  // Si Supabase Auth tiene una sesión activa (JWT válido en localStorage del
+  // navegador), se intenta recuperar el perfil local correspondiente por
+  // authUserId = session.user.id. Si se encuentra, se restaura appState y
+  // window._session* exactamente como haría un login() exitoso. Si no hay
+  // sesión, o el perfil no existe localmente todavía (todavía sin vincular),
+  // se arranca en la pantalla de login sin mostrar ningún error.
+  // Este bloque no modifica ni borra ninguna contraseña legacy.
+  (async () => {
+    try {
+      if (window.supabaseEngine) {
+        // Esperar que el store tenga datos básicos (la sync inicial diferida
+        // del constructor de GymStore ya se programó con setTimeout 400ms;
+        // aquí no la esperamos explícitamente para no bloquear el arranque,
+        // pero usamos lo que ya hay en localStorage + lo que Supabase Auth
+        // puede darnos en el token).
+        const session = await window.supabaseEngine.authGetSession();
+        if (session && session.user) {
+          const authUid = session.user.id;
+          console.log('🔑 Sesión Supabase Auth encontrada al inicio → authUserId:', authUid);
+
+          // Buscar perfil local por authUserId (ya puede estar en localStorage
+          // si el usuario se logueó antes y guardamos el campo).
+          const perfilProfesor = store.data.profesores.find(p => p.authUserId === authUid);
+          const perfilAlumno   = !perfilProfesor
+            ? store.data.alumnos.find(a => a.authUserId === authUid)
+            : null;
+
+          if (perfilProfesor) {
+            appState.usuarioActual = { rol: 'profesor', data: perfilProfesor };
+            window._sessionProfesorId = perfilProfesor.id;
+            window._sessionAlumnoId   = null;
+            console.log('✅ Sesión restaurada como PROFESOR:', perfilProfesor.nombre);
+            // Sincronizar rutinas del profesor en segundo plano
+            setTimeout(() => gymStore.syncRutinasProfesor(), 400);
+          } else if (perfilAlumno) {
+            appState.usuarioActual = { rol: 'alumno', data: perfilAlumno };
+            window._sessionAlumnoId   = perfilAlumno.id;
+            window._sessionProfesorId = null;
+            console.log('✅ Sesión restaurada como ALUMNO:', perfilAlumno.nombre);
+            // Detectar borrador de entrenamiento sin terminar de este alumno
+            // (nunca el de otro usuario — getBorradorPropio verifica ownerId
+            // contra el alumno recién restaurado).
+            appState.borradorEntrenamientoDetectado = getBorradorPropio();
+            // Sincronizar rutinas e historial del alumno en segundo plano
+            setTimeout(async () => {
+              await gymStore.syncWithSupabase(perfilAlumno.id);
+              if (window.supabaseEngine) {
+                const sbLogs = await window.supabaseEngine.obtenerHistorialDesdeSupabase(perfilAlumno.id);
+                if (sbLogs && sbLogs.length > 0) {
+                  sbLogs.forEach(sbLog => {
+                    const idx = gymStore.data.workoutLogs.findIndex(w => w.id === sbLog.id);
+                    if (idx >= 0) gymStore.data.workoutLogs[idx] = sbLog;
+                    else gymStore.data.workoutLogs.push(sbLog);
+                  });
+                  gymStore.saveData();
+                  window.dispatchEvent(new CustomEvent('gym_store_updated'));
+                }
+              }
+            }, 400);
+          } else {
+            // Hay sesión Auth pero el perfil aún no está vinculado localmente.
+            // Esto puede pasar si el usuario limpia localStorage pero la sesión
+            // de Auth sigue válida. En ese caso arrancamos en login para que
+            // el usuario ingrese sus credenciales y la vinculación se complete.
+            console.log('ℹ️ Sesión Auth encontrada pero perfil no vinculado localmente → ir a login.');
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('⚠️ Error al recuperar sesión inicial de Supabase Auth (no crítico):', e);
+    }
+
+    renderApp();
+  })();
+});
+        } else if (e.target.classList.contains('btn-toggle-estado-rutina-click')) {
+          e.stopPropagation();
+          const rId = e.target.dataset.rutinaId;
+          const estadoActual = e.target.dataset.estadoActual;
+          const nuevoEstado = estadoActual === 'desactivada' ? 'activa' : 'desactivada';
+          const profesorId = window._sessionProfesorId || appState.usuarioActual.data.id;
+          e.target.disabled = true;
+          const resultado = await store.cambiarEstadoRutina(rId, profesorId, nuevoEstado);
+          if (!resultado || resultado.ok !== true) {
+            alert("❌ No se pudo cambiar el estado de la rutina: " + ((resultado && resultado.error) || "error desconocido"));
+          }
+          renderApp();
+        } else if (e.target.classList.contains('btn-borrar-rutina-click')) {
+          e.stopPropagation();
+          appState.rutinaAEliminarId = e.target.dataset.rutinaId;
+          appState.modalActivo = 'confirmar_borrado_rutina';
+          renderApp();
+        } else if (e.target.classList.contains('btn-edit-nombre')) {
+          e.stopPropagation();
+          const dniAlumno = e.target.dataset.dni;
+          const alumnoActual = store.getAlumnoPorId(alumnoId);
+          const nombreActual = (alumnoActual && (alumnoActual.nombreProfesor || alumnoActual.nombre)) || '';
+          const nuevoNombre = prompt("Apodo para identificar a este alumno en tu panel:", nombreActual);
+          if (nuevoNombre === null) return; // cancelado
+          if (!nuevoNombre.trim()) {
+            alert("El apodo no puede estar vacío.");
+            return;
+          }
+          e.target.disabled = true;
+          try {
+            await store.editarNombreProfesor({ dni: dniAlumno, nuevoNombre: nuevoNombre.trim() });
+          } catch (err) {
+            alert("❌ No se pudo actualizar el apodo: " + err.message);
+          }
+          renderApp();
+        } else {
+          const rutina = store.getRutinaActiva(alumnoId);
+          appState.alumnoSeleccionadoId = alumnoId;
+          if (rutina) {
+            appState.rutinaEnEdicionId = rutina.id;
+            appState.modalActivo = 'editar_rutina';
+            initFormBuilderForRoutine(rutina.id);
+          } else {
+            appState.rutinaEnEdicionId = null;
+            appState.modalActivo = 'crear_rutina';
+            initFormBuilderForNew();
+          }
+          renderApp();
+        }
+      });
+    });
+
+    bindAccordionEvents();
+  }
+
+  function renderModalNuevoAlumno() {
+    return `
+      <div class="modal-overlay">
+        <div class="modal-content" style="max-width:440px">
+          <div class="modal-header">
+            <h3>👤 Registrar y Autorizar DNI</h3>
+            <button class="close-btn" id="btnCloseModal">&times;</button>
+          </div>
+          <form id="formNuevoAlumno">
+            <div class="form-group">
+              <label class="form-label">DNI del Alumno *</label>
+              <input type="text" id="newDni" class="form-input" placeholder="Ej: 55667788" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Nombre Completo *</label>
+              <input type="text" id="newNombre" class="form-input" placeholder="Ej: Rodrigo Ruiz" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Teléfono (Opcional)</label>
+              <input type="text" id="newTel" class="form-input" placeholder="Ej: 1122334455">
+            </div>
+
+            <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:20px">
+              <button type="button" class="btn btn-secondary" id="btnCancelModal">Cancelar</button>
+              <button type="submit" class="btn btn-primary">Autorizar Alumno 💾</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderModalFormularioRutina(modo) {
+    const esPropiaModo = modo === 'crear_rutina_propia' || modo === 'editar_rutina_propia';
+    const esEdicion = modo === 'editar_rutina' || modo === 'editar_rutina_propia';
+    const alumno = store.getAlumnoPorId(appState.alumnoSeleccionadoId);
+    const rutinaExistente = esEdicion ? store.getRutinaPorId(appState.rutinaEnEdicionId) : null;
+
+    const tituloModal = esPropiaModo
+      ? (esEdicion ? '✏️ Editar Mi Rutina' : '📝 Crear Mi Rutina Propia')
+      : `${esEdicion ? '✏️ Editar Rutina' : '📝 Asignar Nueva Rutina'} — ${alumno ? alumno.nombre : ''}`;
+
+    return `
+      <div class="modal-overlay">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3>${tituloModal}</h3>
+            <button class="close-btn" id="btnCloseModal">&times;</button>
+          </div>
+
+          <form id="formCrearRutina">
+            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap:12px">
+              <div class="form-group">
+                <label class="form-label">Título de la Rutina *</label>
+                <input type="text" id="routineTitle" class="form-input" value="${rutinaExistente ? rutinaExistente.titulo : 'Fuerza e Hipertrofia'}" required>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Duración (Días) *</label>
+                <input type="number" id="routineDuration" class="form-input" min="1" max="180" value="${rutinaExistente ? rutinaExistente.duracionDias : 30}" required>
+              </div>
+            </div>
+
+            <div style="display:flex; justify-content:space-between; align-items:center; margin:16px 0 10px; border-top:1px solid var(--border-color); padding-top:14px">
+              <h4 style="color:var(--red-primary); font-weight:900">Días de Entrenamiento y Ejercicios</h4>
+              <button type="button" class="btn btn-secondary btn-sm" id="btnAddDay">+ Agregar Día</button>
+            </div>
+
+            <div id="daysContainer"></div>
+
+            <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:24px">
+              <button type="button" class="btn btn-secondary" id="btnCancelModal">Cancelar</button>
+              <button type="submit" class="btn btn-primary">
+                ${esEdicion ? '💾 Guardar Cambios' : (esPropiaModo ? '🚀 Crear Mi Rutina' : '🚀 Asignar Nueva Rutina')}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderModalHistorialAlumno() {
+    const alumno = store.getAlumnoPorId(appState.alumnoSeleccionadoId);
+    if (!alumno) return '';
+
+    // Si no hay caché y Supabase está disponible, disparar fetch async
+    if (appState.historialProfesorLogs === null && window.supabaseEngine && window._sessionProfesorId) {
+      const alumnoId = alumno.id;
+      const profesorId = window._sessionProfesorId;
+      window.supabaseEngine.obtenerHistorialParaProfesor(alumnoId, profesorId)
+        .then(sbLogs => {
+          appState.historialProfesorLogs = sbLogs && sbLogs.length > 0
+            ? sbLogs
+            : store.getHistorialEntrenamientosReales(alumnoId); // fallback local
+          window.dispatchEvent(new CustomEvent('gym_store_updated'));
+        })
+        .catch(() => {
+          appState.historialProfesorLogs = store.getHistorialEntrenamientosReales(alumnoId);
+          window.dispatchEvent(new CustomEvent('gym_store_updated'));
+        });
+    }
+
+    const historialLogs = appState.historialProfesorLogs
+      ?? store.getHistorialEntrenamientosReales(alumno.id);
+
+    return `
+      <div class="modal-overlay">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h3>📜 Historial: ${alumno.nombre}</h3>
+            <button class="close-btn" id="btnCloseModal">&times;</button>
+          </div>
+          ${appState.historialProfesorLogs === null
+            ? `<div style="text-align:center; padding:40px; color:var(--text-gray)">
+                <div style="font-size:2rem; margin-bottom:8px">⏳</div>
+                Cargando historial desde Supabase...
+               </div>`
+            : renderHistorialAgrupado(historialLogs, store.data.rutinas)
+          }
+        </div>
+      </div>
+    `;
+  }
+
+  function renderModalConfirmarBorradoRutina() {
+    const rutina = store.getRutinaPorId(appState.rutinaAEliminarId);
+    if (!rutina) return '';
+    return `
+      <div class="modal-overlay">
+        <div class="modal-content" style="max-width:420px">
+          <div class="modal-header">
+            <h3>🗑️ Borrar Rutina</h3>
+            <button class="close-btn" id="btnCloseModal">&times;</button>
+          </div>
+          <p style="color:var(--text-gray); font-size:0.92rem; line-height:1.5">
+            ¿Seguro que querés borrar <strong style="color:#fff">"${rutina.titulo}"</strong>?
+            Esta acción no se puede deshacer. El historial de entrenamientos ya guardado del alumno no se borra.
+          </p>
+          <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:20px">
+            <button type="button" class="btn btn-secondary" id="btnCancelModal">Cancelar</button>
+            <button type="button" class="btn btn-primary" id="btnConfirmarBorradoRutina" style="background:var(--red-primary)">Sí, Borrar 🗑️</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  let currentFormDays = [];
+
+  function initFormBuilderForNew() {
+    currentFormDays = [
+      {
+        nombre: "Día 1: Pecho, Hombro y Tríceps",
+        ejercicios: [
+          { nombre: "Press Plano con Barra", series: 4, repeticiones: "10-12", peso: "60 kg", notaProfesor: "Controlar bajada", videoUrl: "" }
+        ]
+      }
+    ];
+  }
+
+  function initFormBuilderForRoutine(rutinaId) {
+    const rutina = store.getRutinaPorId(rutinaId);
+    if (rutina && rutina.dias) {
+      currentFormDays = rutina.dias.map(d => ({
+        nombre: d.nombre,
+        ejercicios: d.ejercicios.map(e => ({
+          nombre: e.nombre,
+          series: e.seriesTarget || 3,
+          repeticiones: e.repeticionesTarget || "12",
+          peso: e.pesoSugerido || "S/D",
+          notaProfesor: e.notaProfesor || "",
+          videoUrl: e.videoUrl || ""
+        }))
+      }));
+    } else {
+      initFormBuilderForNew();
+    }
+  }
+
+  function setupRoutineFormBuilder() {
+    renderFormDays();
+    document.getElementById('btnAddDay')?.addEventListener('click', () => {
+      currentFormDays.push({
+        nombre: `Día ${currentFormDays.length + 1}: General`,
+        ejercicios: [{ nombre: "Nuevo Ejercicio", series: 3, repeticiones: "12", peso: "10 kg", notaProfesor: "", videoUrl: "" }]
+      });
+      renderFormDays();
+    });
+  }
+
+  function renderFormDays() {
+    const container = document.getElementById('daysContainer');
+    if (!container) return;
+
+    container.innerHTML = currentFormDays.map((dia, diaIdx) => `
+      <div style="background:rgba(0,0,0,0.5); border:1px solid var(--border-color); border-radius:var(--radius-sm); padding:14px; margin-bottom:14px">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; margin-bottom:10px; flex-wrap:wrap">
+          <input type="text" class="form-input" value="${dia.nombre}" onchange="window.updateFormDayName(${diaIdx}, this.value)" style="font-weight:800; flex:1; min-width:140px">
+          <div style="display:flex; gap:4px">
+            <button type="button" class="btn btn-secondary btn-sm" onclick="window.moveFormDayUp(${diaIdx})" title="Subir Día" style="padding:4px 8px">⬆️</button>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="window.moveFormDayDown(${diaIdx})" title="Bajar Día" style="padding:4px 8px">⬇️</button>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="window.addFormExercise(${diaIdx})">+ Ejercicio</button>
+            ${currentFormDays.length > 1 ? `<button type="button" class="btn btn-secondary btn-sm" onclick="window.removeFormDay(${diaIdx})" style="color:var(--red-primary); border-color:var(--red-primary); padding:4px 8px">🗑️</button>` : ''}
+          </div>
+        </div>
+
+        ${dia.ejercicios.map((ej, ejIdx) => `
+          <div style="background:rgba(255,255,255,0.03); border:1px solid var(--border-color); padding:10px; border-radius:8px; margin-bottom:8px">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; margin-bottom:6px">
+              <div class="form-group" style="margin-bottom:0; flex:1">
+                <label class="form-label" style="font-size:0.75rem">Nombre del Ejercicio</label>
+                <input type="text" class="form-input" value="${ej.nombre}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'nombre', this.value)">
+              </div>
+              <div style="display:flex; gap:4px; margin-top:16px">
+                <button type="button" class="btn btn-secondary btn-sm" onclick="window.moveFormExerciseUp(${diaIdx}, ${ejIdx})" style="padding:4px 6px" title="Subir Ejercicio">⬆️</button>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="window.moveFormExerciseDown(${diaIdx}, ${ejIdx})" style="padding:4px 6px" title="Bajar Ejercicio">⬇️</button>
+                ${dia.ejercicios.length > 1 ? `<button type="button" class="btn btn-secondary btn-sm" onclick="window.removeFormExercise(${diaIdx}, ${ejIdx})" style="color:var(--red-primary); border-color:var(--red-primary); padding:4px 6px">🗑️</button>` : ''}
+              </div>
+            </div>
+
+            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(85px, 1fr)); gap:8px; margin-bottom:6px">
+              <div class="form-group" style="margin-bottom:0">
+                <label class="form-label" style="font-size:0.72rem">Series Objetivo</label>
+                <input type="number" class="form-input" value="${ej.series}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'series', this.value)">
+              </div>
+              <div class="form-group" style="margin-bottom:0">
+                <label class="form-label" style="font-size:0.72rem">Reps Objetivo</label>
+                <input type="text" class="form-input" value="${ej.repeticiones}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'repeticiones', this.value)">
+              </div>
+              <div class="form-group" style="margin-bottom:0">
+                <label class="form-label" style="font-size:0.72rem">Peso Sugerido</label>
+                <input type="text" class="form-input" value="${ej.peso}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'peso', this.value)">
+              </div>
+            </div>
+
+            <div class="form-group" style="margin-bottom:0">
+              <label class="form-label" style="font-size:0.72rem">Indicación / Nota del Profesor</label>
+              <input type="text" class="form-input" placeholder="Ej: Controlar 2 seg de bajada" value="${ej.notaProfesor || ''}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'notaProfesor', this.value)">
+            </div>
+
+            <div class="form-group" style="margin-bottom:0; margin-top:6px">
+              <label class="form-label" style="font-size:0.72rem">🎬 URL de Video/Demo (Opcional)</label>
+              <input type="url" class="form-input" placeholder="https://youtube.com/..." value="${ej.videoUrl || ''}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'videoUrl', this.value)">
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `).join('');
+  }
+
+  window.updateFormDayName = (diaIdx, val) => { currentFormDays[diaIdx].nombre = val; };
+  window.addFormExercise = (diaIdx) => {
+    currentFormDays[diaIdx].ejercicios.push({ nombre: "Nuevo Ejercicio", series: 3, repeticiones: "12", peso: "10 kg", notaProfesor: "", videoUrl: "" });
+    renderFormDays();
+  };
+  window.removeFormExercise = (diaIdx, ejIdx) => {
+    currentFormDays[diaIdx].ejercicios.splice(ejIdx, 1);
+    renderFormDays();
+  };
+  window.removeFormDay = (diaIdx) => {
+    currentFormDays.splice(diaIdx, 1);
+    renderFormDays();
+  };
+  window.moveFormDayUp = (diaIdx) => {
+    if (diaIdx > 0) {
+      const temp = currentFormDays[diaIdx];
+      currentFormDays[diaIdx] = currentFormDays[diaIdx - 1];
+      currentFormDays[diaIdx - 1] = temp;
+      renderFormDays();
+    }
+  };
+  window.moveFormDayDown = (diaIdx) => {
+    if (diaIdx < currentFormDays.length - 1) {
+      const temp = currentFormDays[diaIdx];
+      currentFormDays[diaIdx] = currentFormDays[diaIdx + 1];
+      currentFormDays[diaIdx + 1] = temp;
+      renderFormDays();
+    }
+  };
+  window.moveFormExerciseUp = (diaIdx, ejIdx) => {
+    if (ejIdx > 0) {
+      const ejs = currentFormDays[diaIdx].ejercicios;
+      const temp = ejs[ejIdx];
+      ejs[ejIdx] = ejs[ejIdx - 1];
+      ejs[ejIdx - 1] = temp;
+      renderFormDays();
+    }
+  };
+  window.moveFormExerciseDown = (diaIdx, ejIdx) => {
+    const ejs = currentFormDays[diaIdx].ejercicios;
+    if (ejIdx < ejs.length - 1) {
+      const temp = ejs[ejIdx];
+      ejs[ejIdx] = ejs[ejIdx + 1];
+      ejs[ejIdx + 1] = temp;
+      renderFormDays();
+    }
+  };
+  window.updateFormExercise = (diaIdx, ejIdx, field, val) => {
+    currentFormDays[diaIdx].ejercicios[ejIdx][field] = val;
+  };
+
+  async function saveRoutineFromForm() {
+    const titulo = document.getElementById('routineTitle').value;
+    const duracion = document.getElementById('routineDuration').value;
+    const usuarioActualData = appState.usuarioActual.data;
+    const esModoAlumnoPropio = appState.modalActivo === 'crear_rutina_propia' || appState.modalActivo === 'editar_rutina_propia';
+
+    const formattedDays = currentFormDays.map((d, dIdx) => ({
+      id: crypto.randomUUID(),
+      diaNumero: dIdx + 1,
+      nombre: d.nombre,
+      ejercicios: d.ejercicios.map((e, idx) => ({
+        id: crypto.randomUUID(),
+        nombre: e.nombre,
+        seriesTarget: Number(e.series) || 3,
+        repeticionesTarget: e.repeticiones || "12",
+        pesoSugerido: e.peso || "S/D",
+        notaProfesor: e.notaProfesor || "",
+        profesorNotaAutor: esModoAlumnoPropio ? `${usuarioActualData.nombre} (vos)` : usuarioActualData.nombre,
+        videoUrl: e.videoUrl || ""
+      }))
+    }));
+
+    if (esModoAlumnoPropio) {
+      try {
+        if (appState.modalActivo === 'editar_rutina_propia' && appState.rutinaEnEdicionId) {
+          const resultado = await store.editarRutinaPropia({
+            rutinaId: appState.rutinaEnEdicionId,
+            alumnoId: usuarioActualData.id,
+            titulo,
+            duracionDias: duracion,
+            dias: formattedDays
+          });
+          if (resultado && resultado.ok) {
+            alert("✅ Rutina propia actualizada correctamente.");
+          } else {
+            alert("❌ No se pudo guardar la rutina: " + ((resultado && resultado.error) || "error desconocido") + ". Los cambios no se aplicaron, probá de nuevo.");
+          }
+        } else {
+          await store.crearRutinaPropia({
+  alumnoId: usuarioActualData.id,
+  titulo,
+  duracionDias: duracion,
+  dias: formattedDays
+});
+
+alert("🚀 ¡Rutina propia creada! Ya podés empezar a entrenarla desde \"Mías\".");
+        }
+      } catch (err) {
+        alert("❌ Error: " + err.message);
+      }
+    } else if (appState.modalActivo === 'editar_rutina' && appState.rutinaEnEdicionId) {
+      const resultado = await store.editarRutinaExistente({
+        rutinaId: appState.rutinaEnEdicionId,
+        profesorNombre: usuarioActualData.nombre,
+        titulo,
+        duracionDias: duracion,
+        dias: formattedDays
+      });
+      if (resultado && resultado.ok) {
+        alert("✅ Rutina actualizada correctamente. El alumno recibirá una notificación con los cambios.");
+      } else {
+        alert("❌ No se pudo guardar la rutina: " + ((resultado && resultado.error) || "error desconocido") + ". Los cambios no se aplicaron, probá de nuevo.");
+      }
+    } else {
+      store.crearOActualizarRutina({
+        alumnoId: appState.alumnoSeleccionadoId,
+        profesorNombre: usuarioActualData.nombre,
+        titulo,
+        duracionDias: duracion,
+        dias: formattedDays
+      });
+      alert("🚀 Nueva rutina asignada y activada correctamente.");
+    }
+
+    appState.modalActivo = null;
+    appState.rutinaEnEdicionId = null;
+    renderApp();
+  }
+
+  // Convierte la VAPID public key (base64url) al Uint8Array que exige
+  // pushManager.subscribe(). Esta función se invocaba en bindHeaderEvents
+  // pero no existía en ningún archivo del proyecto: cualquier dispositivo
+  // que no tuviera ya una suscripción guardada en el navegador (típicamente
+  // un dispositivo nuevo, como el celular de mamá) disparaba un
+  // ReferenceError silencioso, atrapado por el catch(), que mostraba el
+  // alert de "activadas" sin haber guardado ninguna suscripción real.
+  function urlBase64ToUint8Array(base64String) {
+    const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+    const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+    const rawData = window.atob(base64);
+    const outputArray = new Uint8Array(rawData.length);
+    for (let i = 0; i < rawData.length; ++i) {
+      outputArray[i] = rawData.charCodeAt(i);
+    }
+    return outputArray;
+  }
+
+  function toggleNotifDrawer() {
+    appState.mostrarDrawerNotifs = !appState.mostrarDrawerNotifs;
+    if (appState.usuarioActual) {
+      store.marcarNotificacionesLeidas(
+        appState.usuarioActual.rol,
+        appState.usuarioActual.rol === 'alumno' ? appState.usuarioActual.data.id : null
+      );
+    }
+    renderApp();
+  }
+
+  function bindBottomNavEvents() {
+    document.getElementById('navRutina')?.addEventListener('click', async () => {
+      appState.tabCliente = 'rutina';
+      appState.diaActivoEntrenamiento = null;
+      appState.rutinaSeleccionadaId = null;
+      appState.diaSeleccionadoId = null;
+      appState.mostrarDrawerNotifs = false;
+      renderApp(); // feedback visual inmediato de cambio de tab
+
+      // PWA / Bottom Nav: al tocar "Rutinas" forzamos la reobtención fresca
+      // desde Supabase para que el alumno siempre vea la última versión.
+      if (appState.usuarioActual?.rol === 'alumno' && window.gymStore) {
+        await window.gymStore.forceRefreshRutinas(appState.usuarioActual.data.id);
+      }
+    });
+
+    document.getElementById('navMisRutinas')?.addEventListener('click', () => {
+      appState.tabCliente = 'mis_rutinas';
+      appState.diaActivoEntrenamiento = null;
+      appState.rutinaSeleccionadaId = null;
+      appState.diaSeleccionadoId = null;
+      appState.mostrarDrawerNotifs = false;
+      renderApp();
+    });
+
+    document.getElementById('navRanking')?.addEventListener('click', async () => {
+      appState.tabCliente = 'ranking';
+      appState.mostrarDrawerNotifs = false;
+
+      if (appState.usuarioActual?.rol === 'alumno' && window.gymStore) {
+        await window.gymStore.syncWithSupabase(appState.usuarioActual.data.id);
+      }
+
+      renderApp();
+    });
+
+    document.getElementById('navHistorial')?.addEventListener('click', () => {
+      appState.tabCliente = 'historial';
+      appState.mostrarDrawerNotifs = false;
+      renderApp();
+    });
+
+    document.getElementById('navAvisosAlumno')?.addEventListener('click', toggleNotifDrawer);
+    document.getElementById('navAvisosProf')?.addEventListener('click', toggleNotifDrawer);
+
+    document.getElementById('navAlumnos')?.addEventListener('click', () => {
+      appState.modalActivo = null;
+      appState.mostrarDrawerNotifs = false;
+      renderApp();
+    });
+  }
+
+  function bindHeaderEvents() {
+    document.getElementById('btnLogout')?.addEventListener('click', async () => {
+      // Cerrar sesión en Supabase Auth (fire-and-forget: si falla, la sesión
+      // local se limpia igual y el usuario queda deslogueado en la app).
+      // A propósito NO se llama a reg.pushManager.getSubscription().unsubscribe()
+      // acá. La suscripción física del navegador es del dispositivo, no de la
+      // sesión de la app: si la desuscribiéramos en cada logout, el próximo
+      // usuario que loguee en este mismo dispositivo dispararía SIEMPRE una
+      // resuscripción nueva (más lento, y en iOS puede pedir permiso de nuevo).
+      // Ahora que guardar_push_subscription reasigna el endpoint por UPSERT
+      // (ver SQL), el problema de "queda asociado al usuario viejo" se
+      // resuelve en el próximo login+activación sin necesidad de desuscribir
+      // acá. Solo se limpia el estado de sesión de la app.
+      if (window.supabaseEngine) {
+        window.supabaseEngine.authSignOut(); // no se espera (fire-and-forget)
+      }
+      // Borrador de entrenamiento: se elimina en logout SOLO si pertenece al
+      // alumno que se está desloguéando ahora mismo (nunca el de otro usuario).
+      const borradorPropioAlCerrarSesion = getBorradorPropio();
+      if (borradorPropioAlCerrarSesion) clearWorkoutDraft();
+      window._sessionAlumnoId  = null;
+      window._sessionProfesorId = null;
+      appState.usuarioActual = null;
+      appState.historialProfesorLogs = null;
+      renderApp();
+    });
+
+    document.getElementById('btnHeaderHome')?.addEventListener('click', () => renderApp());
+
+    document.getElementById('btnNotifBell')?.addEventListener('click', () => {
+      const pushConcedido = 'Notification' in window && Notification.permission === 'granted';
+
+      // Push ya activado -> la campana funciona como antes: abre el drawer
+      if (pushConcedido) {
+        toggleNotifDrawer();
+        return;
+      }
+
+      // Push NO activado todavía -> tocar la campana dispara el mismo flujo
+      // que antes tenía el botón de texto "Activar Push" (funcionalidad
+      // intacta, solo cambia el disparador visual).
+      if ('Notification' in window) {
+        Notification.requestPermission().then(permission => {
+          if (permission === 'granted') {
+            if ('serviceWorker' in navigator && window.supabaseEngine) {
+              navigator.serviceWorker.ready.then(async reg => {
+                try {
+                  let sub = await reg.pushManager.getSubscription();
+                  if (!sub) {
+                    // La VAPID public key real se pide al backend (no es secreta,
+                    // pero no vive hardcodeada en el frontend). Si no está
+                    // configurada en el servidor, cortamos acá con un error
+                    // explícito en vez de caer a una key dummy inválida.
+                    const vapidKey = await window.supabaseEngine.getVapidPublicKey();
+                    if (!vapidKey) {
+                      throw new Error("No se pudo obtener la clave pública VAPID del servidor (falta configurar VAPID_PUBLIC_KEY en Vercel).");
+                    }
+                    sub = await reg.pushManager.subscribe({
+                      userVisibleOnly: true,
+                      applicationServerKey: urlBase64ToUint8Array(vapidKey)
+                    });
+                  }
+                  if (sub && appState.usuarioActual) {
+                    // Esta llamada ahora propaga el error real si la RPC falla
+                    // (ver registerPushSubscription en supabase.js): antes,
+                    // cualquier falla acá quedaba enmascarada por el catch de
+                    // abajo, que siempre mostraba un mensaje de "activadas"
+                    // aunque la suscripción nunca se hubiera guardado en la DB.
+                    // Esto era la causa de "se activan pero no llegan".
+                    await window.supabaseEngine.registerPushSubscription(appState.usuarioActual.data.id, sub.toJSON());
+                    alert("🔔 Suscripción Web Push activa y vinculada a tu cuenta correctamente.");
+                  }
+                } catch (e) {
+                  console.error("❌ No se pudo activar/guardar la suscripción Web Push:", e);
+                  alert("⚠️ No se pudo activar la notificación push: " + ((e && e.message) || "error desconocido") + ". Probá de nuevo o contactá al profesor.");
+                }
+                renderApp();
+              });
+            } else {
+              alert("🔔 Notificaciones habilitadas.");
+              renderApp();
+            }
+          } else {
+            alert("⚠️ Permiso de notificaciones denegado. Puedes habilitarlo desde la configuración de tu navegador.");
+          }
+        });
+      }
+    });
+
+    document.getElementById('btnCloseNotifs')?.addEventListener('click', () => {
+      appState.mostrarDrawerNotifs = false;
+      renderApp();
+    });
+
+    document.getElementById('btnCancelWorkout')?.addEventListener('click', () => {
+      if (confirm("¿Deseas cancelar la sesión de entrenamiento actual?")) {
+        clearWorkoutDraft();
+        appState.diaActivoEntrenamiento = null;
+        renderApp();
+      }
+    });
+
+    document.getElementById('btnFinishWorkout')?.addEventListener('click', async (e) => {
+      const dia = appState.diaActivoEntrenamiento;
+      const alumno = appState.usuarioActual.data;
+      const rutinaActiva = store.getRutinaPorId(appState.rutinaSeleccionadaId) || store.getRutinaActiva(alumno.id);
+
+      const setsLogArr = [];
+      Object.keys(appState.workoutDraftSets).forEach(ejId => {
+        const ejData = appState.workoutDraftSets[ejId];
+        ejData.sets.forEach(s => {
+          setsLogArr.push({
+            ejercicioId:       ejId,              // para vincular exercise_goal_id en Supabase
+            ejercicioNombre:   ejData.nombre,
+            setNumero:         s.setNumero,
+            repsRealizadas:    s.reps,
+            pesoUtilizado:     s.peso,
+            comentarioAlumno:  s.comentarioSet || ''
+          });
+        });
+      });
+
+      // VALIDACIÓN CRÍTICA: Verificar que existe una rutina activa válida
+      // Si no hay rutina en Supabase, el alumno debe contactar al profesor
+      if (!rutinaActiva) {
+        alert('❌ No tienes una rutina activa asignada.\n\nContacta a tu profesor para que te asigne una rutina de entrenamiento.');
+        renderApp();
+        return;
+      }
+
+      // guardarEntrenamientoReal es async: guarda local de forma optimista y
+      // espera la confirmación autoritativa del servidor (RPC de puntos) antes
+      // de mostrar el mensaje final, así el alumno nunca ve un número de
+      // puntos que el servidor va a corregir un segundo después.
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      btn.textContent = '⏳ Guardando...';
+
+      const logGuardado = await store.guardarEntrenamientoReal({
+        alumnoId:         alumno.id,
+        rutinaId:         rutinaActiva.id,
+        diaId:            dia.id,
+        diaNombre:        dia.nombre,
+        diaNumero:        dia.diaNumero || 1,    // número real del día en la rutina
+        setsLog:          setsLogArr,
+        comentarioGeneral: appState.workoutGeneralComment || ''
+      });
+
+      // VALIDACIÓN CRÍTICA: Verificar que la RPC confirmó los puntos en el servidor
+      const puntosConfirmadosPorServidor = logGuardado?.puntosConfirmadosPorServidor === true;
+      
+      if (!puntosConfirmadosPorServidor) {
+        // La RPC falló silenciosamente → No se pueden dar por válidos los puntos
+        alert(`⚠️ Entrenamiento guardado en tu historial, pero no se pudieron guardar los puntos en el servidor.\n\nIntentaremos de nuevo automáticamente. Si el problema persiste, contactá al profesor.`);
+      } else {
+        // La RPC fue exitosa → Mostrar el mensaje de éxito real
+        const puntosGanados = Math.round((logGuardado?.puntos || 0));
+        const bonusTexto = logGuardado?.bonusRacha ? ` (incluye +${logGuardado.bonusRacha} 🔥 bonus por racha semanal)` : '';
+        const mensajePuntos = logGuardado?.yaHuboEntrenamientoHoy
+          ? `Ya sumaste puntos hoy con otro entrenamiento — este quedó guardado en tu historial, pero no otorga puntos adicionales (solo se otorgan puntos una vez por día).`
+          : `+${puntosGanados} puntos ganados${bonusTexto}`;
+        alert(`🏆 ¡Entrenamiento completado y guardado en tu historial!\n${mensajePuntos}`);
+      }
+      clearWorkoutDraft();
+      appState.diaActivoEntrenamiento = null;
+      appState.tabCliente = 'historial';
+      renderApp();
+    });
+
+    const cerrarModalGenerico = () => {
+      appState.modalActivo = null;
+      appState.rutinaAEliminarId = null;
+      appState.logEnEdicionId = null;
+      appState.editDraftSets = null;
+      appState.editDraftComentario = '';
+      renderApp();
+    };
+    document.getElementById('btnCloseModal')?.addEventListener('click', cerrarModalGenerico);
+    document.getElementById('btnCancelModal')?.addEventListener('click', cerrarModalGenerico);
+
+    document.getElementById('btnGuardarEdicionEntrenamiento')?.addEventListener('click', async () => {
+      const alumno = appState.usuarioActual.data;
+      try {
+        const resultado = await store.editarEntrenamientoReciente({
+          logId: appState.logEnEdicionId,
+          alumnoId: alumno.id,
+          setsLog: appState.editDraftSets,
+          comentarioGeneral: appState.editDraftComentario
+        });
+        if (resultado && resultado.ok) {
+          alert("✅ Entrenamiento actualizado correctamente.");
+        } else {
+          alert("❌ No se pudo guardar la edición: " + ((resultado && resultado.error) || "error desconocido"));
+        }
+      } catch (err) {
+        alert("❌ Error: " + err.message);
+      }
+      cerrarModalGenerico();
+    });
+
+    document.getElementById('btnConfirmarBorradoRutina')?.addEventListener('click', async () => {
+      const rId = appState.rutinaAEliminarId;
+      const profesorId = window._sessionProfesorId || appState.usuarioActual.data.id;
+      const resultado = await store.eliminarRutina(rId, profesorId);
+      appState.modalActivo = null;
+      appState.rutinaAEliminarId = null;
+      if (!resultado || resultado.ok !== true) {
+        alert("❌ No se pudo borrar la rutina: " + ((resultado && resultado.error) || "error desconocido"));
+      }
+      renderApp();
+    });
+
+    const formNuevo = document.getElementById('formNuevoAlumno');
+    if (formNuevo) {
+      formNuevo.addEventListener('submit', (e) => {
+        e.preventDefault();
+        try {
+          const dni = document.getElementById('newDni').value;
+          const nombre = document.getElementById('newNombre').value;
+          const tel = document.getElementById('newTel').value;
+          store.autorizarOAgregarAlumnoPorProfesor({ dni, nombre, telefono: tel });
+          alert("✅ Alumno registrado y DNI autorizado correctamente.");
+          appState.modalActivo = null;
+          renderApp();
+        } catch (err) {
+          alert("❌ Error: " + err.message);
+        }
+      });
+    }
+
+    const formRutina = document.getElementById('formCrearRutina');
+    if (formRutina) {
+      setupRoutineFormBuilder();
+      formRutina.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        await saveRoutineFromForm();
+      });
+    }
+  }
+
+  function bindAccordionEvents() {
+    document.querySelectorAll('.history-accordion-header').forEach(header => {
+      header.addEventListener('click', () => {
+        const accId = header.dataset.accId;
+        const body = document.getElementById(accId);
+        if (body) {
+          const estaAbierto = body.style.display === 'block';
+          body.style.display = estaAbierto ? 'none' : 'block';
+        }
+      });
+    });
+  }
+
+  // --- RECUPERAR SESIÓN DE SUPABASE AUTH AL INICIO (Etapa 1) ---
+  // Se ejecuta como IIFE async para poder usar await antes del primer renderApp().
+  // Si Supabase Auth tiene una sesión activa (JWT válido en localStorage del
+  // navegador), se intenta recuperar el perfil local correspondiente por
+  // authUserId = session.user.id. Si se encuentra, se restaura appState y
+  // window._session* exactamente como haría un login() exitoso. Si no hay
+  // sesión, o el perfil no existe localmente todavía (todavía sin vincular),
+  // se arranca en la pantalla de login sin mostrar ningún error.
+  // Este bloque no modifica ni borra ninguna contraseña legacy.
+  (async () => {
+    try {
+      if (window.supabaseEngine) {
+        // Esperar que el store tenga datos básicos (la sync inicial diferida
+        // del constructor de GymStore ya se programó con setTimeout 400ms;
+        // aquí no la esperamos explícitamente para no bloquear el arranque,
+        // pero usamos lo que ya hay en localStorage + lo que Supabase Auth
+        // puede darnos en el token).
+        const session = await window.supabaseEngine.authGetSession();
+        if (session && session.user) {
+          const authUid = session.user.id;
+          console.log('🔑 Sesión Supabase Auth encontrada al inicio → authUserId:', authUid);
+
+          // Buscar perfil local por authUserId (ya puede estar en localStorage
+          // si el usuario se logueó antes y guardamos el campo).
+          const perfilProfesor = store.data.profesores.find(p => p.authUserId === authUid);
+          const perfilAlumno   = !perfilProfesor
+            ? store.data.alumnos.find(a => a.authUserId === authUid)
+            : null;
+
+          if (perfilProfesor) {
+            appState.usuarioActual = { rol: 'profesor', data: perfilProfesor };
+            window._sessionProfesorId = perfilProfesor.id;
+            window._sessionAlumnoId   = null;
+            console.log('✅ Sesión restaurada como PROFESOR:', perfilProfesor.nombre);
+            // Sincronizar rutinas del profesor en segundo plano
+            setTimeout(() => gymStore.syncRutinasProfesor(), 400);
+          } else if (perfilAlumno) {
+            appState.usuarioActual = { rol: 'alumno', data: perfilAlumno };
+            window._sessionAlumnoId   = perfilAlumno.id;
+            window._sessionProfesorId = null;
+            console.log('✅ Sesión restaurada como ALUMNO:', perfilAlumno.nombre);
+            // Detectar borrador de entrenamiento sin terminar de este alumno
+            // (nunca el de otro usuario — getBorradorPropio verifica ownerId
+            // contra el alumno recién restaurado).
+            appState.borradorEntrenamientoDetectado = getBorradorPropio();
+            // Sincronizar rutinas e historial del alumno en segundo plano
+            setTimeout(async () => {
+              await gymStore.syncWithSupabase(perfilAlumno.id);
+              if (window.supabaseEngine) {
+                const sbLogs = await window.supabaseEngine.obtenerHistorialDesdeSupabase(perfilAlumno.id);
+                if (sbLogs && sbLogs.length > 0) {
+                  sbLogs.forEach(sbLog => {
+                    const idx = gymStore.data.workoutLogs.findIndex(w => w.id === sbLog.id);
+                    if (idx >= 0) gymStore.data.workoutLogs[idx] = sbLog;
+                    else gymStore.data.workoutLogs.push(sbLog);
+                  });
+                  gymStore.saveData();
+                  window.dispatchEvent(new CustomEvent('gym_store_updated'));
+                }
+              }
+            }, 400);
+          } else {
+            // Hay sesión Auth pero el perfil aún no está vinculado localmente.
+            // Esto puede pasar si el usuario limpia localStorage pero la sesión
+            // de Auth sigue válida. En ese caso arrancamos en login para que
+            // el usuario ingrese sus credenciales y la vinculación se complete.
+            console.log('ℹ️ Sesión Auth encontrada pero perfil no vinculado localmente → ir a login.');
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('⚠️ Error al recuperar sesión inicial de Supabase Auth (no crítico):', e);
+    }
+
+    renderApp();
+  })();
+});
