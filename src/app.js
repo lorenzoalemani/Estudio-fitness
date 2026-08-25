@@ -3179,6 +3179,29 @@ appState.modalActivo = 'crear_rutina';
 
   let currentFormDays = [];
 
+  // --- Autocompletado de video por nombre de ejercicio (solo formulario, no toca Supabase) ---
+  const CATALOGO_VIDEOS_EJERCICIOS = [
+    { videoUrl: 'https://www.youtube.com/shorts/HzkHpIIo4IA', alias: ['press banca', 'press banca plano', 'press banca con barra', 'press banca plano con barra', 'press plano con barra', 'press de banca', 'press de banca con barra'] },
+    { videoUrl: 'https://www.youtube.com/shorts/qW519gsE2M8', alias: ['press banca mancuernas', 'press banca con mancuernas', 'press banca plano con mancuernas', 'press plano mancuernas', 'press plano con mancuernas', 'press de banca con mancuernas'] },
+    { videoUrl: 'https://www.youtube.com/shorts/sAYU5EvtXSo', alias: ['jalon al pecho', 'jalón al pecho', 'jalon dorsalera', 'jalón dorsalera', 'jalon en dorsalera', 'jalón en dorsalera', 'jalon en polea al pecho', 'jalón en polea al pecho'] }
+  ];
+
+  function normalizarNombreEjercicio(str) {
+    return String(str || '')
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .trim()
+      .replace(/\s+/g, ' ');
+  }
+
+  function buscarVideoPorNombreEjercicio(nombre) {
+    const norm = normalizarNombreEjercicio(nombre);
+    const match = CATALOGO_VIDEOS_EJERCICIOS.find(item =>
+      item.alias.some(a => normalizarNombreEjercicio(a) === norm)
+    );
+    return match ? match.videoUrl : null;
+  }
+
   function initFormBuilderForNew() {
     currentFormDays = [
       {
@@ -3328,7 +3351,24 @@ appState.modalActivo = 'crear_rutina';
     }
   };
   window.updateFormExercise = (diaIdx, ejIdx, field, val) => {
-    currentFormDays[diaIdx].ejercicios[ejIdx][field] = val;
+    const ej = currentFormDays[diaIdx].ejercicios[ejIdx];
+    ej[field] = val;
+
+    if (field === 'videoUrl') {
+      // El profesor tocó el campo de video a mano: a partir de ahora no se autocompleta más.
+      ej.videoUrlAuto = false;
+    } else if (field === 'nombre') {
+      // Solo autocompletar si el campo está vacío, o si el video presente fue puesto por autocompletado
+      // (para no pisar nunca un video cargado manualmente por el profesor).
+      if (!ej.videoUrl || ej.videoUrlAuto === true) {
+        const videoAuto = buscarVideoPorNombreEjercicio(val);
+        if (videoAuto) {
+          ej.videoUrl = videoAuto;
+          ej.videoUrlAuto = true;
+          renderFormDays();
+        }
+      }
+    }
   };
 
   async function saveRoutineFromForm() {
@@ -4024,6 +4064,29 @@ appState.modalActivo = 'crear_rutina';
 
   let currentFormDays = [];
 
+  // --- Autocompletado de video por nombre de ejercicio (solo formulario, no toca Supabase) ---
+  const CATALOGO_VIDEOS_EJERCICIOS = [
+    { videoUrl: 'https://www.youtube.com/shorts/HzkHpIIo4IA', alias: ['press banca', 'press banca plano', 'press banca con barra', 'press banca plano con barra', 'press plano con barra', 'press de banca', 'press de banca con barra'] },
+    { videoUrl: 'https://www.youtube.com/shorts/qW519gsE2M8', alias: ['press banca mancuernas', 'press banca con mancuernas', 'press banca plano con mancuernas', 'press plano mancuernas', 'press plano con mancuernas', 'press de banca con mancuernas'] },
+    { videoUrl: 'https://www.youtube.com/shorts/sAYU5EvtXSo', alias: ['jalon al pecho', 'jalón al pecho', 'jalon dorsalera', 'jalón dorsalera', 'jalon en dorsalera', 'jalón en dorsalera', 'jalon en polea al pecho', 'jalón en polea al pecho'] }
+  ];
+
+  function normalizarNombreEjercicio(str) {
+    return String(str || '')
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .trim()
+      .replace(/\s+/g, ' ');
+  }
+
+  function buscarVideoPorNombreEjercicio(nombre) {
+    const norm = normalizarNombreEjercicio(nombre);
+    const match = CATALOGO_VIDEOS_EJERCICIOS.find(item =>
+      item.alias.some(a => normalizarNombreEjercicio(a) === norm)
+    );
+    return match ? match.videoUrl : null;
+  }
+
   function initFormBuilderForNew() {
     currentFormDays = [
       {
@@ -4173,7 +4236,24 @@ appState.modalActivo = 'crear_rutina';
     }
   };
   window.updateFormExercise = (diaIdx, ejIdx, field, val) => {
-    currentFormDays[diaIdx].ejercicios[ejIdx][field] = val;
+    const ej = currentFormDays[diaIdx].ejercicios[ejIdx];
+    ej[field] = val;
+
+    if (field === 'videoUrl') {
+      // El profesor tocó el campo de video a mano: a partir de ahora no se autocompleta más.
+      ej.videoUrlAuto = false;
+    } else if (field === 'nombre') {
+      // Solo autocompletar si el campo está vacío, o si el video presente fue puesto por autocompletado
+      // (para no pisar nunca un video cargado manualmente por el profesor).
+      if (!ej.videoUrl || ej.videoUrlAuto === true) {
+        const videoAuto = buscarVideoPorNombreEjercicio(val);
+        if (videoAuto) {
+          ej.videoUrl = videoAuto;
+          ej.videoUrlAuto = true;
+          renderFormDays();
+        }
+      }
+    }
   };
 
   async function saveRoutineFromForm() {
