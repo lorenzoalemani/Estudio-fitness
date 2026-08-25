@@ -1489,16 +1489,23 @@ class GymStore {
     return `${d.getUTCFullYear()}-W${weekNo}`;
   }
 
-  // +100 Base + Σ(peso × reps) por cada serie registrada / 100
-  // (equivale a Peso × Reps × Series / 100 cuando peso/reps son constantes entre series)
+  // Puntaje por volumen real de entrenamiento:
+  // volumen = Σ(peso × reps) de cada serie
+  // puntos = clamp(50 + volumen / 60, 75, 200)
   calcularPuntosSesion(setsLog) {
     let volumen = 0;
     (setsLog || []).forEach(s => {
-      const pesoNum = parseFloat(String(s.pesoUtilizado).replace(',', '.')) || 0;
+      const pesoNum = parseFloat(
+        String(s.pesoUtilizado)
+          .replace(',', '.')
+          .replace(/[^\d.-]/g, '')
+      ) || 0;
       const repsNum = Number(s.repsRealizadas) || 0;
       volumen += pesoNum * repsNum;
     });
-    return Math.round((100 + volumen / 100) * 100) / 100;
+    const puntosCrudos = 50 + volumen / 60;
+    const puntosClamp = Math.min(200, Math.max(75, puntosCrudos));
+    return Math.round(puntosClamp * 100) / 100;
   }
 
   // Actualiza la racha semanal del alumno y suma los puntos totales.
