@@ -107,10 +107,6 @@ document.addEventListener('DOMContentLoaded', () => {
     } else if (appState.usuarioActual.rol === 'profesor') {
       renderTrainerDashboard();
     }
-    // Convierte cada <i data-lucide="..."> recién insertado en su SVG.
-    // Se llama acá porque renderApp() es el único punto por el que pasan
-    // TODOS los re-renders (login, dashboard alumno, dashboard profesor).
-    if (window.lucide) window.lucide.createIcons();
   }
   // Expuesta para que los listeners de beforeinstallprompt/appinstalled
   // (definidos arriba, fuera de este DOMContentLoaded) puedan refrescar el
@@ -203,13 +199,13 @@ document.addEventListener('DOMContentLoaded', () => {
               id="btnNotifBell"
               title="${pushConcedido ? 'Notificaciones' : 'Notificaciones (tocá para activar el push)'}"
             >
-              <i data-lucide="bell-ring"></i>
+              🔔
               ${!pushConcedido
                 ? `<span class="notif-bell-dot" title="Push desactivado"></span>`
                 : (unreadCount > 0 ? `<span style="position:absolute; top:-4px; right:-4px; background:var(--red-primary); color:#fff; border-radius:50%; width:18px; height:18px; font-size:0.7rem; font-weight:800; display:flex; align-items:center; justify-content:center">${unreadCount}</span>` : '')
               }
             </button>
-            <button class="btn btn-secondary btn-sm header-logout-btn" id="btnLogout"><span class="header-logout-label">Salir</span> <i data-lucide="log-out"></i></button>
+            <button class="btn btn-secondary btn-sm header-logout-btn" id="btnLogout"><span class="header-logout-label">Salir</span> 🚪</button>
           ` : ''}
         </div>
       </header>
@@ -223,7 +219,7 @@ document.addEventListener('DOMContentLoaded', () => {
     return `
       <div class="notif-drawer">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; border-bottom:1px solid var(--border-color); padding-bottom:6px">
-          <strong style="font-size:0.95rem"><i data-lucide="bell-ring"></i> Avisos de Entrenamiento</strong>
+          <strong style="font-size:0.95rem">🔔 Avisos de Entrenamiento</strong>
           <button class="btn btn-secondary btn-sm" id="btnCloseNotifs" style="padding:2px 8px">&times;</button>
         </div>
         ${notifs.length === 0 ? `
@@ -855,29 +851,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const miId = appState.usuarioActual.data.id;
     const medalla = (pos) => pos === 1 ? '🥇' : pos === 2 ? '🥈' : pos === 3 ? '🥉' : `#${pos}`;
 
-    // Top 3 para el podio (si hay menos de 3, el podio arma solo con lo que hay)
-    const top3 = ranking.slice(0, 3);
-    const resto = ranking.slice(3);
-    const porPuesto = (pos) => top3.find(a => a.posicion === pos);
-    const primero = porPuesto(1);
-    const segundo = porPuesto(2);
-    const tercero = porPuesto(3);
-
-    const bloquePodio = (alumno, puesto) => {
-      if (!alumno) return `<div class="podium-slot podium-slot-${puesto} podium-slot-empty"></div>`;
-      const esYo = alumno.id === miId;
-      return `
-        <button class="podium-slot podium-slot-${puesto} ${esYo ? 'podium-slot-me' : ''}" data-podium-id="${alumno.id}">
-          <div class="podium-name">${alumno.nombre}${esYo ? ' <span class="podium-me-tag">(Vos)</span>' : ''}</div>
-          <div class="podium-points">${Math.round(alumno.puntosTotal || 0)} pts</div>
-          <div class="podium-block">
-            <span class="podium-medal">${medalla(puesto)}</span>
-            <span class="podium-rank-number">${puesto}</span>
-          </div>
-        </button>
-      `;
-  };
-
     return `
       <div style="margin-bottom:16px">
         <h2 style="font-size:1.4rem; font-weight:900; letter-spacing:0.5px">🏆 Ranking</h2>
@@ -891,15 +864,8 @@ document.addEventListener('DOMContentLoaded', () => {
           <p style="color:var(--text-gray); font-size:0.88rem; margin-top:6px">Completá un entrenamiento para empezar a sumar puntos.</p>
         </div>
       ` : `
-        <div class="podium-wrapper">
-          ${bloquePodio(segundo, 2)}
-          ${bloquePodio(primero, 1)}
-          ${bloquePodio(tercero, 3)}
-        </div>
-
-        ${resto.length > 0 ? `
         <div class="ranking-list">
-          ${resto.map(a => `
+          ${ranking.map(a => `
             <div class="ranking-row ${a.id === miId ? 'ranking-row-me' : ''} ${a.posicion <= 3 ? 'ranking-row-top' + a.posicion : ''}">
               <div class="ranking-pos">${medalla(a.posicion)}</div>
               <div class="ranking-info">
@@ -910,7 +876,6 @@ document.addEventListener('DOMContentLoaded', () => {
             </div>
           `).join('')}
         </div>
-        ` : ''}
       `}
     `;
   }
@@ -1630,10 +1595,6 @@ document.addEventListener('DOMContentLoaded', () => {
     } else if (appState.usuarioActual.rol === 'profesor') {
       renderTrainerDashboard();
     }
-    // Convierte cada <i data-lucide="..."> recién insertado en su SVG.
-    // Se llama acá porque renderApp() es el único punto por el que pasan
-    // TODOS los re-renders (login, dashboard alumno, dashboard profesor).
-    if (window.lucide) window.lucide.createIcons();
   }
   // Expuesta para que los listeners de beforeinstallprompt/appinstalled
   // (definidos arriba, fuera de este DOMContentLoaded) puedan refrescar el
@@ -1726,13 +1687,13 @@ document.addEventListener('DOMContentLoaded', () => {
               id="btnNotifBell"
               title="${pushConcedido ? 'Notificaciones' : 'Notificaciones (tocá para activar el push)'}"
             >
-              <i data-lucide="bell-ring"></i>
+              🔔
               ${!pushConcedido
                 ? `<span class="notif-bell-dot" title="Push desactivado"></span>`
                 : (unreadCount > 0 ? `<span style="position:absolute; top:-4px; right:-4px; background:var(--red-primary); color:#fff; border-radius:50%; width:18px; height:18px; font-size:0.7rem; font-weight:800; display:flex; align-items:center; justify-content:center">${unreadCount}</span>` : '')
               }
             </button>
-            <button class="btn btn-secondary btn-sm header-logout-btn" id="btnLogout"><span class="header-logout-label">Salir</span> <i data-lucide="log-out"></i></button>
+            <button class="btn btn-secondary btn-sm header-logout-btn" id="btnLogout"><span class="header-logout-label">Salir</span> 🚪</button>
           ` : ''}
         </div>
       </header>
@@ -1746,7 +1707,7 @@ document.addEventListener('DOMContentLoaded', () => {
     return `
       <div class="notif-drawer">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; border-bottom:1px solid var(--border-color); padding-bottom:6px">
-          <strong style="font-size:0.95rem"><i data-lucide="bell-ring"></i> Avisos de Entrenamiento</strong>
+          <strong style="font-size:0.95rem">🔔 Avisos de Entrenamiento</strong>
           <button class="btn btn-secondary btn-sm" id="btnCloseNotifs" style="padding:2px 8px">&times;</button>
         </div>
         ${notifs.length === 0 ? `
@@ -2378,29 +2339,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const miId = appState.usuarioActual.data.id;
     const medalla = (pos) => pos === 1 ? '🥇' : pos === 2 ? '🥈' : pos === 3 ? '🥉' : `#${pos}`;
 
-    // Top 3 para el podio (si hay menos de 3, el podio arma solo con lo que hay)
-    const top3 = ranking.slice(0, 3);
-    const resto = ranking.slice(3);
-    const porPuesto = (pos) => top3.find(a => a.posicion === pos);
-    const primero = porPuesto(1);
-    const segundo = porPuesto(2);
-    const tercero = porPuesto(3);
-
-    const bloquePodio = (alumno, puesto) => {
-      if (!alumno) return `<div class="podium-slot podium-slot-${puesto} podium-slot-empty"></div>`;
-      const esYo = alumno.id === miId;
-      return `
-        <button class="podium-slot podium-slot-${puesto} ${esYo ? 'podium-slot-me' : ''}" data-podium-id="${alumno.id}">
-          <div class="podium-name">${alumno.nombre}${esYo ? ' <span class="podium-me-tag">(Vos)</span>' : ''}</div>
-          <div class="podium-points">${Math.round(alumno.puntosTotal || 0)} pts</div>
-          <div class="podium-block">
-            <span class="podium-medal">${medalla(puesto)}</span>
-            <span class="podium-rank-number">${puesto}</span>
-          </div>
-        </button>
-      `;
-    };
-
     return `
       <div style="margin-bottom:16px">
         <h2 style="font-size:1.4rem; font-weight:900; letter-spacing:0.5px">🏆 Ranking</h2>
@@ -2414,15 +2352,8 @@ document.addEventListener('DOMContentLoaded', () => {
           <p style="color:var(--text-gray); font-size:0.88rem; margin-top:6px">Completá un entrenamiento para empezar a sumar puntos.</p>
         </div>
       ` : `
-        <div class="podium-wrapper">
-          ${bloquePodio(segundo, 2)}
-          ${bloquePodio(primero, 1)}
-          ${bloquePodio(tercero, 3)}
-        </div>
-
-        ${resto.length > 0 ? `
         <div class="ranking-list">
-          ${resto.map(a => `
+          ${ranking.map(a => `
             <div class="ranking-row ${a.id === miId ? 'ranking-row-me' : ''} ${a.posicion <= 3 ? 'ranking-row-top' + a.posicion : ''}">
               <div class="ranking-pos">${medalla(a.posicion)}</div>
               <div class="ranking-info">
@@ -2433,7 +2364,6 @@ document.addEventListener('DOMContentLoaded', () => {
             </div>
           `).join('')}
         </div>
-        ` : ''}
       `}
     `;
   }
