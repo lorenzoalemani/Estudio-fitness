@@ -905,10 +905,11 @@ document.addEventListener('DOMContentLoaded', () => {
       return `
         <div class="podium-slot podium-slot-${place}${isMe ? ' podium-slot-me' : ''}${empty ? ' podium-slot-empty' : ''}"
              style="${slotBase}${opacity}" ${empty ? 'aria-hidden="true"' : ''}>
-          <div class="podium-meta" style="width:100%;padding:0 4px 10px;display:flex;flex-direction:column;align-items:center;gap:2px;min-height:52px;justify-content:flex-end;">
+          <div class="podium-meta${place === 1 && !empty ? ' podium-meta-first' : ''}" style="width:100%;padding:0 4px 10px;display:flex;flex-direction:column;align-items:center;gap:2px;min-height:52px;justify-content:flex-end;position:relative;">
             ${empty ? '' : `
-              <div class="podium-name" title="${name}" style="font-size:0.82rem;font-weight:800;color:#fff;line-height:1.2;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${name}${meBadge}</div>
-              <div class="podium-pts" style="font-size:0.78rem;font-weight:900;color:#ff2e2e;white-space:nowrap;">${pts}</div>
+              ${place === 1 ? `<span class="podium-sparks" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>` : ''}
+              <div class="podium-name" title="${name}" style="font-size:0.82rem;font-weight:800;color:#fff;line-height:1.2;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;position:relative;z-index:1;">${name}${meBadge}</div>
+              <div class="podium-pts" style="font-size:0.78rem;font-weight:900;color:#ff2e2e;white-space:nowrap;position:relative;z-index:1;">${pts}</div>
               ${streak}
             `}
           </div>
@@ -976,6 +977,44 @@ document.addEventListener('DOMContentLoaded', () => {
           }
 
           .podium-block::after { display: none !important; }
+          /* Chispas sutiles solo en el 1º (~2s) */
+          .podium-sparks {
+            position: absolute;
+            left: 50%;
+            top: 28%;
+            width: 0;
+            height: 0;
+            pointer-events: none;
+            z-index: 2;
+          }
+          .podium-sparks i {
+            position: absolute;
+            width: 4px;
+            height: 4px;
+            border-radius: 50%;
+            background: #ffe9a0;
+            box-shadow: 0 0 6px 1px rgba(255, 215, 80, 0.85);
+            opacity: 0;
+            animation: efSpark 1.9s ease-out 1.05s both;
+          }
+          .podium-sparks i:nth-child(1) { --dx: -18px; --dy: -22px; animation-delay: 1.05s; background: #fff6c8; }
+          .podium-sparks i:nth-child(2) { --dx: 16px;  --dy: -24px; animation-delay: 1.12s; background: #ffd36b; width: 3px; height: 3px; }
+          .podium-sparks i:nth-child(3) { --dx: -26px; --dy: -8px;  animation-delay: 1.18s; background: #ffb347; }
+          .podium-sparks i:nth-child(4) { --dx: 24px;  --dy: -10px; animation-delay: 1.22s; background: #fff; width: 3px; height: 3px; }
+          .podium-sparks i:nth-child(5) { --dx: -10px; --dy: -30px; animation-delay: 1.28s; background: #ffe08a; }
+          .podium-sparks i:nth-child(6) { --dx: 8px;   --dy: -28px; animation-delay: 1.34s; background: #ff9f43; width: 3px; height: 3px; }
+          .podium-sparks i:nth-child(7) { --dx: -22px; --dy: 4px;   animation-delay: 1.40s; background: #fff3b0; }
+          .podium-sparks i:nth-child(8) { --dx: 20px;  --dy: 2px;   animation-delay: 1.46s; background: #ffd27a; width: 3px; height: 3px; }
+          @keyframes efSpark {
+            0%   { opacity: 0; transform: translate(0, 0) scale(0.4); }
+            18%  { opacity: 1; transform: translate(calc(var(--dx) * 0.35), calc(var(--dy) * 0.35)) scale(1); }
+            70%  { opacity: 0.85; }
+            100% { opacity: 0; transform: translate(var(--dx), var(--dy)) scale(0.2); }
+          }
+          @media (prefers-reduced-motion: reduce) {
+            .podium-sparks { display: none !important; }
+          }
+
           .podium-slot:hover .podium-block {
             transform: translateY(-3px) !important;
             transition: transform 0.18s ease !important;
@@ -2527,10 +2566,11 @@ document.addEventListener('DOMContentLoaded', () => {
       return `
         <div class="podium-slot podium-slot-${place}${isMe ? ' podium-slot-me' : ''}${empty ? ' podium-slot-empty' : ''}"
              style="${slotBase}${opacity}" ${empty ? 'aria-hidden="true"' : ''}>
-          <div class="podium-meta" style="width:100%;padding:0 4px 10px;display:flex;flex-direction:column;align-items:center;gap:2px;min-height:52px;justify-content:flex-end;">
+          <div class="podium-meta${place === 1 && !empty ? ' podium-meta-first' : ''}" style="width:100%;padding:0 4px 10px;display:flex;flex-direction:column;align-items:center;gap:2px;min-height:52px;justify-content:flex-end;position:relative;">
             ${empty ? '' : `
-              <div class="podium-name" title="${name}" style="font-size:0.82rem;font-weight:800;color:#fff;line-height:1.2;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${name}${meBadge}</div>
-              <div class="podium-pts" style="font-size:0.78rem;font-weight:900;color:#ff2e2e;white-space:nowrap;">${pts}</div>
+              ${place === 1 ? `<span class="podium-sparks" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></span>` : ''}
+              <div class="podium-name" title="${name}" style="font-size:0.82rem;font-weight:800;color:#fff;line-height:1.2;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;position:relative;z-index:1;">${name}${meBadge}</div>
+              <div class="podium-pts" style="font-size:0.78rem;font-weight:900;color:#ff2e2e;white-space:nowrap;position:relative;z-index:1;">${pts}</div>
               ${streak}
             `}
           </div>
@@ -2598,6 +2638,44 @@ document.addEventListener('DOMContentLoaded', () => {
           }
 
           .podium-block::after { display: none !important; }
+          /* Chispas sutiles solo en el 1º (~2s) */
+          .podium-sparks {
+            position: absolute;
+            left: 50%;
+            top: 28%;
+            width: 0;
+            height: 0;
+            pointer-events: none;
+            z-index: 2;
+          }
+          .podium-sparks i {
+            position: absolute;
+            width: 4px;
+            height: 4px;
+            border-radius: 50%;
+            background: #ffe9a0;
+            box-shadow: 0 0 6px 1px rgba(255, 215, 80, 0.85);
+            opacity: 0;
+            animation: efSpark 1.9s ease-out 1.05s both;
+          }
+          .podium-sparks i:nth-child(1) { --dx: -18px; --dy: -22px; animation-delay: 1.05s; background: #fff6c8; }
+          .podium-sparks i:nth-child(2) { --dx: 16px;  --dy: -24px; animation-delay: 1.12s; background: #ffd36b; width: 3px; height: 3px; }
+          .podium-sparks i:nth-child(3) { --dx: -26px; --dy: -8px;  animation-delay: 1.18s; background: #ffb347; }
+          .podium-sparks i:nth-child(4) { --dx: 24px;  --dy: -10px; animation-delay: 1.22s; background: #fff; width: 3px; height: 3px; }
+          .podium-sparks i:nth-child(5) { --dx: -10px; --dy: -30px; animation-delay: 1.28s; background: #ffe08a; }
+          .podium-sparks i:nth-child(6) { --dx: 8px;   --dy: -28px; animation-delay: 1.34s; background: #ff9f43; width: 3px; height: 3px; }
+          .podium-sparks i:nth-child(7) { --dx: -22px; --dy: 4px;   animation-delay: 1.40s; background: #fff3b0; }
+          .podium-sparks i:nth-child(8) { --dx: 20px;  --dy: 2px;   animation-delay: 1.46s; background: #ffd27a; width: 3px; height: 3px; }
+          @keyframes efSpark {
+            0%   { opacity: 0; transform: translate(0, 0) scale(0.4); }
+            18%  { opacity: 1; transform: translate(calc(var(--dx) * 0.35), calc(var(--dy) * 0.35)) scale(1); }
+            70%  { opacity: 0.85; }
+            100% { opacity: 0; transform: translate(var(--dx), var(--dy)) scale(0.2); }
+          }
+          @media (prefers-reduced-motion: reduce) {
+            .podium-sparks { display: none !important; }
+          }
+
           .podium-slot:hover .podium-block {
             transform: translateY(-3px) !important;
             transition: transform 0.18s ease !important;
