@@ -750,7 +750,12 @@ body {
   flex-direction: column;
   align-items: center;
   text-align: center;
+  animation: podiumSlotIn 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
+
+.podium-slot-2 { animation-delay: 0.05s; }
+.podium-slot-1 { animation-delay: 0.14s; }
+.podium-slot-3 { animation-delay: 0.23s; }
 
 .podium-meta {
   width: 100%;
@@ -761,6 +766,8 @@ body {
   gap: 2px;
   min-height: 52px;
   justify-content: flex-end;
+  animation: podiumMetaIn 0.45s ease both;
+  animation-delay: inherit;
 }
 
 .podium-name {
@@ -800,8 +807,34 @@ body {
   justify-content: center;
   padding-top: 12px;
   position: relative;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,0.12);
+  overflow: hidden;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.15);
+  transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.25s ease;
   animation: podiumRise 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: inherit;
+}
+
+/* Brillo sutil que cruza el bloque */
+.podium-block::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -60%;
+  width: 45%;
+  height: 100%;
+  background: linear-gradient(
+    100deg,
+    transparent 0%,
+    rgba(255,255,255,0.22) 45%,
+    transparent 100%
+  );
+  transform: skewX(-18deg);
+  animation: podiumShine 2.8s ease-in-out 0.7s both;
+  pointer-events: none;
+}
+
+.podium-slot:hover .podium-block {
+  transform: translateY(-4px);
 }
 
 .podium-num {
@@ -809,36 +842,33 @@ body {
   font-weight: 900;
   line-height: 1;
   color: rgba(0,0,0,0.55);
+  position: relative;
+  z-index: 1;
 }
 
-/* Alturas: 1º más alto al centro, 2º y 3º más bajos */
+/* Alturas / colores (refuerzo; el inline del JS ya los pone) */
 .podium-slot-1 .podium-block {
-  height: 110px;
+  height: 112px;
   background: linear-gradient(180deg, #f5d76e 0%, #d4a017 55%, #b8860b 100%);
-  animation-delay: 0.08s;
 }
 .podium-slot-2 .podium-block {
-  height: 78px;
+  height: 80px;
   background: linear-gradient(180deg, #e8e8ec 0%, #b0b0b8 55%, #8a8a94 100%);
-  animation-delay: 0s;
 }
 .podium-slot-3 .podium-block {
-  height: 62px;
+  height: 64px;
   background: linear-gradient(180deg, #d4a574 0%, #a66b3a 55%, #8b5a2b 100%);
-  animation-delay: 0.16s;
 }
 
 .podium-slot-1 .podium-num { color: rgba(0,0,0,0.45); font-size: 1.55rem; }
 .podium-slot-2 .podium-num { color: rgba(0,0,0,0.4); }
 .podium-slot-3 .podium-num { color: rgba(0,0,0,0.4); }
 
-.podium-slot-me .podium-name {
-  color: #fff;
-}
 .podium-slot-me .podium-block {
   box-shadow:
     inset 0 1px 0 rgba(255,255,255,0.18),
-    0 0 0 2px var(--red-primary);
+    0 0 0 2px var(--red-primary),
+    0 0 18px rgba(255, 46, 46, 0.25);
 }
 
 .podium-slot-empty .podium-meta { opacity: 0; }
@@ -846,25 +876,65 @@ body {
   opacity: 0.35;
   filter: grayscale(0.4);
 }
+.podium-slot-empty:hover .podium-block {
+  transform: none;
+}
+
+@keyframes podiumSlotIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes podiumMetaIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
 
 @keyframes podiumRise {
   from {
-    transform: translateY(16px);
+    transform: scaleY(0.55);
     opacity: 0;
+    transform-origin: bottom center;
   }
   to {
-    transform: translateY(0);
+    transform: scaleY(1);
     opacity: 1;
+    transform-origin: bottom center;
   }
+}
+
+@keyframes podiumShine {
+  0%   { left: -60%; opacity: 0; }
+  15%  { opacity: 1; }
+  55%  { left: 120%; opacity: 0.7; }
+  100% { left: 120%; opacity: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .podium-block {
-    animation: none;
+  .podium-slot,
+  .podium-meta,
+  .podium-block,
+  .podium-block::after {
+    animation: none !important;
+  }
+  .podium-slot:hover .podium-block {
+    transform: none;
   }
 }
 
-/* Móvil estrecho: sigue en una sola fila, tipografía un poco más chica */
+/* Móvil estrecho */
 @media (max-width: 380px) {
   .podium { gap: 6px; }
   .podium-name { font-size: 0.74rem; }
