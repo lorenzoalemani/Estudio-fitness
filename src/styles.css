@@ -114,6 +114,23 @@ body {
 
 .notif-bell-btn { position: relative; }
 
+/* Iconos Lucide del header (campana + salir) */
+.header-icon {
+  display: block;
+  flex-shrink: 0;
+}
+.notif-bell-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.header-logout-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+
 /* Punto/indicador de "push no activado todavía" (reemplaza al texto "Activar Push") */
 .notif-bell-dot {
   position: absolute; top: 3px; right: 3px;
