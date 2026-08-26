@@ -3689,6 +3689,7 @@ appState.modalActivo = 'crear_rutina';
 
   window.onEjercicioNombreInput = (diaIdx, ejIdx, val) => {
     const ej = currentFormDays[diaIdx].ejercicios[ejIdx];
+    ej._catalogPick = false; // el profe está tipeando a mano
     ej.nombre = val;
     if (!ej.videoUrl || ej.videoUrlAuto === true) {
       const videoAuto = buscarVideoPorNombreEjercicio(val);
@@ -3721,11 +3722,14 @@ appState.modalActivo = 'crear_rutina';
     if (!currentFormDays[diaIdx] || !currentFormDays[diaIdx].ejercicios[ejIdx]) return;
     const ej = currentFormDays[diaIdx].ejercicios[ejIdx];
     ej.nombre = nombre;
-    // Al elegir del catálogo siempre aplicamos el video del ejercicio
     ej.videoUrl = videoUrl;
     ej.videoUrlAuto = true;
+    ej._catalogPick = true; // evita que un blur/change con texto parcial pise el nombre
     const box = document.getElementById(`ej-suggest-${diaIdx}-${ejIdx}`);
     if (box) { box.hidden = true; box.innerHTML = ''; }
+    // Si el input sigue en el DOM, forzar el valor completo antes del re-render
+    const inp = document.querySelector(`#ej-suggest-${diaIdx}-${ejIdx}`)?.previousElementSibling
+      || document.querySelectorAll('.ej-nombre-input')[0];
     renderFormDays();
   };
 
@@ -3870,6 +3874,11 @@ appState.modalActivo = 'crear_rutina';
 
   window.updateFormDayName = (diaIdx, val) => { currentFormDays[diaIdx].nombre = val; };
   window.addFormExercise = (diaIdx) => {
+    // Evitar que el blur del input de nombre pise un nombre elegido del catálogo
+    const active = document.activeElement;
+    if (active && active.classList && active.classList.contains('ej-nombre-input')) {
+      active.blur();
+    }
     currentFormDays[diaIdx].ejercicios.push({ nombre: "Nuevo Ejercicio", series: 3, repeticiones: "12", peso: "10 kg", notaProfesor: "", videoUrl: "" });
     renderFormDays();
   };
@@ -3917,14 +3926,21 @@ appState.modalActivo = 'crear_rutina';
   };
   window.updateFormExercise = (diaIdx, ejIdx, field, val) => {
     const ej = currentFormDays[diaIdx].ejercicios[ejIdx];
-    ej[field] = val;
 
-    if (field === 'videoUrl') {
-      // El profesor tocó el campo de video a mano: a partir de ahora no se autocompleta más.
-      ej.videoUrlAuto = false;
-    } else if (field === 'nombre') {
-      // Solo autocompletar si el campo está vacío, o si el video presente fue puesto por autocompletado
-      // (para no pisar nunca un video cargado manualmente por el profesor).
+    if (field === 'nombre') {
+      // Si el nombre vino del catálogo y el change/blur trae solo un prefijo (ej. "vuel"),
+      // no pisar el nombre completo elegido.
+      if (
+        ej._catalogPick &&
+        ej.nombre &&
+        val &&
+        ej.nombre.length > val.length &&
+        ej.nombre.toLowerCase().startsWith(String(val).toLowerCase())
+      ) {
+        return;
+      }
+      ej._catalogPick = false;
+      ej.nombre = val;
       if (!ej.videoUrl || ej.videoUrlAuto === true) {
         const videoAuto = buscarVideoPorNombreEjercicio(val);
         if (videoAuto) {
@@ -3933,6 +3949,14 @@ appState.modalActivo = 'crear_rutina';
           renderFormDays();
         }
       }
+      return;
+    }
+
+    ej[field] = val;
+
+    if (field === 'videoUrl') {
+      // El profesor tocó el campo de video a mano: a partir de ahora no se autocompleta más.
+      ej.videoUrlAuto = false;
     }
   };
 
@@ -4793,6 +4817,7 @@ appState.modalActivo = 'crear_rutina';
 
   window.onEjercicioNombreInput = (diaIdx, ejIdx, val) => {
     const ej = currentFormDays[diaIdx].ejercicios[ejIdx];
+    ej._catalogPick = false; // el profe está tipeando a mano
     ej.nombre = val;
     if (!ej.videoUrl || ej.videoUrlAuto === true) {
       const videoAuto = buscarVideoPorNombreEjercicio(val);
@@ -4825,11 +4850,14 @@ appState.modalActivo = 'crear_rutina';
     if (!currentFormDays[diaIdx] || !currentFormDays[diaIdx].ejercicios[ejIdx]) return;
     const ej = currentFormDays[diaIdx].ejercicios[ejIdx];
     ej.nombre = nombre;
-    // Al elegir del catálogo siempre aplicamos el video del ejercicio
     ej.videoUrl = videoUrl;
     ej.videoUrlAuto = true;
+    ej._catalogPick = true; // evita que un blur/change con texto parcial pise el nombre
     const box = document.getElementById(`ej-suggest-${diaIdx}-${ejIdx}`);
     if (box) { box.hidden = true; box.innerHTML = ''; }
+    // Si el input sigue en el DOM, forzar el valor completo antes del re-render
+    const inp = document.querySelector(`#ej-suggest-${diaIdx}-${ejIdx}`)?.previousElementSibling
+      || document.querySelectorAll('.ej-nombre-input')[0];
     renderFormDays();
   };
 
@@ -4974,6 +5002,11 @@ appState.modalActivo = 'crear_rutina';
 
   window.updateFormDayName = (diaIdx, val) => { currentFormDays[diaIdx].nombre = val; };
   window.addFormExercise = (diaIdx) => {
+    // Evitar que el blur del input de nombre pise un nombre elegido del catálogo
+    const active = document.activeElement;
+    if (active && active.classList && active.classList.contains('ej-nombre-input')) {
+      active.blur();
+    }
     currentFormDays[diaIdx].ejercicios.push({ nombre: "Nuevo Ejercicio", series: 3, repeticiones: "12", peso: "10 kg", notaProfesor: "", videoUrl: "" });
     renderFormDays();
   };
@@ -5021,14 +5054,21 @@ appState.modalActivo = 'crear_rutina';
   };
   window.updateFormExercise = (diaIdx, ejIdx, field, val) => {
     const ej = currentFormDays[diaIdx].ejercicios[ejIdx];
-    ej[field] = val;
 
-    if (field === 'videoUrl') {
-      // El profesor tocó el campo de video a mano: a partir de ahora no se autocompleta más.
-      ej.videoUrlAuto = false;
-    } else if (field === 'nombre') {
-      // Solo autocompletar si el campo está vacío, o si el video presente fue puesto por autocompletado
-      // (para no pisar nunca un video cargado manualmente por el profesor).
+    if (field === 'nombre') {
+      // Si el nombre vino del catálogo y el change/blur trae solo un prefijo (ej. "vuel"),
+      // no pisar el nombre completo elegido.
+      if (
+        ej._catalogPick &&
+        ej.nombre &&
+        val &&
+        ej.nombre.length > val.length &&
+        ej.nombre.toLowerCase().startsWith(String(val).toLowerCase())
+      ) {
+        return;
+      }
+      ej._catalogPick = false;
+      ej.nombre = val;
       if (!ej.videoUrl || ej.videoUrlAuto === true) {
         const videoAuto = buscarVideoPorNombreEjercicio(val);
         if (videoAuto) {
@@ -5037,6 +5077,14 @@ appState.modalActivo = 'crear_rutina';
           renderFormDays();
         }
       }
+      return;
+    }
+
+    ej[field] = val;
+
+    if (field === 'videoUrl') {
+      // El profesor tocó el campo de video a mano: a partir de ahora no se autocompleta más.
+      ej.videoUrlAuto = false;
     }
   };
 
