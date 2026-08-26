@@ -3583,22 +3583,23 @@ appState.modalActivo = 'crear_rutina';
       box.innerHTML = '';
       return;
     }
-    box.innerHTML = sugeridos.map(s =>
-      `<button type="button" class="ej-suggest-item" ` +
-      `onmousedown="event.preventDefault(); window.seleccionarEjercicioCatalogo(${diaIdx}, ${ejIdx}, ${JSON.stringify(s.nombre)}, ${JSON.stringify(s.videoUrl)})">` +
-      `<span class="ej-suggest-name">${s.nombre}</span>` +
-      `</button>`
-    ).join('');
+    box.dataset.diaIdx = String(diaIdx);
+    box.dataset.ejIdx = String(ejIdx);
+    box.innerHTML = sugeridos.map((s, i) => {
+      const nom = String(s.nombre).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+      const url = String(s.videoUrl).replace(/&/g,'&amp;').replace(/"/g,'&quot;');
+      return `<button type="button" class="ej-suggest-item" data-suggest-idx="${i}" data-nombre="${nom}" data-url="${url}"><span class="ej-suggest-name">${nom}</span></button>`;
+    }).join('');
     box.hidden = false;
   };
 
   window.seleccionarEjercicioCatalogo = (diaIdx, ejIdx, nombre, videoUrl) => {
+    if (!currentFormDays[diaIdx] || !currentFormDays[diaIdx].ejercicios[ejIdx]) return;
     const ej = currentFormDays[diaIdx].ejercicios[ejIdx];
     ej.nombre = nombre;
-    if (!ej.videoUrl || ej.videoUrlAuto === true) {
-      ej.videoUrl = videoUrl;
-      ej.videoUrlAuto = true;
-    }
+    // Al elegir del catálogo siempre aplicamos el video del ejercicio
+    ej.videoUrl = videoUrl;
+    ej.videoUrlAuto = true;
     const box = document.getElementById(`ej-suggest-${diaIdx}-${ejIdx}`);
     if (box) { box.hidden = true; box.innerHTML = ''; }
     renderFormDays();
@@ -3608,8 +3609,28 @@ appState.modalActivo = 'crear_rutina';
     setTimeout(() => {
       const box = document.getElementById(`ej-suggest-${diaIdx}-${ejIdx}`);
       if (box) box.hidden = true;
-    }, 200);
+    }, 220);
   };
+
+  // Delegación: un solo listener global (evita romper HTML con comillas en onclick)
+  if (!window._ejSuggestDelegated) {
+    window._ejSuggestDelegated = true;
+    document.addEventListener('mousedown', (e) => {
+      const btn = e.target.closest && e.target.closest('.ej-suggest-item');
+      if (!btn) return;
+      const box = btn.closest('.ej-suggest-box');
+      if (!box) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const diaIdx = parseInt(box.dataset.diaIdx, 10);
+      const ejIdx = parseInt(box.dataset.ejIdx, 10);
+      const nombre = btn.getAttribute('data-nombre');
+      const videoUrl = btn.getAttribute('data-url');
+      if (nombre && window.seleccionarEjercicioCatalogo) {
+        window.seleccionarEjercicioCatalogo(diaIdx, ejIdx, nombre, videoUrl);
+      }
+    }, true);
+  }
 
 
   function initFormBuilderForNew() {
@@ -4664,22 +4685,23 @@ appState.modalActivo = 'crear_rutina';
       box.innerHTML = '';
       return;
     }
-    box.innerHTML = sugeridos.map(s =>
-      `<button type="button" class="ej-suggest-item" ` +
-      `onmousedown="event.preventDefault(); window.seleccionarEjercicioCatalogo(${diaIdx}, ${ejIdx}, ${JSON.stringify(s.nombre)}, ${JSON.stringify(s.videoUrl)})">` +
-      `<span class="ej-suggest-name">${s.nombre}</span>` +
-      `</button>`
-    ).join('');
+    box.dataset.diaIdx = String(diaIdx);
+    box.dataset.ejIdx = String(ejIdx);
+    box.innerHTML = sugeridos.map((s, i) => {
+      const nom = String(s.nombre).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+      const url = String(s.videoUrl).replace(/&/g,'&amp;').replace(/"/g,'&quot;');
+      return `<button type="button" class="ej-suggest-item" data-suggest-idx="${i}" data-nombre="${nom}" data-url="${url}"><span class="ej-suggest-name">${nom}</span></button>`;
+    }).join('');
     box.hidden = false;
   };
 
   window.seleccionarEjercicioCatalogo = (diaIdx, ejIdx, nombre, videoUrl) => {
+    if (!currentFormDays[diaIdx] || !currentFormDays[diaIdx].ejercicios[ejIdx]) return;
     const ej = currentFormDays[diaIdx].ejercicios[ejIdx];
     ej.nombre = nombre;
-    if (!ej.videoUrl || ej.videoUrlAuto === true) {
-      ej.videoUrl = videoUrl;
-      ej.videoUrlAuto = true;
-    }
+    // Al elegir del catálogo siempre aplicamos el video del ejercicio
+    ej.videoUrl = videoUrl;
+    ej.videoUrlAuto = true;
     const box = document.getElementById(`ej-suggest-${diaIdx}-${ejIdx}`);
     if (box) { box.hidden = true; box.innerHTML = ''; }
     renderFormDays();
@@ -4689,8 +4711,28 @@ appState.modalActivo = 'crear_rutina';
     setTimeout(() => {
       const box = document.getElementById(`ej-suggest-${diaIdx}-${ejIdx}`);
       if (box) box.hidden = true;
-    }, 200);
+    }, 220);
   };
+
+  // Delegación: un solo listener global (evita romper HTML con comillas en onclick)
+  if (!window._ejSuggestDelegated) {
+    window._ejSuggestDelegated = true;
+    document.addEventListener('mousedown', (e) => {
+      const btn = e.target.closest && e.target.closest('.ej-suggest-item');
+      if (!btn) return;
+      const box = btn.closest('.ej-suggest-box');
+      if (!box) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const diaIdx = parseInt(box.dataset.diaIdx, 10);
+      const ejIdx = parseInt(box.dataset.ejIdx, 10);
+      const nombre = btn.getAttribute('data-nombre');
+      const videoUrl = btn.getAttribute('data-url');
+      if (nombre && window.seleccionarEjercicioCatalogo) {
+        window.seleccionarEjercicioCatalogo(diaIdx, ejIdx, nombre, videoUrl);
+      }
+    }, true);
+  }
 
 
   function initFormBuilderForNew() {
