@@ -855,23 +855,40 @@ document.addEventListener('DOMContentLoaded', () => {
     const resto = ranking.filter(a => a.posicion > 3);
     const byPos = (pos) => top3.find(a => a.posicion === pos) || null;
 
+    // Colores e alturas inline para que el podio se vea aunque falle el CSS externo
+    const blockStyle = {
+      1: 'height:112px;background:linear-gradient(180deg,#f5d76e 0%,#d4a017 55%,#b8860b 100%);',
+      2: 'height:80px;background:linear-gradient(180deg,#e8e8ec 0%,#b0b0b8 55%,#8a8a94 100%);',
+      3: 'height:64px;background:linear-gradient(180deg,#d4a574 0%,#a66b3a 55%,#8b5a2b 100%);'
+    };
+    const slotBase = 'flex:1 1 0;min-width:0;max-width:140px;display:flex;flex-direction:column;align-items:center;text-align:center;';
+    const blockBase = 'width:100%;border-radius:10px 10px 4px 4px;display:flex;align-items:flex-start;justify-content:center;padding-top:12px;box-shadow:inset 0 1px 0 rgba(255,255,255,0.15);';
+    const numBase = 'font-size:1.4rem;font-weight:900;line-height:1;color:rgba(0,0,0,0.5);';
+
     const renderPodiumSlot = (a, place) => {
-      if (!a) {
-        return `<div class="podium-slot podium-slot-${place} podium-slot-empty" aria-hidden="true">
-          <div class="podium-meta"></div>
-          <div class="podium-block"><span class="podium-num">${place}</span></div>
-        </div>`;
-      }
-      const isMe = a.id === miId;
+      const empty = !a;
+      const isMe = a && a.id === miId;
+      const name = empty ? '' : a.nombre;
+      const pts = empty ? '' : `${Math.round(a.puntosTotal || 0)} pts`;
+      const streak = (!empty && a.rachaSemanal && a.rachaSemanal.semanas >= 2)
+        ? `<div style="font-size:0.68rem;font-weight:700;color:#f59e0b;">🔥 ${a.rachaSemanal.semanas} sem</div>`
+        : '';
+      const meBadge = isMe ? ' <span style="color:#ff2e2e;font-weight:800;">(Vos)</span>' : '';
+      const meRing = isMe ? 'box-shadow:inset 0 1px 0 rgba(255,255,255,0.18),0 0 0 2px #ff2e2e;' : '';
+      const opacity = empty ? 'opacity:0.35;' : '';
+
       return `
-        <div class="podium-slot podium-slot-${place} ${isMe ? 'podium-slot-me' : ''}">
-          <div class="podium-meta">
-            <div class="podium-name" title="${a.nombre}">${a.nombre}${isMe ? ' <span class="podium-you">(Vos)</span>' : ''}</div>
-            <div class="podium-pts">${Math.round(a.puntosTotal || 0)} pts</div>
-            ${a.rachaSemanal && a.rachaSemanal.semanas >= 2 ? `<div class="podium-streak">🔥 ${a.rachaSemanal.semanas} sem</div>` : ''}
+        <div class="podium-slot podium-slot-${place}${isMe ? ' podium-slot-me' : ''}${empty ? ' podium-slot-empty' : ''}"
+             style="${slotBase}${opacity}" ${empty ? 'aria-hidden="true"' : ''}>
+          <div class="podium-meta" style="width:100%;padding:0 4px 10px;display:flex;flex-direction:column;align-items:center;gap:2px;min-height:52px;justify-content:flex-end;">
+            ${empty ? '' : `
+              <div class="podium-name" title="${name}" style="font-size:0.82rem;font-weight:800;color:#fff;line-height:1.2;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${name}${meBadge}</div>
+              <div class="podium-pts" style="font-size:0.78rem;font-weight:900;color:#ff2e2e;white-space:nowrap;">${pts}</div>
+              ${streak}
+            `}
           </div>
-          <div class="podium-block">
-            <span class="podium-num">${place}</span>
+          <div class="podium-block" style="${blockBase}${blockStyle[place]}${meRing}">
+            <span class="podium-num" style="${numBase}${place === 1 ? 'font-size:1.55rem;' : ''}">${place}</span>
           </div>
         </div>`;
     };
@@ -889,14 +906,15 @@ document.addEventListener('DOMContentLoaded', () => {
           <p style="color:var(--text-gray); font-size:0.88rem; margin-top:6px">Completá un entrenamiento para empezar a sumar puntos.</p>
         </div>
       ` : `
-        <div class="podium" role="list" aria-label="Podio top 3">
+        <div class="podium" role="list" aria-label="Podio top 3"
+             style="display:flex;align-items:flex-end;justify-content:center;gap:8px;width:100%;max-width:100%;padding:8px 0 4px;box-sizing:border-box;">
           ${renderPodiumSlot(byPos(2), 2)}
           ${renderPodiumSlot(byPos(1), 1)}
           ${renderPodiumSlot(byPos(3), 3)}
         </div>
 
         ${resto.length > 0 ? `
-          <div class="ranking-list ranking-list-rest">
+          <div class="ranking-list ranking-list-rest" style="margin-top:18px;display:flex;flex-direction:column;gap:10px;">
             ${resto.map(a => `
               <div class="ranking-row ${a.id === miId ? 'ranking-row-me' : ''}">
                 <div class="ranking-pos">${medalla(a.posicion)}</div>
@@ -2376,23 +2394,40 @@ document.addEventListener('DOMContentLoaded', () => {
     const resto = ranking.filter(a => a.posicion > 3);
     const byPos = (pos) => top3.find(a => a.posicion === pos) || null;
 
+    // Colores e alturas inline para que el podio se vea aunque falle el CSS externo
+    const blockStyle = {
+      1: 'height:112px;background:linear-gradient(180deg,#f5d76e 0%,#d4a017 55%,#b8860b 100%);',
+      2: 'height:80px;background:linear-gradient(180deg,#e8e8ec 0%,#b0b0b8 55%,#8a8a94 100%);',
+      3: 'height:64px;background:linear-gradient(180deg,#d4a574 0%,#a66b3a 55%,#8b5a2b 100%);'
+    };
+    const slotBase = 'flex:1 1 0;min-width:0;max-width:140px;display:flex;flex-direction:column;align-items:center;text-align:center;';
+    const blockBase = 'width:100%;border-radius:10px 10px 4px 4px;display:flex;align-items:flex-start;justify-content:center;padding-top:12px;box-shadow:inset 0 1px 0 rgba(255,255,255,0.15);';
+    const numBase = 'font-size:1.4rem;font-weight:900;line-height:1;color:rgba(0,0,0,0.5);';
+
     const renderPodiumSlot = (a, place) => {
-      if (!a) {
-        return `<div class="podium-slot podium-slot-${place} podium-slot-empty" aria-hidden="true">
-          <div class="podium-meta"></div>
-          <div class="podium-block"><span class="podium-num">${place}</span></div>
-        </div>`;
-      }
-      const isMe = a.id === miId;
+      const empty = !a;
+      const isMe = a && a.id === miId;
+      const name = empty ? '' : a.nombre;
+      const pts = empty ? '' : `${Math.round(a.puntosTotal || 0)} pts`;
+      const streak = (!empty && a.rachaSemanal && a.rachaSemanal.semanas >= 2)
+        ? `<div style="font-size:0.68rem;font-weight:700;color:#f59e0b;">🔥 ${a.rachaSemanal.semanas} sem</div>`
+        : '';
+      const meBadge = isMe ? ' <span style="color:#ff2e2e;font-weight:800;">(Vos)</span>' : '';
+      const meRing = isMe ? 'box-shadow:inset 0 1px 0 rgba(255,255,255,0.18),0 0 0 2px #ff2e2e;' : '';
+      const opacity = empty ? 'opacity:0.35;' : '';
+
       return `
-        <div class="podium-slot podium-slot-${place} ${isMe ? 'podium-slot-me' : ''}">
-          <div class="podium-meta">
-            <div class="podium-name" title="${a.nombre}">${a.nombre}${isMe ? ' <span class="podium-you">(Vos)</span>' : ''}</div>
-            <div class="podium-pts">${Math.round(a.puntosTotal || 0)} pts</div>
-            ${a.rachaSemanal && a.rachaSemanal.semanas >= 2 ? `<div class="podium-streak">🔥 ${a.rachaSemanal.semanas} sem</div>` : ''}
+        <div class="podium-slot podium-slot-${place}${isMe ? ' podium-slot-me' : ''}${empty ? ' podium-slot-empty' : ''}"
+             style="${slotBase}${opacity}" ${empty ? 'aria-hidden="true"' : ''}>
+          <div class="podium-meta" style="width:100%;padding:0 4px 10px;display:flex;flex-direction:column;align-items:center;gap:2px;min-height:52px;justify-content:flex-end;">
+            ${empty ? '' : `
+              <div class="podium-name" title="${name}" style="font-size:0.82rem;font-weight:800;color:#fff;line-height:1.2;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${name}${meBadge}</div>
+              <div class="podium-pts" style="font-size:0.78rem;font-weight:900;color:#ff2e2e;white-space:nowrap;">${pts}</div>
+              ${streak}
+            `}
           </div>
-          <div class="podium-block">
-            <span class="podium-num">${place}</span>
+          <div class="podium-block" style="${blockBase}${blockStyle[place]}${meRing}">
+            <span class="podium-num" style="${numBase}${place === 1 ? 'font-size:1.55rem;' : ''}">${place}</span>
           </div>
         </div>`;
     };
@@ -2410,14 +2445,15 @@ document.addEventListener('DOMContentLoaded', () => {
           <p style="color:var(--text-gray); font-size:0.88rem; margin-top:6px">Completá un entrenamiento para empezar a sumar puntos.</p>
         </div>
       ` : `
-        <div class="podium" role="list" aria-label="Podio top 3">
+        <div class="podium" role="list" aria-label="Podio top 3"
+             style="display:flex;align-items:flex-end;justify-content:center;gap:8px;width:100%;max-width:100%;padding:8px 0 4px;box-sizing:border-box;">
           ${renderPodiumSlot(byPos(2), 2)}
           ${renderPodiumSlot(byPos(1), 1)}
           ${renderPodiumSlot(byPos(3), 3)}
         </div>
 
         ${resto.length > 0 ? `
-          <div class="ranking-list ranking-list-rest">
+          <div class="ranking-list ranking-list-rest" style="margin-top:18px;display:flex;flex-direction:column;gap:10px;">
             ${resto.map(a => `
               <div class="ranking-row ${a.id === miId ? 'ranking-row-me' : ''}">
                 <div class="ranking-pos">${medalla(a.posicion)}</div>
