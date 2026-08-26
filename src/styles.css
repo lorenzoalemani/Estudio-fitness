@@ -118,16 +118,38 @@ body {
 .header-icon {
   display: block;
   flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+}
+.header-icon-bell {
+  width: 24px !important;
+  height: 24px !important;
+  min-width: 24px;
+  min-height: 24px;
 }
 .notif-bell-btn {
-  display: inline-flex;
+  display: inline-flex !important;
   align-items: center;
   justify-content: center;
+  width: 44px !important;
+  height: 44px !important;
+  min-width: 44px;
+  padding: 0 !important;
+}
+.notif-bell-btn svg.header-icon-bell {
+  width: 24px !important;
+  height: 24px !important;
+  min-width: 24px !important;
+  min-height: 24px !important;
 }
 .header-logout-btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+.header-logout-btn .header-icon {
+  width: 18px;
+  height: 18px;
 }
 
 
