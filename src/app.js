@@ -845,11 +845,36 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // --- FEATURE RANKING: tabla de posiciones en tiempo real con medallas Top 3 ---
+  // --- FEATURE RANKING: podio Top 3 + lista desde el 4º ---
   function renderRankingView() {
     const ranking = store.getRanking();
     const miId = appState.usuarioActual.data.id;
     const medalla = (pos) => pos === 1 ? '🥇' : pos === 2 ? '🥈' : pos === 3 ? '🥉' : `#${pos}`;
+
+    const top3 = ranking.filter(a => a.posicion <= 3);
+    const resto = ranking.filter(a => a.posicion > 3);
+    const byPos = (pos) => top3.find(a => a.posicion === pos) || null;
+
+    const renderPodiumSlot = (a, place) => {
+      if (!a) {
+        return `<div class="podium-slot podium-slot-${place} podium-slot-empty" aria-hidden="true">
+          <div class="podium-meta"></div>
+          <div class="podium-block"><span class="podium-num">${place}</span></div>
+        </div>`;
+      }
+      const isMe = a.id === miId;
+      return `
+        <div class="podium-slot podium-slot-${place} ${isMe ? 'podium-slot-me' : ''}">
+          <div class="podium-meta">
+            <div class="podium-name" title="${a.nombre}">${a.nombre}${isMe ? ' <span class="podium-you">(Vos)</span>' : ''}</div>
+            <div class="podium-pts">${Math.round(a.puntosTotal || 0)} pts</div>
+            ${a.rachaSemanal && a.rachaSemanal.semanas >= 2 ? `<div class="podium-streak">🔥 ${a.rachaSemanal.semanas} sem</div>` : ''}
+          </div>
+          <div class="podium-block">
+            <span class="podium-num">${place}</span>
+          </div>
+        </div>`;
+    };
 
     return `
       <div style="margin-bottom:16px">
@@ -864,18 +889,26 @@ document.addEventListener('DOMContentLoaded', () => {
           <p style="color:var(--text-gray); font-size:0.88rem; margin-top:6px">Completá un entrenamiento para empezar a sumar puntos.</p>
         </div>
       ` : `
-        <div class="ranking-list">
-          ${ranking.map(a => `
-            <div class="ranking-row ${a.id === miId ? 'ranking-row-me' : ''} ${a.posicion <= 3 ? 'ranking-row-top' + a.posicion : ''}">
-              <div class="ranking-pos">${medalla(a.posicion)}</div>
-              <div class="ranking-info">
-                <div class="ranking-name">${a.nombre}${a.id === miId ? ' <span style="color:var(--red-primary)">(Vos)</span>' : ''}</div>
-                ${a.rachaSemanal && a.rachaSemanal.semanas >= 2 ? `<div class="ranking-streak">🔥 Racha de ${a.rachaSemanal.semanas} semanas</div>` : ''}
-              </div>
-              <div class="ranking-points">${Math.round(a.puntosTotal || 0)} pts</div>
-            </div>
-          `).join('')}
+        <div class="podium" role="list" aria-label="Podio top 3">
+          ${renderPodiumSlot(byPos(2), 2)}
+          ${renderPodiumSlot(byPos(1), 1)}
+          ${renderPodiumSlot(byPos(3), 3)}
         </div>
+
+        ${resto.length > 0 ? `
+          <div class="ranking-list ranking-list-rest">
+            ${resto.map(a => `
+              <div class="ranking-row ${a.id === miId ? 'ranking-row-me' : ''}">
+                <div class="ranking-pos">${medalla(a.posicion)}</div>
+                <div class="ranking-info">
+                  <div class="ranking-name">${a.nombre}${a.id === miId ? ' <span style="color:var(--red-primary)">(Vos)</span>' : ''}</div>
+                  ${a.rachaSemanal && a.rachaSemanal.semanas >= 2 ? `<div class="ranking-streak">🔥 Racha de ${a.rachaSemanal.semanas} semanas</div>` : ''}
+                </div>
+                <div class="ranking-points">${Math.round(a.puntosTotal || 0)} pts</div>
+              </div>
+            `).join('')}
+          </div>
+        ` : ''}
       `}
     `;
   }
@@ -2333,11 +2366,36 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // --- FEATURE RANKING: tabla de posiciones en tiempo real con medallas Top 3 ---
+  // --- FEATURE RANKING: podio Top 3 + lista desde el 4º ---
   function renderRankingView() {
     const ranking = store.getRanking();
     const miId = appState.usuarioActual.data.id;
     const medalla = (pos) => pos === 1 ? '🥇' : pos === 2 ? '🥈' : pos === 3 ? '🥉' : `#${pos}`;
+
+    const top3 = ranking.filter(a => a.posicion <= 3);
+    const resto = ranking.filter(a => a.posicion > 3);
+    const byPos = (pos) => top3.find(a => a.posicion === pos) || null;
+
+    const renderPodiumSlot = (a, place) => {
+      if (!a) {
+        return `<div class="podium-slot podium-slot-${place} podium-slot-empty" aria-hidden="true">
+          <div class="podium-meta"></div>
+          <div class="podium-block"><span class="podium-num">${place}</span></div>
+        </div>`;
+      }
+      const isMe = a.id === miId;
+      return `
+        <div class="podium-slot podium-slot-${place} ${isMe ? 'podium-slot-me' : ''}">
+          <div class="podium-meta">
+            <div class="podium-name" title="${a.nombre}">${a.nombre}${isMe ? ' <span class="podium-you">(Vos)</span>' : ''}</div>
+            <div class="podium-pts">${Math.round(a.puntosTotal || 0)} pts</div>
+            ${a.rachaSemanal && a.rachaSemanal.semanas >= 2 ? `<div class="podium-streak">🔥 ${a.rachaSemanal.semanas} sem</div>` : ''}
+          </div>
+          <div class="podium-block">
+            <span class="podium-num">${place}</span>
+          </div>
+        </div>`;
+    };
 
     return `
       <div style="margin-bottom:16px">
@@ -2352,18 +2410,26 @@ document.addEventListener('DOMContentLoaded', () => {
           <p style="color:var(--text-gray); font-size:0.88rem; margin-top:6px">Completá un entrenamiento para empezar a sumar puntos.</p>
         </div>
       ` : `
-        <div class="ranking-list">
-          ${ranking.map(a => `
-            <div class="ranking-row ${a.id === miId ? 'ranking-row-me' : ''} ${a.posicion <= 3 ? 'ranking-row-top' + a.posicion : ''}">
-              <div class="ranking-pos">${medalla(a.posicion)}</div>
-              <div class="ranking-info">
-                <div class="ranking-name">${a.nombre}${a.id === miId ? ' <span style="color:var(--red-primary)">(Vos)</span>' : ''}</div>
-                ${a.rachaSemanal && a.rachaSemanal.semanas >= 2 ? `<div class="ranking-streak">🔥 Racha de ${a.rachaSemanal.semanas} semanas</div>` : ''}
-              </div>
-              <div class="ranking-points">${Math.round(a.puntosTotal || 0)} pts</div>
-            </div>
-          `).join('')}
+        <div class="podium" role="list" aria-label="Podio top 3">
+          ${renderPodiumSlot(byPos(2), 2)}
+          ${renderPodiumSlot(byPos(1), 1)}
+          ${renderPodiumSlot(byPos(3), 3)}
         </div>
+
+        ${resto.length > 0 ? `
+          <div class="ranking-list ranking-list-rest">
+            ${resto.map(a => `
+              <div class="ranking-row ${a.id === miId ? 'ranking-row-me' : ''}">
+                <div class="ranking-pos">${medalla(a.posicion)}</div>
+                <div class="ranking-info">
+                  <div class="ranking-name">${a.nombre}${a.id === miId ? ' <span style="color:var(--red-primary)">(Vos)</span>' : ''}</div>
+                  ${a.rachaSemanal && a.rachaSemanal.semanas >= 2 ? `<div class="ranking-streak">🔥 Racha de ${a.rachaSemanal.semanas} semanas</div>` : ''}
+                </div>
+                <div class="ranking-points">${Math.round(a.puntosTotal || 0)} pts</div>
+              </div>
+            `).join('')}
+          </div>
+        ` : ''}
       `}
     `;
   }
