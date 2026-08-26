@@ -3537,20 +3537,21 @@ appState.modalActivo = 'crear_rutina';
       const nom = normalizarNombreEjercicio(item.nombre);
       let score = 0;
       if (nom === norm) score = 100;
-      else if (nom.startsWith(norm)) score = 80;
-      else if (nom.includes(norm)) score = 60;
+      else if (nom.startsWith(norm)) score = 90;
+      else if ((' ' + nom).includes(' ' + norm)) score = 75; // inicio de palabra
+      else if (nom.includes(norm)) score = 40;
       else {
         for (const a of item.alias) {
           const an = normalizarNombreEjercicio(a);
           if (an === norm) { score = 95; break; }
-          if (an.startsWith(norm)) { score = Math.max(score, 75); }
-          else if (an.includes(norm)) { score = Math.max(score, 50); }
+          if (an.startsWith(norm)) { score = Math.max(score, 85); }
+          else if ((' ' + an).includes(' ' + norm)) { score = Math.max(score, 70); }
+          else if (an.includes(norm)) { score = Math.max(score, 35); }
         }
       }
-      if (score > 0) scored.push({ ...item, score });
+      if (score >= 70) scored.push({ ...item, score }); // solo matches de calidad
     }
     scored.sort((a, b) => b.score - a.score || a.nombre.localeCompare(b.nombre));
-    // unique by videoUrl
     const seen = new Set();
     const out = [];
     for (const s of scored) {
@@ -3565,7 +3566,6 @@ appState.modalActivo = 'crear_rutina';
   window.onEjercicioNombreInput = (diaIdx, ejIdx, val) => {
     const ej = currentFormDays[diaIdx].ejercicios[ejIdx];
     ej.nombre = val;
-    // autocompletar video si corresponde
     if (!ej.videoUrl || ej.videoUrlAuto === true) {
       const videoAuto = buscarVideoPorNombreEjercicio(val);
       if (videoAuto) {
@@ -3575,19 +3575,21 @@ appState.modalActivo = 'crear_rutina';
         if (videoInput) videoInput.value = videoAuto;
       }
     }
-    // mostrar sugerencias
     const box = document.getElementById(`ej-suggest-${diaIdx}-${ejIdx}`);
     if (!box) return;
     const sugeridos = buscarEjerciciosSugeridos(val);
     if (!sugeridos.length) {
-      box.style.display = 'none';
+      box.hidden = true;
       box.innerHTML = '';
       return;
     }
     box.innerHTML = sugeridos.map(s =>
-      `<button type="button" class="ej-suggest-item" onclick="window.seleccionarEjercicioCatalogo(${diaIdx}, ${ejIdx}, ${JSON.stringify(s.nombre)}, ${JSON.stringify(s.videoUrl)})">${s.nombre}</button>`
+      `<button type="button" class="ej-suggest-item" ` +
+      `onmousedown="event.preventDefault(); window.seleccionarEjercicioCatalogo(${diaIdx}, ${ejIdx}, ${JSON.stringify(s.nombre)}, ${JSON.stringify(s.videoUrl)})">` +
+      `<span class="ej-suggest-name">${s.nombre}</span>` +
+      `</button>`
     ).join('');
-    box.style.display = 'block';
+    box.hidden = false;
   };
 
   window.seleccionarEjercicioCatalogo = (diaIdx, ejIdx, nombre, videoUrl) => {
@@ -3598,15 +3600,15 @@ appState.modalActivo = 'crear_rutina';
       ej.videoUrlAuto = true;
     }
     const box = document.getElementById(`ej-suggest-${diaIdx}-${ejIdx}`);
-    if (box) { box.style.display = 'none'; box.innerHTML = ''; }
+    if (box) { box.hidden = true; box.innerHTML = ''; }
     renderFormDays();
   };
 
   window.ocultarSugerenciasEjercicio = (diaIdx, ejIdx) => {
     setTimeout(() => {
       const box = document.getElementById(`ej-suggest-${diaIdx}-${ejIdx}`);
-      if (box) box.style.display = 'none';
-    }, 180);
+      if (box) box.hidden = true;
+    }, 200);
   };
 
 
@@ -3673,12 +3675,13 @@ appState.modalActivo = 'crear_rutina';
               <div class="form-group" style="margin-bottom:0; flex:1">
                 <label class="form-label" style="font-size:0.75rem">Nombre del Ejercicio</label>
                 <div class="ej-suggest-wrap">
-                  <input type="text" class="form-input" value="${ej.nombre}"
+                  <input type="text" class="form-input ej-nombre-input" value="${ej.nombre}"
                     oninput="window.onEjercicioNombreInput(${diaIdx}, ${ejIdx}, this.value)"
                     onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'nombre', this.value)"
                     onblur="window.ocultarSugerenciasEjercicio(${diaIdx}, ${ejIdx})"
-                    autocomplete="off">
-                  <div class="ej-suggest-box" id="ej-suggest-${diaIdx}-${ejIdx}" style="display:none"></div>
+                    autocomplete="off"
+                    placeholder="Empezá a escribir…">
+                  <div class="ej-suggest-box" id="ej-suggest-${diaIdx}-${ejIdx}" hidden></div>
                 </div>
               </div>
               <div style="display:flex; gap:4px; margin-top:16px">
@@ -4615,20 +4618,21 @@ appState.modalActivo = 'crear_rutina';
       const nom = normalizarNombreEjercicio(item.nombre);
       let score = 0;
       if (nom === norm) score = 100;
-      else if (nom.startsWith(norm)) score = 80;
-      else if (nom.includes(norm)) score = 60;
+      else if (nom.startsWith(norm)) score = 90;
+      else if ((' ' + nom).includes(' ' + norm)) score = 75; // inicio de palabra
+      else if (nom.includes(norm)) score = 40;
       else {
         for (const a of item.alias) {
           const an = normalizarNombreEjercicio(a);
           if (an === norm) { score = 95; break; }
-          if (an.startsWith(norm)) { score = Math.max(score, 75); }
-          else if (an.includes(norm)) { score = Math.max(score, 50); }
+          if (an.startsWith(norm)) { score = Math.max(score, 85); }
+          else if ((' ' + an).includes(' ' + norm)) { score = Math.max(score, 70); }
+          else if (an.includes(norm)) { score = Math.max(score, 35); }
         }
       }
-      if (score > 0) scored.push({ ...item, score });
+      if (score >= 70) scored.push({ ...item, score }); // solo matches de calidad
     }
     scored.sort((a, b) => b.score - a.score || a.nombre.localeCompare(b.nombre));
-    // unique by videoUrl
     const seen = new Set();
     const out = [];
     for (const s of scored) {
@@ -4643,7 +4647,6 @@ appState.modalActivo = 'crear_rutina';
   window.onEjercicioNombreInput = (diaIdx, ejIdx, val) => {
     const ej = currentFormDays[diaIdx].ejercicios[ejIdx];
     ej.nombre = val;
-    // autocompletar video si corresponde
     if (!ej.videoUrl || ej.videoUrlAuto === true) {
       const videoAuto = buscarVideoPorNombreEjercicio(val);
       if (videoAuto) {
@@ -4653,19 +4656,21 @@ appState.modalActivo = 'crear_rutina';
         if (videoInput) videoInput.value = videoAuto;
       }
     }
-    // mostrar sugerencias
     const box = document.getElementById(`ej-suggest-${diaIdx}-${ejIdx}`);
     if (!box) return;
     const sugeridos = buscarEjerciciosSugeridos(val);
     if (!sugeridos.length) {
-      box.style.display = 'none';
+      box.hidden = true;
       box.innerHTML = '';
       return;
     }
     box.innerHTML = sugeridos.map(s =>
-      `<button type="button" class="ej-suggest-item" onclick="window.seleccionarEjercicioCatalogo(${diaIdx}, ${ejIdx}, ${JSON.stringify(s.nombre)}, ${JSON.stringify(s.videoUrl)})">${s.nombre}</button>`
+      `<button type="button" class="ej-suggest-item" ` +
+      `onmousedown="event.preventDefault(); window.seleccionarEjercicioCatalogo(${diaIdx}, ${ejIdx}, ${JSON.stringify(s.nombre)}, ${JSON.stringify(s.videoUrl)})">` +
+      `<span class="ej-suggest-name">${s.nombre}</span>` +
+      `</button>`
     ).join('');
-    box.style.display = 'block';
+    box.hidden = false;
   };
 
   window.seleccionarEjercicioCatalogo = (diaIdx, ejIdx, nombre, videoUrl) => {
@@ -4676,15 +4681,15 @@ appState.modalActivo = 'crear_rutina';
       ej.videoUrlAuto = true;
     }
     const box = document.getElementById(`ej-suggest-${diaIdx}-${ejIdx}`);
-    if (box) { box.style.display = 'none'; box.innerHTML = ''; }
+    if (box) { box.hidden = true; box.innerHTML = ''; }
     renderFormDays();
   };
 
   window.ocultarSugerenciasEjercicio = (diaIdx, ejIdx) => {
     setTimeout(() => {
       const box = document.getElementById(`ej-suggest-${diaIdx}-${ejIdx}`);
-      if (box) box.style.display = 'none';
-    }, 180);
+      if (box) box.hidden = true;
+    }, 200);
   };
 
 
@@ -4751,12 +4756,13 @@ appState.modalActivo = 'crear_rutina';
               <div class="form-group" style="margin-bottom:0; flex:1">
                 <label class="form-label" style="font-size:0.75rem">Nombre del Ejercicio</label>
                 <div class="ej-suggest-wrap">
-                  <input type="text" class="form-input" value="${ej.nombre}"
+                  <input type="text" class="form-input ej-nombre-input" value="${ej.nombre}"
                     oninput="window.onEjercicioNombreInput(${diaIdx}, ${ejIdx}, this.value)"
                     onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'nombre', this.value)"
                     onblur="window.ocultarSugerenciasEjercicio(${diaIdx}, ${ejIdx})"
-                    autocomplete="off">
-                  <div class="ej-suggest-box" id="ej-suggest-${diaIdx}-${ejIdx}" style="display:none"></div>
+                    autocomplete="off"
+                    placeholder="Empezá a escribir…">
+                  <div class="ej-suggest-box" id="ej-suggest-${diaIdx}-${ejIdx}" hidden></div>
                 </div>
               </div>
               <div style="display:flex; gap:4px; margin-top:16px">

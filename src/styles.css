@@ -1004,37 +1004,53 @@ body {
 /* Autocompletado de ejercicios (panel profesor) */
 .ej-suggest-wrap {
   position: relative;
+  width: 100%;
 }
 .ej-suggest-box {
   position: absolute;
   left: 0;
   right: 0;
-  top: calc(100% + 4px);
-  z-index: 50;
-  max-height: 220px;
+  top: calc(100% + 6px);
+  z-index: 80;
+  max-height: 240px;
   overflow-y: auto;
-  background: #14141a;
-  border: 1px solid rgba(255,255,255,0.16);
-  border-radius: 10px;
-  box-shadow: 0 12px 28px rgba(0,0,0,0.45);
-  padding: 4px;
+  background: #0e0e12;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ej-suggest-box[hidden] {
+  display: none !important;
 }
 .ej-suggest-item {
-  display: block;
+  display: flex;
+  align-items: center;
   width: 100%;
   text-align: left;
   background: transparent;
   border: none;
-  color: #fff;
-  font-size: 0.88rem;
+  color: #e4e4e7;
+  font-size: 0.9rem;
   font-weight: 600;
-  padding: 10px 12px;
-  border-radius: 8px;
+  padding: 11px 14px;
+  border-radius: 9px;
   cursor: pointer;
   font-family: inherit;
+  line-height: 1.25;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 .ej-suggest-item:hover,
 .ej-suggest-item:focus {
-  background: rgba(255, 46, 46, 0.18);
+  background: rgba(255, 46, 46, 0.14);
+  color: #fff;
   outline: none;
+}
+.ej-suggest-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
