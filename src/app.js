@@ -906,6 +906,66 @@ document.addEventListener('DOMContentLoaded', () => {
           <p style="color:var(--text-gray); font-size:0.88rem; margin-top:6px">Completá un entrenamiento para empezar a sumar puntos.</p>
         </div>
       ` : `
+        <style>
+          @keyframes efPodiumIn {
+            from { opacity: 0; transform: translateY(14px); }
+            to   { opacity: 1; transform: translateY(0); }
+          }
+          @keyframes efPodiumGrow {
+            from { transform: scaleY(0.45); opacity: 0; }
+            to   { transform: scaleY(1); opacity: 1; }
+          }
+          @keyframes efPodiumShine {
+            0%   { left: -70%; opacity: 0; }
+            20%  { opacity: 1; }
+            60%  { left: 120%; opacity: 0.65; }
+            100% { left: 120%; opacity: 0; }
+          }
+          .podium-slot {
+            animation: efPodiumIn 0.5s cubic-bezier(0.22, 1, 0.36, 1) both !important;
+          }
+          .podium-slot-2 { animation-delay: 0.04s !important; }
+          .podium-slot-1 { animation-delay: 0.14s !important; }
+          .podium-slot-3 { animation-delay: 0.24s !important; }
+          .podium-block {
+            transform-origin: bottom center !important;
+            animation: efPodiumGrow 0.55s cubic-bezier(0.22, 1, 0.36, 1) both !important;
+            animation-delay: inherit !important;
+            position: relative !important;
+            overflow: hidden !important;
+            transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1) !important;
+          }
+          .podium-block::after {
+            content: '' !important;
+            position: absolute !important;
+            top: 0 !important;
+            left: -70% !important;
+            width: 45% !important;
+            height: 100% !important;
+            background: linear-gradient(100deg, transparent 0%, rgba(255,255,255,0.28) 45%, transparent 100%) !important;
+            transform: skewX(-18deg) !important;
+            animation: efPodiumShine 2.6s ease-in-out 0.65s both !important;
+            pointer-events: none !important;
+          }
+          .podium-slot:hover .podium-block {
+            transform: translateY(-5px) !important;
+          }
+          .podium-meta {
+            animation: efPodiumIn 0.4s ease both !important;
+            animation-delay: inherit !important;
+          }
+          @media (prefers-reduced-motion: reduce) {
+            .podium-slot,
+            .podium-meta,
+            .podium-block,
+            .podium-block::after {
+              animation: none !important;
+            }
+            .podium-slot:hover .podium-block {
+              transform: none !important;
+            }
+          }
+        </style>
         <div class="podium" role="list" aria-label="Podio top 3"
              style="display:flex;align-items:flex-end;justify-content:center;gap:8px;width:100%;max-width:100%;padding:8px 0 4px;box-sizing:border-box;">
           ${renderPodiumSlot(byPos(2), 2)}
@@ -2445,6 +2505,66 @@ document.addEventListener('DOMContentLoaded', () => {
           <p style="color:var(--text-gray); font-size:0.88rem; margin-top:6px">Completá un entrenamiento para empezar a sumar puntos.</p>
         </div>
       ` : `
+        <style>
+          @keyframes efPodiumIn {
+            from { opacity: 0; transform: translateY(14px); }
+            to   { opacity: 1; transform: translateY(0); }
+          }
+          @keyframes efPodiumGrow {
+            from { transform: scaleY(0.45); opacity: 0; }
+            to   { transform: scaleY(1); opacity: 1; }
+          }
+          @keyframes efPodiumShine {
+            0%   { left: -70%; opacity: 0; }
+            20%  { opacity: 1; }
+            60%  { left: 120%; opacity: 0.65; }
+            100% { left: 120%; opacity: 0; }
+          }
+          .podium-slot {
+            animation: efPodiumIn 0.5s cubic-bezier(0.22, 1, 0.36, 1) both !important;
+          }
+          .podium-slot-2 { animation-delay: 0.04s !important; }
+          .podium-slot-1 { animation-delay: 0.14s !important; }
+          .podium-slot-3 { animation-delay: 0.24s !important; }
+          .podium-block {
+            transform-origin: bottom center !important;
+            animation: efPodiumGrow 0.55s cubic-bezier(0.22, 1, 0.36, 1) both !important;
+            animation-delay: inherit !important;
+            position: relative !important;
+            overflow: hidden !important;
+            transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1) !important;
+          }
+          .podium-block::after {
+            content: '' !important;
+            position: absolute !important;
+            top: 0 !important;
+            left: -70% !important;
+            width: 45% !important;
+            height: 100% !important;
+            background: linear-gradient(100deg, transparent 0%, rgba(255,255,255,0.28) 45%, transparent 100%) !important;
+            transform: skewX(-18deg) !important;
+            animation: efPodiumShine 2.6s ease-in-out 0.65s both !important;
+            pointer-events: none !important;
+          }
+          .podium-slot:hover .podium-block {
+            transform: translateY(-5px) !important;
+          }
+          .podium-meta {
+            animation: efPodiumIn 0.4s ease both !important;
+            animation-delay: inherit !important;
+          }
+          @media (prefers-reduced-motion: reduce) {
+            .podium-slot,
+            .podium-meta,
+            .podium-block,
+            .podium-block::after {
+              animation: none !important;
+            }
+            .podium-slot:hover .podium-block {
+              transform: none !important;
+            }
+          }
+        </style>
         <div class="podium" role="list" aria-label="Podio top 3"
              style="display:flex;align-items:flex-end;justify-content:center;gap:8px;width:100%;max-width:100%;padding:8px 0 4px;box-sizing:border-box;">
           ${renderPodiumSlot(byPos(2), 2)}
