@@ -1054,3 +1054,175 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+
+/* ---- Formulario crear/editar rutina (minimalista) ---- */
+.rf-section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: 18px 0 12px;
+  padding-top: 14px;
+  border-top: 1px solid rgba(255,255,255,0.06);
+}
+.rf-section-title {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-gray);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin: 0;
+}
+
+.rf-day {
+  background: rgba(255,255,255,0.03);
+  border-radius: 14px;
+  padding: 14px 14px 10px;
+  margin-bottom: 14px;
+}
+
+.rf-day-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+.rf-day-name {
+  flex: 1;
+  min-width: 140px;
+  font-weight: 700 !important;
+  background: transparent !important;
+  border: none !important;
+  border-bottom: 1px solid rgba(255,255,255,0.12) !important;
+  border-radius: 0 !important;
+  padding: 8px 2px !important;
+  box-shadow: none !important;
+}
+.rf-day-name:focus {
+  border-bottom-color: var(--red-primary) !important;
+  box-shadow: none !important;
+}
+
+.rf-day-actions,
+.rf-exercise-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.rf-icon-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: none;
+  background: rgba(255,255,255,0.06);
+  color: var(--text-gray);
+  font-size: 0.95rem;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease, color 0.15s ease;
+  font-family: inherit;
+}
+.rf-icon-btn:hover {
+  background: rgba(255,255,255,0.12);
+  color: #fff;
+}
+.rf-icon-btn.rf-danger {
+  color: var(--red-primary);
+}
+.rf-icon-btn.rf-danger:hover {
+  background: rgba(255, 46, 46, 0.15);
+}
+
+.rf-text-btn {
+  border: none;
+  background: transparent;
+  color: var(--red-primary);
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-family: inherit;
+  transition: background 0.15s ease;
+}
+.rf-text-btn:hover {
+  background: rgba(255, 46, 46, 0.12);
+}
+
+.rf-exercises {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.rf-exercise {
+  background: rgba(0,0,0,0.28);
+  border-radius: 12px;
+  padding: 12px;
+  /* sin borde */
+}
+
+.rf-exercise-top {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.rf-field {
+  margin-bottom: 8px;
+}
+.rf-field:last-child {
+  margin-bottom: 0;
+}
+.rf-field-grow {
+  flex: 1;
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+.rf-label {
+  display: block;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.rf-exercise .form-input {
+  background: rgba(255,255,255,0.04);
+  border: 1px solid transparent;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 0.92rem;
+}
+.rf-exercise .form-input:focus {
+  border-color: rgba(255, 46, 46, 0.45);
+  background: rgba(255,255,255,0.06);
+  box-shadow: none;
+}
+
+.rf-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+@media (max-width: 420px) {
+  .rf-metrics {
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 6px;
+  }
+  .rf-exercise {
+    padding: 10px;
+  }
+}

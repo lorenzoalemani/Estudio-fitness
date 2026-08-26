@@ -3364,9 +3364,9 @@ appState.modalActivo = 'crear_rutina';
               </div>
             </div>
 
-            <div style="display:flex; justify-content:space-between; align-items:center; margin:16px 0 10px; border-top:1px solid var(--border-color); padding-top:14px">
-              <h4 style="color:var(--red-primary); font-weight:900">Días de Entrenamiento y Ejercicios</h4>
-              <button type="button" class="btn btn-secondary btn-sm" id="btnAddDay">+ Agregar Día</button>
+            <div class="rf-section-header">
+              <h4 class="rf-section-title">Días y ejercicios</h4>
+              <button type="button" class="rf-text-btn" id="btnAddDay">+ Día</button>
             </div>
 
             <div id="daysContainer"></div>
@@ -3729,65 +3729,67 @@ appState.modalActivo = 'crear_rutina';
     if (!container) return;
 
     container.innerHTML = currentFormDays.map((dia, diaIdx) => `
-      <div style="background:rgba(0,0,0,0.5); border:1px solid var(--border-color); border-radius:var(--radius-sm); padding:14px; margin-bottom:14px">
-        <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; margin-bottom:10px; flex-wrap:wrap">
-          <input type="text" class="form-input" value="${dia.nombre}" onchange="window.updateFormDayName(${diaIdx}, this.value)" style="font-weight:800; flex:1; min-width:140px">
-          <div style="display:flex; gap:4px">
-            <button type="button" class="btn btn-secondary btn-sm" onclick="window.moveFormDayUp(${diaIdx})" title="Subir Día" style="padding:4px 8px">⬆️</button>
-            <button type="button" class="btn btn-secondary btn-sm" onclick="window.moveFormDayDown(${diaIdx})" title="Bajar Día" style="padding:4px 8px">⬇️</button>
-            <button type="button" class="btn btn-secondary btn-sm" onclick="window.addFormExercise(${diaIdx})">+ Ejercicio</button>
-            ${currentFormDays.length > 1 ? `<button type="button" class="btn btn-secondary btn-sm" onclick="window.removeFormDay(${diaIdx})" style="color:var(--red-primary); border-color:var(--red-primary); padding:4px 8px">🗑️</button>` : ''}
+      <div class="rf-day">
+        <div class="rf-day-header">
+          <input type="text" class="form-input rf-day-name" value="${dia.nombre}" onchange="window.updateFormDayName(${diaIdx}, this.value)" placeholder="Nombre del día">
+          <div class="rf-day-actions">
+            <button type="button" class="rf-icon-btn" onclick="window.moveFormDayUp(${diaIdx})" title="Subir día">↑</button>
+            <button type="button" class="rf-icon-btn" onclick="window.moveFormDayDown(${diaIdx})" title="Bajar día">↓</button>
+            <button type="button" class="rf-text-btn" onclick="window.addFormExercise(${diaIdx})">+ Ejercicio</button>
+            ${currentFormDays.length > 1 ? `<button type="button" class="rf-icon-btn rf-danger" onclick="window.removeFormDay(${diaIdx})" title="Eliminar día">×</button>` : ''}
           </div>
         </div>
 
+        <div class="rf-exercises">
         ${dia.ejercicios.map((ej, ejIdx) => `
-          <div style="background:rgba(255,255,255,0.03); border:1px solid var(--border-color); padding:10px; border-radius:8px; margin-bottom:8px">
-            <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; margin-bottom:6px">
-              <div class="form-group" style="margin-bottom:0; flex:1">
-                <label class="form-label" style="font-size:0.75rem">Nombre del Ejercicio</label>
+          <div class="rf-exercise">
+            <div class="rf-exercise-top">
+              <div class="rf-field rf-field-grow">
+                <label class="rf-label">Ejercicio</label>
                 <div class="ej-suggest-wrap">
                   <input type="text" class="form-input ej-nombre-input" value="${ej.nombre}"
                     oninput="window.onEjercicioNombreInput(${diaIdx}, ${ejIdx}, this.value)"
                     onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'nombre', this.value)"
                     onblur="window.ocultarSugerenciasEjercicio(${diaIdx}, ${ejIdx})"
                     autocomplete="off"
-                    placeholder="Empezá a escribir…">
+                    placeholder="Nombre del ejercicio">
                   <div class="ej-suggest-box" id="ej-suggest-${diaIdx}-${ejIdx}" hidden></div>
                 </div>
               </div>
-              <div style="display:flex; gap:4px; margin-top:16px">
-                <button type="button" class="btn btn-secondary btn-sm" onclick="window.moveFormExerciseUp(${diaIdx}, ${ejIdx})" style="padding:4px 6px" title="Subir Ejercicio">⬆️</button>
-                <button type="button" class="btn btn-secondary btn-sm" onclick="window.moveFormExerciseDown(${diaIdx}, ${ejIdx})" style="padding:4px 6px" title="Bajar Ejercicio">⬇️</button>
-                ${dia.ejercicios.length > 1 ? `<button type="button" class="btn btn-secondary btn-sm" onclick="window.removeFormExercise(${diaIdx}, ${ejIdx})" style="color:var(--red-primary); border-color:var(--red-primary); padding:4px 6px">🗑️</button>` : ''}
+              <div class="rf-exercise-actions">
+                <button type="button" class="rf-icon-btn" onclick="window.moveFormExerciseUp(${diaIdx}, ${ejIdx})" title="Subir">↑</button>
+                <button type="button" class="rf-icon-btn" onclick="window.moveFormExerciseDown(${diaIdx}, ${ejIdx})" title="Bajar">↓</button>
+                ${dia.ejercicios.length > 1 ? `<button type="button" class="rf-icon-btn rf-danger" onclick="window.removeFormExercise(${diaIdx}, ${ejIdx})" title="Quitar">×</button>` : ''}
               </div>
             </div>
 
-            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(85px, 1fr)); gap:8px; margin-bottom:6px">
-              <div class="form-group" style="margin-bottom:0">
-                <label class="form-label" style="font-size:0.72rem">Series Objetivo</label>
+            <div class="rf-metrics">
+              <div class="rf-field">
+                <label class="rf-label">Series</label>
                 <input type="number" class="form-input" value="${ej.series}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'series', this.value)">
               </div>
-              <div class="form-group" style="margin-bottom:0">
-                <label class="form-label" style="font-size:0.72rem">Reps Objetivo</label>
+              <div class="rf-field">
+                <label class="rf-label">Reps</label>
                 <input type="text" class="form-input" value="${ej.repeticiones}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'repeticiones', this.value)">
               </div>
-              <div class="form-group" style="margin-bottom:0">
-                <label class="form-label" style="font-size:0.72rem">Peso Sugerido</label>
+              <div class="rf-field">
+                <label class="rf-label">Peso</label>
                 <input type="text" class="form-input" value="${ej.peso}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'peso', this.value)">
               </div>
             </div>
 
-            <div class="form-group" style="margin-bottom:0">
-              <label class="form-label" style="font-size:0.72rem">Indicación / Nota del Profesor</label>
-              <input type="text" class="form-input" placeholder="Ej: Controlar 2 seg de bajada" value="${ej.notaProfesor || ''}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'notaProfesor', this.value)">
+            <div class="rf-field">
+              <label class="rf-label">Nota</label>
+              <input type="text" class="form-input" placeholder="Opcional" value="${ej.notaProfesor || ''}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'notaProfesor', this.value)">
             </div>
 
-            <div class="form-group" style="margin-bottom:0; margin-top:6px">
-              <label class="form-label" style="font-size:0.72rem">🎬 URL de Video/Demo (Opcional)</label>
-              <input type="url" class="form-input" data-video-input="${diaIdx}-${ejIdx}" placeholder="https://youtube.com/..." value="${ej.videoUrl || ''}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'videoUrl', this.value)">
+            <div class="rf-field">
+              <label class="rf-label">Video</label>
+              <input type="url" class="form-input" data-video-input="${diaIdx}-${ejIdx}" placeholder="Se completa solo al elegir ejercicio" value="${ej.videoUrl || ''}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'videoUrl', this.value)">
             </div>
           </div>
         `).join('')}
+        </div>
       </div>
     `).join('');
   }
@@ -4466,9 +4468,9 @@ appState.modalActivo = 'crear_rutina';
               </div>
             </div>
 
-            <div style="display:flex; justify-content:space-between; align-items:center; margin:16px 0 10px; border-top:1px solid var(--border-color); padding-top:14px">
-              <h4 style="color:var(--red-primary); font-weight:900">Días de Entrenamiento y Ejercicios</h4>
-              <button type="button" class="btn btn-secondary btn-sm" id="btnAddDay">+ Agregar Día</button>
+            <div class="rf-section-header">
+              <h4 class="rf-section-title">Días y ejercicios</h4>
+              <button type="button" class="rf-text-btn" id="btnAddDay">+ Día</button>
             </div>
 
             <div id="daysContainer"></div>
@@ -4831,65 +4833,67 @@ appState.modalActivo = 'crear_rutina';
     if (!container) return;
 
     container.innerHTML = currentFormDays.map((dia, diaIdx) => `
-      <div style="background:rgba(0,0,0,0.5); border:1px solid var(--border-color); border-radius:var(--radius-sm); padding:14px; margin-bottom:14px">
-        <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; margin-bottom:10px; flex-wrap:wrap">
-          <input type="text" class="form-input" value="${dia.nombre}" onchange="window.updateFormDayName(${diaIdx}, this.value)" style="font-weight:800; flex:1; min-width:140px">
-          <div style="display:flex; gap:4px">
-            <button type="button" class="btn btn-secondary btn-sm" onclick="window.moveFormDayUp(${diaIdx})" title="Subir Día" style="padding:4px 8px">⬆️</button>
-            <button type="button" class="btn btn-secondary btn-sm" onclick="window.moveFormDayDown(${diaIdx})" title="Bajar Día" style="padding:4px 8px">⬇️</button>
-            <button type="button" class="btn btn-secondary btn-sm" onclick="window.addFormExercise(${diaIdx})">+ Ejercicio</button>
-            ${currentFormDays.length > 1 ? `<button type="button" class="btn btn-secondary btn-sm" onclick="window.removeFormDay(${diaIdx})" style="color:var(--red-primary); border-color:var(--red-primary); padding:4px 8px">🗑️</button>` : ''}
+      <div class="rf-day">
+        <div class="rf-day-header">
+          <input type="text" class="form-input rf-day-name" value="${dia.nombre}" onchange="window.updateFormDayName(${diaIdx}, this.value)" placeholder="Nombre del día">
+          <div class="rf-day-actions">
+            <button type="button" class="rf-icon-btn" onclick="window.moveFormDayUp(${diaIdx})" title="Subir día">↑</button>
+            <button type="button" class="rf-icon-btn" onclick="window.moveFormDayDown(${diaIdx})" title="Bajar día">↓</button>
+            <button type="button" class="rf-text-btn" onclick="window.addFormExercise(${diaIdx})">+ Ejercicio</button>
+            ${currentFormDays.length > 1 ? `<button type="button" class="rf-icon-btn rf-danger" onclick="window.removeFormDay(${diaIdx})" title="Eliminar día">×</button>` : ''}
           </div>
         </div>
 
+        <div class="rf-exercises">
         ${dia.ejercicios.map((ej, ejIdx) => `
-          <div style="background:rgba(255,255,255,0.03); border:1px solid var(--border-color); padding:10px; border-radius:8px; margin-bottom:8px">
-            <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; margin-bottom:6px">
-              <div class="form-group" style="margin-bottom:0; flex:1">
-                <label class="form-label" style="font-size:0.75rem">Nombre del Ejercicio</label>
+          <div class="rf-exercise">
+            <div class="rf-exercise-top">
+              <div class="rf-field rf-field-grow">
+                <label class="rf-label">Ejercicio</label>
                 <div class="ej-suggest-wrap">
                   <input type="text" class="form-input ej-nombre-input" value="${ej.nombre}"
                     oninput="window.onEjercicioNombreInput(${diaIdx}, ${ejIdx}, this.value)"
                     onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'nombre', this.value)"
                     onblur="window.ocultarSugerenciasEjercicio(${diaIdx}, ${ejIdx})"
                     autocomplete="off"
-                    placeholder="Empezá a escribir…">
+                    placeholder="Nombre del ejercicio">
                   <div class="ej-suggest-box" id="ej-suggest-${diaIdx}-${ejIdx}" hidden></div>
                 </div>
               </div>
-              <div style="display:flex; gap:4px; margin-top:16px">
-                <button type="button" class="btn btn-secondary btn-sm" onclick="window.moveFormExerciseUp(${diaIdx}, ${ejIdx})" style="padding:4px 6px" title="Subir Ejercicio">⬆️</button>
-                <button type="button" class="btn btn-secondary btn-sm" onclick="window.moveFormExerciseDown(${diaIdx}, ${ejIdx})" style="padding:4px 6px" title="Bajar Ejercicio">⬇️</button>
-                ${dia.ejercicios.length > 1 ? `<button type="button" class="btn btn-secondary btn-sm" onclick="window.removeFormExercise(${diaIdx}, ${ejIdx})" style="color:var(--red-primary); border-color:var(--red-primary); padding:4px 6px">🗑️</button>` : ''}
+              <div class="rf-exercise-actions">
+                <button type="button" class="rf-icon-btn" onclick="window.moveFormExerciseUp(${diaIdx}, ${ejIdx})" title="Subir">↑</button>
+                <button type="button" class="rf-icon-btn" onclick="window.moveFormExerciseDown(${diaIdx}, ${ejIdx})" title="Bajar">↓</button>
+                ${dia.ejercicios.length > 1 ? `<button type="button" class="rf-icon-btn rf-danger" onclick="window.removeFormExercise(${diaIdx}, ${ejIdx})" title="Quitar">×</button>` : ''}
               </div>
             </div>
 
-            <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(85px, 1fr)); gap:8px; margin-bottom:6px">
-              <div class="form-group" style="margin-bottom:0">
-                <label class="form-label" style="font-size:0.72rem">Series Objetivo</label>
+            <div class="rf-metrics">
+              <div class="rf-field">
+                <label class="rf-label">Series</label>
                 <input type="number" class="form-input" value="${ej.series}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'series', this.value)">
               </div>
-              <div class="form-group" style="margin-bottom:0">
-                <label class="form-label" style="font-size:0.72rem">Reps Objetivo</label>
+              <div class="rf-field">
+                <label class="rf-label">Reps</label>
                 <input type="text" class="form-input" value="${ej.repeticiones}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'repeticiones', this.value)">
               </div>
-              <div class="form-group" style="margin-bottom:0">
-                <label class="form-label" style="font-size:0.72rem">Peso Sugerido</label>
+              <div class="rf-field">
+                <label class="rf-label">Peso</label>
                 <input type="text" class="form-input" value="${ej.peso}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'peso', this.value)">
               </div>
             </div>
 
-            <div class="form-group" style="margin-bottom:0">
-              <label class="form-label" style="font-size:0.72rem">Indicación / Nota del Profesor</label>
-              <input type="text" class="form-input" placeholder="Ej: Controlar 2 seg de bajada" value="${ej.notaProfesor || ''}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'notaProfesor', this.value)">
+            <div class="rf-field">
+              <label class="rf-label">Nota</label>
+              <input type="text" class="form-input" placeholder="Opcional" value="${ej.notaProfesor || ''}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'notaProfesor', this.value)">
             </div>
 
-            <div class="form-group" style="margin-bottom:0; margin-top:6px">
-              <label class="form-label" style="font-size:0.72rem">🎬 URL de Video/Demo (Opcional)</label>
-              <input type="url" class="form-input" data-video-input="${diaIdx}-${ejIdx}" placeholder="https://youtube.com/..." value="${ej.videoUrl || ''}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'videoUrl', this.value)">
+            <div class="rf-field">
+              <label class="rf-label">Video</label>
+              <input type="url" class="form-input" data-video-input="${diaIdx}-${ejIdx}" placeholder="Se completa solo al elegir ejercicio" value="${ej.videoUrl || ''}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'videoUrl', this.value)">
             </div>
           </div>
         `).join('')}
+        </div>
       </div>
     `).join('');
   }
