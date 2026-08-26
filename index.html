@@ -3,8 +3,50 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>Estudio Fitness - PWA de Entrenamiento</title>
-  
+
+  <!-- SEO: título y descripción que ve Google -->
+  <title>Estudio Fitness | Gimnasio en Sunchales – Entrenamiento y clases</title>
+  <meta name="description" content="Gimnasio en Sunchales (9 de Julio 54). Musculación, funcional, indoor cycle y más. Entrená con seguimiento personalizado. App de alumnos e ingreso por DNI.">
+  <meta name="keywords" content="Estudio Fitness, gimnasio Sunchales, fitness Sunchales, entrenamiento Sunchales, musculación, indoor cycle">
+  <link rel="canonical" href="https://www.estudiofitness.com.ar/">
+
+  <!-- Open Graph (WhatsApp, redes, previews) -->
+  <meta property="og:type" content="website">
+  <meta property="og:locale" content="es_AR">
+  <meta property="og:url" content="https://www.estudiofitness.com.ar/">
+  <meta property="og:title" content="Estudio Fitness | Gimnasio en Sunchales">
+  <meta property="og:description" content="Gimnasio en Sunchales. Musculación, funcional, indoor cycle y más. Seguimiento personalizado para alumnos.">
+  <meta property="og:site_name" content="Estudio Fitness">
+
+  <!-- Twitter -->
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="Estudio Fitness | Gimnasio en Sunchales">
+  <meta name="twitter:description" content="Gimnasio en Sunchales (9 de Julio 54). Musculación, funcional, indoor cycle y más.">
+
+  <!-- Datos estructurados LocalBusiness (ayuda al pack local) -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "HealthClub",
+    "name": "Estudio Fitness",
+    "url": "https://www.estudiofitness.com.ar/",
+    "address": {
+      "@type": "PostalAddress",
+      "streetAddress": "9 de Julio 54",
+      "addressLocality": "Sunchales",
+      "addressRegion": "Santa Fe",
+      "postalCode": "S2322",
+      "addressCountry": "AR"
+    },
+    "geo": {
+      "@type": "GeoCoordinates",
+      "latitude": -30.9444,
+      "longitude": -61.5611
+    },
+    "description": "Gimnasio en Sunchales. Musculación, entrenamiento funcional, indoor cycle y clases grupales con seguimiento personalizado."
+  }
+  </script>
+
   <!-- PWA Meta Tags -->
   <link rel="manifest" href="./manifest.json">
   <meta name="theme-color" content="#070709">
@@ -18,17 +60,19 @@
   <!-- Estilos & Fuentes -->
   <link rel="stylesheet" href="./src/styles.css">
 
-  <!-- La VAPID public key ya no se pega acá a mano: el frontend la pide en
-       runtime a /api/vapid-public-key (Vercel) o
-       /.netlify/functions/vapid-public-key (Netlify), que la sirven desde
-       la misma variable de entorno VAPID_PUBLIC_KEY que ya usa
-       /api/send-push.js para enviar. Un solo origen de verdad, sin
-       duplicar la clave ni hardcodear nada acá. -->
-
   <!-- Supabase JS Client SDK -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
+
+  <!-- Texto visible para crawlers si JS falla (mejora snippet en Google) -->
+  <noscript>
+    <main style="font-family:system-ui,sans-serif;max-width:640px;margin:40px auto;padding:0 16px;color:#111">
+      <h1>Estudio Fitness – Gimnasio en Sunchales</h1>
+      <p>Gimnasio en Sunchales, Santa Fe (9 de Julio 54). Musculación, entrenamiento funcional, indoor cycle y clases grupales con seguimiento personalizado.</p>
+      <p>Activá JavaScript para ingresar a la app de alumnos.</p>
+    </main>
+  </noscript>
 
   <!-- Contenedor Principal de la Aplicación -->
   <div id="app"></div>

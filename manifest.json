@@ -1,7 +1,7 @@
 {
   "name": "Estudio Fitness",
   "short_name": "Estudio Fitness",
-  "description": "Aplicación de seguimiento y gestión de entrenamientos para alumnos y profesores de Estudio Fitness",
+  "description": "Gimnasio en Sunchales. App de seguimiento de entrenamientos para alumnos y profesores de Estudio Fitness.",
   "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#0a0a0c",
