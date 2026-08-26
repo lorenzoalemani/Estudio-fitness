@@ -792,9 +792,9 @@ body {
   animation: podiumSlotIn 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-.podium-slot-2 { animation-delay: 0.05s; }
-.podium-slot-1 { animation-delay: 0.14s; }
-.podium-slot-3 { animation-delay: 0.23s; }
+.podium-slot-3 { animation-delay: 0s; }
+.podium-slot-2 { animation-delay: 0.12s; }
+.podium-slot-1 { animation-delay: 0.24s; }
 
 .podium-meta {
   width: 100%;
@@ -854,23 +854,7 @@ body {
 }
 
 /* Brillo sutil que cruza el bloque */
-.podium-block::after {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: -60%;
-  width: 45%;
-  height: 100%;
-  background: linear-gradient(
-    100deg,
-    transparent 0%,
-    rgba(255,255,255,0.22) 45%,
-    transparent 100%
-  );
-  transform: skewX(-18deg);
-  animation: podiumShine 2.8s ease-in-out 0.7s both;
-  pointer-events: none;
-}
+.podium-block::after { display: none; }
 
 .podium-slot:hover .podium-block {
   transform: translateY(-4px);
@@ -920,45 +904,24 @@ body {
 }
 
 @keyframes podiumSlotIn {
-  from {
-    opacity: 0;
-    transform: translateY(12px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; }
+  to   { opacity: 1; }
 }
 
 @keyframes podiumMetaIn {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes podiumRise {
   from {
-    transform: scaleY(0.55);
+    transform: scaleY(0.15);
     opacity: 0;
-    transform-origin: bottom center;
   }
   to {
     transform: scaleY(1);
     opacity: 1;
-    transform-origin: bottom center;
   }
-}
-
-@keyframes podiumShine {
-  0%   { left: -60%; opacity: 0; }
-  15%  { opacity: 1; }
-  55%  { left: 120%; opacity: 0.7; }
-  100% { left: 120%; opacity: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {

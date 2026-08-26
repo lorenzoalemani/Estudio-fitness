@@ -932,63 +932,52 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>
       ` : `
         <style>
-          @keyframes efPodiumIn {
-            from { opacity: 0; transform: translateY(14px); }
+          /* Podio: sube desde abajo — orden 3 → 2 → 1, sutil y liviano */
+          @keyframes efPodiumRise {
+            from {
+              opacity: 0;
+              transform: scaleY(0.15);
+            }
+            to {
+              opacity: 1;
+              transform: scaleY(1);
+            }
+          }
+          @keyframes efPodiumNameIn {
+            from { opacity: 0; transform: translateY(6px); }
             to   { opacity: 1; transform: translateY(0); }
           }
-          @keyframes efPodiumGrow {
-            from { transform: scaleY(0.45); opacity: 0; }
-            to   { transform: scaleY(1); opacity: 1; }
-          }
-          @keyframes efPodiumShine {
-            0%   { left: -70%; opacity: 0; }
-            20%  { opacity: 1; }
-            60%  { left: 120%; opacity: 0.65; }
-            100% { left: 120%; opacity: 0; }
-          }
           .podium-slot {
-            animation: efPodiumIn 0.5s cubic-bezier(0.22, 1, 0.36, 1) both !important;
+            opacity: 1;
           }
-          .podium-slot-2 { animation-delay: 0.04s !important; }
-          .podium-slot-1 { animation-delay: 0.14s !important; }
-          .podium-slot-3 { animation-delay: 0.24s !important; }
           .podium-block {
             transform-origin: bottom center !important;
-            animation: efPodiumGrow 0.55s cubic-bezier(0.22, 1, 0.36, 1) both !important;
-            animation-delay: inherit !important;
-            position: relative !important;
-            overflow: hidden !important;
-            transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1) !important;
+            animation: efPodiumRise 0.38s cubic-bezier(0.22, 1, 0.36, 1) both !important;
+            will-change: transform, opacity;
           }
-          .podium-block::after {
-            content: '' !important;
-            position: absolute !important;
-            top: 0 !important;
-            left: -70% !important;
-            width: 45% !important;
-            height: 100% !important;
-            background: linear-gradient(100deg, transparent 0%, rgba(255,255,255,0.28) 45%, transparent 100%) !important;
-            transform: skewX(-18deg) !important;
-            animation: efPodiumShine 2.6s ease-in-out 0.65s both !important;
-            pointer-events: none !important;
-          }
-          .podium-slot:hover .podium-block {
-            transform: translateY(-5px) !important;
-          }
+          /* Orden de aparición: 3º primero, luego 2º, luego 1º */
+          .podium-slot-3 .podium-block { animation-delay: 0s !important; }
+          .podium-slot-2 .podium-block { animation-delay: 0.12s !important; }
+          .podium-slot-1 .podium-block { animation-delay: 0.24s !important; }
+
           .podium-meta {
-            animation: efPodiumIn 0.4s ease both !important;
-            animation-delay: inherit !important;
+            animation: efPodiumNameIn 0.3s ease both !important;
+          }
+          .podium-slot-3 .podium-meta { animation-delay: 0.06s !important; }
+          .podium-slot-2 .podium-meta { animation-delay: 0.18s !important; }
+          .podium-slot-1 .podium-meta { animation-delay: 0.30s !important; }
+
+          .podium-block::after { display: none !important; animation: none !important; }
+          .podium-slot:hover .podium-block {
+            transform: translateY(-3px) !important;
+            transition: transform 0.18s ease !important;
           }
           @media (prefers-reduced-motion: reduce) {
-            .podium-slot,
-            .podium-meta,
             .podium-block,
-            .podium-block::after {
+            .podium-meta {
               animation: none !important;
             }
-            .podium-slot:hover .podium-block {
-              transform: none !important;
-            }
+            .podium-slot:hover .podium-block { transform: none !important; }
           }
         </style>
         <div class="podium" role="list" aria-label="Podio top 3"
@@ -2556,63 +2545,52 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>
       ` : `
         <style>
-          @keyframes efPodiumIn {
-            from { opacity: 0; transform: translateY(14px); }
+          /* Podio: sube desde abajo — orden 3 → 2 → 1, sutil y liviano */
+          @keyframes efPodiumRise {
+            from {
+              opacity: 0;
+              transform: scaleY(0.15);
+            }
+            to {
+              opacity: 1;
+              transform: scaleY(1);
+            }
+          }
+          @keyframes efPodiumNameIn {
+            from { opacity: 0; transform: translateY(6px); }
             to   { opacity: 1; transform: translateY(0); }
           }
-          @keyframes efPodiumGrow {
-            from { transform: scaleY(0.45); opacity: 0; }
-            to   { transform: scaleY(1); opacity: 1; }
-          }
-          @keyframes efPodiumShine {
-            0%   { left: -70%; opacity: 0; }
-            20%  { opacity: 1; }
-            60%  { left: 120%; opacity: 0.65; }
-            100% { left: 120%; opacity: 0; }
-          }
           .podium-slot {
-            animation: efPodiumIn 0.5s cubic-bezier(0.22, 1, 0.36, 1) both !important;
+            opacity: 1;
           }
-          .podium-slot-2 { animation-delay: 0.04s !important; }
-          .podium-slot-1 { animation-delay: 0.14s !important; }
-          .podium-slot-3 { animation-delay: 0.24s !important; }
           .podium-block {
             transform-origin: bottom center !important;
-            animation: efPodiumGrow 0.55s cubic-bezier(0.22, 1, 0.36, 1) both !important;
-            animation-delay: inherit !important;
-            position: relative !important;
-            overflow: hidden !important;
-            transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1) !important;
+            animation: efPodiumRise 0.38s cubic-bezier(0.22, 1, 0.36, 1) both !important;
+            will-change: transform, opacity;
           }
-          .podium-block::after {
-            content: '' !important;
-            position: absolute !important;
-            top: 0 !important;
-            left: -70% !important;
-            width: 45% !important;
-            height: 100% !important;
-            background: linear-gradient(100deg, transparent 0%, rgba(255,255,255,0.28) 45%, transparent 100%) !important;
-            transform: skewX(-18deg) !important;
-            animation: efPodiumShine 2.6s ease-in-out 0.65s both !important;
-            pointer-events: none !important;
-          }
-          .podium-slot:hover .podium-block {
-            transform: translateY(-5px) !important;
-          }
+          /* Orden de aparición: 3º primero, luego 2º, luego 1º */
+          .podium-slot-3 .podium-block { animation-delay: 0s !important; }
+          .podium-slot-2 .podium-block { animation-delay: 0.12s !important; }
+          .podium-slot-1 .podium-block { animation-delay: 0.24s !important; }
+
           .podium-meta {
-            animation: efPodiumIn 0.4s ease both !important;
-            animation-delay: inherit !important;
+            animation: efPodiumNameIn 0.3s ease both !important;
+          }
+          .podium-slot-3 .podium-meta { animation-delay: 0.06s !important; }
+          .podium-slot-2 .podium-meta { animation-delay: 0.18s !important; }
+          .podium-slot-1 .podium-meta { animation-delay: 0.30s !important; }
+
+          .podium-block::after { display: none !important; animation: none !important; }
+          .podium-slot:hover .podium-block {
+            transform: translateY(-3px) !important;
+            transition: transform 0.18s ease !important;
           }
           @media (prefers-reduced-motion: reduce) {
-            .podium-slot,
-            .podium-meta,
             .podium-block,
-            .podium-block::after {
+            .podium-meta {
               animation: none !important;
             }
-            .podium-slot:hover .podium-block {
-              transform: none !important;
-            }
+            .podium-slot:hover .podium-block { transform: none !important; }
           }
         </style>
         <div class="podium" role="list" aria-label="Podio top 3"
