@@ -984,3 +984,57 @@ body {
   .podium-num { font-size: 1.15rem; }
   .podium-slot-1 .podium-num { font-size: 1.3rem; }
 }
+
+
+/* Forzar visibilidad de la campana */
+.notif-bell-btn svg,
+.notif-bell-btn .header-icon-bell {
+  width: 24px !important;
+  height: 24px !important;
+  min-width: 24px !important;
+  min-height: 24px !important;
+  display: block !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  stroke: #ffffff !important;
+  color: #ffffff !important;
+}
+
+
+/* Autocompletado de ejercicios (panel profesor) */
+.ej-suggest-wrap {
+  position: relative;
+}
+.ej-suggest-box {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 50;
+  max-height: 220px;
+  overflow-y: auto;
+  background: #14141a;
+  border: 1px solid rgba(255,255,255,0.16);
+  border-radius: 10px;
+  box-shadow: 0 12px 28px rgba(0,0,0,0.45);
+  padding: 4px;
+}
+.ej-suggest-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  color: #fff;
+  font-size: 0.88rem;
+  font-weight: 600;
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.ej-suggest-item:hover,
+.ej-suggest-item:focus {
+  background: rgba(255, 46, 46, 0.18);
+  outline: none;
+}

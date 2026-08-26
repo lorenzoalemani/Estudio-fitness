@@ -199,7 +199,7 @@ document.addEventListener('DOMContentLoaded', () => {
               id="btnNotifBell"
               title="${pushConcedido ? 'Notificaciones' : 'Notificaciones (tocá para activar el push)'}"
             >
-              <svg class="header-icon header-icon-bell" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M22 8c0-2.3-.8-4.3-2-6"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/><path d="M4 2C2.8 3.7 2 5.7 2 8"/></svg>
+              <svg class="header-icon header-icon-bell" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:24px;height:24px;min-width:24px;min-height:24px;display:block;color:#fff;"><path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M22 8c0-2.3-.8-4.3-2-6"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/><path d="M4 2C2.8 3.7 2 5.7 2 8"/></svg>
               ${!pushConcedido
                 ? `<span class="notif-bell-dot" title="Push desactivado"></span>`
                 : (unreadCount > 0 ? `<span style="position:absolute; top:-4px; right:-4px; background:var(--red-primary); color:#fff; border-radius:50%; width:18px; height:18px; font-size:0.7rem; font-weight:800; display:flex; align-items:center; justify-content:center">${unreadCount}</span>` : '')
@@ -1798,7 +1798,7 @@ document.addEventListener('DOMContentLoaded', () => {
               id="btnNotifBell"
               title="${pushConcedido ? 'Notificaciones' : 'Notificaciones (tocá para activar el push)'}"
             >
-              <svg class="header-icon header-icon-bell" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M22 8c0-2.3-.8-4.3-2-6"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/><path d="M4 2C2.8 3.7 2 5.7 2 8"/></svg>
+              <svg class="header-icon header-icon-bell" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:24px;height:24px;min-width:24px;min-height:24px;display:block;color:#fff;"><path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M22 8c0-2.3-.8-4.3-2-6"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/><path d="M4 2C2.8 3.7 2 5.7 2 8"/></svg>
               ${!pushConcedido
                 ? `<span class="notif-bell-dot" title="Push desactivado"></span>`
                 : (unreadCount > 0 ? `<span style="position:absolute; top:-4px; right:-4px; background:var(--red-primary); color:#fff; border-radius:50%; width:18px; height:18px; font-size:0.7rem; font-weight:800; display:flex; align-items:center; justify-content:center">${unreadCount}</span>` : '')
@@ -3403,9 +3403,112 @@ appState.modalActivo = 'crear_rutina';
 
   // --- Autocompletado de video por nombre de ejercicio (solo formulario, no toca Supabase) ---
   const CATALOGO_VIDEOS_EJERCICIOS = [
-    { videoUrl: 'https://www.youtube.com/shorts/HzkHpIIo4IA', alias: ['press banca', 'press banca plano', 'press banca con barra', 'press banca plano con barra', 'press plano con barra', 'press de banca', 'press de banca con barra'] },
-    { videoUrl: 'https://www.youtube.com/shorts/qW519gsE2M8', alias: ['press banca mancuernas', 'press banca con mancuernas', 'press banca plano con mancuernas', 'press plano mancuernas', 'press plano con mancuernas', 'press de banca con mancuernas'] },
-    { videoUrl: 'https://www.youtube.com/shorts/sAYU5EvtXSo', alias: ['jalon al pecho', 'jalón al pecho', 'jalon dorsalera', 'jalón dorsalera', 'jalon en dorsalera', 'jalón en dorsalera', 'jalon en polea al pecho', 'jalón en polea al pecho'] }
+    { nombre: "Abduccion sentado en maquina", videoUrl: "https://www.youtube.com/shorts/xlp6FYwBFLU", alias: ["Abduccion sentado en maquina", "Abduccion sentado en máquina", "abduccion sentado en maquina", "abduccion sentado en máquina"] },
+    { nombre: "Abs bolitas", videoUrl: "https://www.youtube.com/shorts/Wlw3wvJdhBc", alias: ["Abs bolitas", "abs bolitas"] },
+    { nombre: "Abs rectos con peso", videoUrl: "https://www.youtube.com/shorts/BFTJUFmiwHM", alias: ["Abs rectos con peso", "abs rectos con peso"] },
+    { nombre: "Abs rectos con piernas a 45°", videoUrl: "https://www.youtube.com/shorts/4rttpgLuJR8", alias: ["Abs rectos con piernas a 45°", "abs rectos con piernas a 45°"] },
+    { nombre: "Aduccion sentado en maquina", videoUrl: "https://www.youtube.com/shorts/vlViIgtkvh4", alias: ["Aduccion sentado en maquina", "Aduccion sentado en máquina", "aduccion sentado en maquina", "aduccion sentado en máquina"] },
+    { nombre: "Apertura con empuje en banco plano", videoUrl: "https://www.youtube.com/shorts/Fc1UgcryhrA", alias: ["Apertura con empuje en banco plano", "apertura con empuje en banco plano"] },
+    { nombre: "Apertura en banco inclinado", videoUrl: "https://www.youtube.com/shorts/CQx4FhzelMU", alias: ["Apertura en banco inclinado", "apertura en banco inclinado"] },
+    { nombre: "Apertura en banco plano", videoUrl: "https://www.youtube.com/shorts/26TsSvfg28U", alias: ["Apertura en banco plano", "apertura en banco plano"] },
+    { nombre: "Apertura en polea", videoUrl: "https://www.youtube.com/shorts/QEW6RO0O-ak", alias: ["Apertura en polea", "apertura en polea"] },
+    { nombre: "Arranque a 1 brazo", videoUrl: "https://www.youtube.com/shorts/IVIrE_x5FtE", alias: ["Arranque a 1 brazo", "arranque a 1 brazo"] },
+    { nombre: "Arranque con barra", videoUrl: "https://www.youtube.com/shorts/-7mUZ2RFAw4", alias: ["Arranque con barra", "arranque con barra"] },
+    { nombre: "Biceps con barra", videoUrl: "https://www.youtube.com/shorts/B3Feq30xwpo", alias: ["Biceps con barra", "biceps con barra", "bíceps con barra"] },
+    { nombre: "Biceps con barra en polea", videoUrl: "https://www.youtube.com/shorts/oJGSW0z5Hew", alias: ["Biceps con barra en polea", "biceps con barra en polea", "bíceps con barra en polea"] },
+    { nombre: "Biceps con mancuerna banco inclinado", videoUrl: "https://www.youtube.com/shorts/4LQ0p0ni39Y", alias: ["Biceps con mancuerna banco inclinado", "Biceps con mancuernas banco inclinado", "biceps con mancuerna banco inclinado", "biceps con mancuernas banco inclinado", "bíceps con mancuerna banco inclinado"] },
+    { nombre: "Biceps con mancuernas", videoUrl: "https://www.youtube.com/shorts/WrpQYs_n_Pw", alias: ["Biceps con mancuerna", "Biceps con mancuernas", "biceps con mancuerna", "biceps con mancuernas", "bíceps con mancuernas"] },
+    { nombre: "Biceps con soga en polea", videoUrl: "https://www.youtube.com/shorts/dj99CeV_UUY", alias: ["Biceps con soga en polea", "biceps con soga en polea", "bíceps con soga en polea"] },
+    { nombre: "Biceps en banco scott", videoUrl: "https://www.youtube.com/shorts/Zj0P6gFb9MY", alias: ["Biceps en banco scott", "biceps en banco scott", "bíceps en banco scott"] },
+    { nombre: "Biceps en banco scott con mancuernas", videoUrl: "https://www.youtube.com/shorts/L4AQh3lTICk", alias: ["Biceps en banco scott con mancuerna", "Biceps en banco scott con mancuernas", "biceps en banco scott con mancuerna", "biceps en banco scott con mancuernas", "bíceps en banco scott con mancuernas"] },
+    { nombre: "Biceps martillo", videoUrl: "https://www.youtube.com/shorts/QdEY-VZcPMU", alias: ["Biceps martillo", "biceps martillo", "bíceps martillo"] },
+    { nombre: "Bicho muerto", videoUrl: "https://www.youtube.com/shorts/_o23Ghklahc", alias: ["Bicho muerto", "bicho muerto"] },
+    { nombre: "Bisagras oblicuas", videoUrl: "https://www.youtube.com/shorts/EExl_U2GGEk", alias: ["Bisagras oblicuas", "bisagras oblicuas"] },
+    { nombre: "Camilla de isquios", videoUrl: "https://www.youtube.com/shorts/B6t8MvbTtew", alias: ["Camilla de isquios", "Camilla isquios", "camilla de isquios", "camilla isquios"] },
+    { nombre: "Camilla de isquios 1 pp", videoUrl: "https://www.youtube.com/shorts/Ix7wiKrC7bQ", alias: ["Camilla de isquios 1 pierna", "Camilla de isquios 1 pp", "Camilla de isquios a un pie", "Camilla de isquios unilateral", "Camilla isquios 1 pp", "camilla de isquios 1 pierna", "camilla de isquios 1 pp", "camilla de isquios a un pie", "camilla de isquios unilateral", "camilla isquios 1 pp"] },
+    { nombre: "Cargada", videoUrl: "https://www.youtube.com/shorts/7KMYH9gyeEM", alias: ["Cargada", "cargada"] },
+    { nombre: "Cargada + segundo tiempo", videoUrl: "https://www.youtube.com/shorts/MrG8DIttWVA", alias: ["Cargada + segundo tiempo", "cargada + segundo tiempo"] },
+    { nombre: "Cuadricera", videoUrl: "https://www.youtube.com/shorts/iNvPzf15KKA", alias: ["Cuadricera", "cuadricera"] },
+    { nombre: "Cuadricera 1 pp", videoUrl: "https://www.youtube.com/shorts/OhHvfoomEfY", alias: ["Cuadricera 1 pierna", "Cuadricera 1 pp", "Cuadricera a un pie", "Cuadricera unilateral", "cuadricera 1 pierna", "cuadricera 1 pp", "cuadricera a un pie", "cuadricera unilateral"] },
+    { nombre: "Elevacion cadera en fitball", videoUrl: "https://www.youtube.com/shorts/p4Bwnapg03c", alias: ["Elevacion cadera en fitball", "elevacion cadera en fitball"] },
+    { nombre: "Encogimiento con barra", videoUrl: "https://www.youtube.com/shorts/xgLOVCSFTAc", alias: ["Encogimiento con barra", "encogimiento con barra"] },
+    { nombre: "Encogimiento con mancuernas", videoUrl: "https://www.youtube.com/shorts/0-KrI1Hqpk4", alias: ["Encogimiento con mancuerna", "Encogimiento con mancuernas", "encogimiento con mancuerna", "encogimiento con mancuernas"] },
+    { nombre: "Estocadas fijas en smith", videoUrl: "https://www.youtube.com/shorts/sEE7Qrlf4j4", alias: ["Estocadas fijas en en smith", "Estocadas fijas en smith", "Estocadas fijas smith", "estocada fijas en smith", "estocadas fijas en en smith", "estocadas fijas en smith", "estocadas fijas smith", "zancadas fijas en smith"] },
+    { nombre: "Estocadas hacia adelante", videoUrl: "https://www.youtube.com/shorts/IIJA6XbIdyI", alias: ["Estocadas hacia adelante", "estocada hacia adelante", "estocadas hacia adelante", "zancadas hacia adelante"] },
+    { nombre: "Estocadas hacia atras", videoUrl: "https://www.youtube.com/shorts/pckiYC8Rnsc", alias: ["Estocadas hacia atras", "estocada hacia atras", "estocadas hacia atras", "zancadas hacia atras"] },
+    { nombre: "Face pull", videoUrl: "https://www.youtube.com/shorts/5Yu8DTe4BAQ", alias: ["Face pull", "face pull"] },
+    { nombre: "Fondos en banco", videoUrl: "https://www.youtube.com/shorts/wN_9d37DO4M", alias: ["Fondos en banco", "fondos en banco"] },
+    { nombre: "Fondos en paralelas", videoUrl: "https://www.youtube.com/shorts/s5BLhbKWD3E", alias: ["Fondos en paralelas", "fondos en paralelas"] },
+    { nombre: "Hip thrust", videoUrl: "https://www.youtube.com/shorts/zaSzxo6xleY", alias: ["Hip thrust", "empuje de cadera", "hip thrust", "hipthrust"] },
+    { nombre: "Inferiores carrito", videoUrl: "https://www.youtube.com/shorts/62-5TombKfU", alias: ["Inferiores carrito", "inferiores carrito"] },
+    { nombre: "Inferiores con peso", videoUrl: "https://www.youtube.com/shorts/zMJ6Hqv8-sM", alias: ["Inferiores con peso", "inferiores con peso"] },
+    { nombre: "Inferiores en paralelas", videoUrl: "https://www.youtube.com/watch?v=fX6JwyyW16o", alias: ["Inferiores en paralelas", "inferiores en paralelas"] },
+    { nombre: "Isquios sentado en maquina", videoUrl: "https://www.youtube.com/shorts/6IvQvWZmEsw", alias: ["Isquios sentado en maquina", "Isquios sentado en máquina", "isquios sentado en maquina", "isquios sentado en máquina"] },
+    { nombre: "Isquios sentado en maquina 1 pp", videoUrl: "https://www.youtube.com/shorts/UNc9k9WBXj8", alias: ["Isquios sentado en maquina 1 pierna", "Isquios sentado en maquina 1 pp", "Isquios sentado en maquina a un pie", "Isquios sentado en maquina unilateral", "Isquios sentado en máquina 1 pp", "isquios sentado en maquina 1 pierna", "isquios sentado en maquina 1 pp", "isquios sentado en maquina a un pie", "isquios sentado en maquina unilateral", "isquios sentado en máquina 1 pp"] },
+    { nombre: "Jalon dorsal 1 brazo", videoUrl: "https://www.youtube.com/shorts/rudpTb4A0X8", alias: ["Jalon dorsal 1 brazo", "jalon dorsal 1 brazo", "jalón dorsal 1 brazo"] },
+    { nombre: "Jalon dorsal neutro", videoUrl: "https://www.youtube.com/shorts/Yie3dzpYNtQ", alias: ["Jalon dorsal neutro", "jalon dorsal neutro", "jalón dorsal neutro"] },
+    { nombre: "Jalon dorsal prono amplio", videoUrl: "https://www.youtube.com/shorts/sAYU5EvtXSo", alias: ["Jalon dorsal prono amplio", "jalon al pecho", "jalon dorsal prono amplio", "jalon dorsalera", "jalón al pecho", "jalón dorsal prono amplio"] },
+    { nombre: "Jalon dorsal supino", videoUrl: "https://www.youtube.com/shorts/Q4e_Ya9BnlM", alias: ["Jalon dorsal supino", "jalon dorsal supino", "jalón dorsal supino"] },
+    { nombre: "Peso muerto", videoUrl: "https://www.youtube.com/shorts/WdADxet2RQc", alias: ["Peso muerto", "deadlift", "peso muerto"] },
+    { nombre: "Peso muerto 1 pp", videoUrl: "https://www.youtube.com/shorts/Z3TRkamr5jA", alias: ["Peso muerto 1 pierna", "Peso muerto 1 pp", "Peso muerto a un pie", "Peso muerto unilateral", "deadlift 1 pp", "peso muerto 1 pierna", "peso muerto 1 pp", "peso muerto a un pie", "peso muerto unilateral"] },
+    { nombre: "Plancha frontal", videoUrl: "https://www.youtube.com/shorts/XCOq6lfsFAk", alias: ["Plancha frontal", "plancha frontal"] },
+    { nombre: "Plancha frontal 3 apoyos", videoUrl: "https://www.youtube.com/shorts/umPWS5gofGE", alias: ["Plancha frontal 3 apoyos", "plancha frontal 3 apoyos"] },
+    { nombre: "Plancha frontal subo y bajo", videoUrl: "https://www.youtube.com/shorts/1X1cn0XqaKw", alias: ["Plancha frontal subo y bajo", "plancha frontal subo y bajo"] },
+    { nombre: "Plancha frontal toco hombro", videoUrl: "https://www.youtube.com/shorts/auypDs3TVeM", alias: ["Plancha frontal toco hombro", "plancha frontal toco hombro"] },
+    { nombre: "Plancha lateral", videoUrl: "https://www.youtube.com/shorts/fNsxKTKfMNI", alias: ["Plancha lateral", "plancha lateral"] },
+    { nombre: "Prensa en 45°", videoUrl: "https://www.youtube.com/shorts/NYa0tZCW4fk", alias: ["Prensa en 45°", "prensa en 45°"] },
+    { nombre: "Prensa horizontal", videoUrl: "https://www.youtube.com/shorts/W7bL6i1sJo4", alias: ["Prensa horizontal", "prensa horizontal"] },
+    { nombre: "Prensa horizontal a 1 pp", videoUrl: "https://www.youtube.com/shorts/O6VCiyKvM3c", alias: ["Prensa horizontal a 1 pierna", "Prensa horizontal a 1 pp", "Prensa horizontal a a un pie", "Prensa horizontal a unilateral", "prensa horizontal a 1 pierna", "prensa horizontal a 1 pp", "prensa horizontal a a un pie", "prensa horizontal a unilateral"] },
+    { nombre: "Prensa sumo", videoUrl: "https://www.youtube.com/shorts/SguVlooAwcA", alias: ["Prensa sumo", "prensa sumo"] },
+    { nombre: "Press de banca a 1 brazo con mancuerna", videoUrl: "https://www.youtube.com/watch?v=N_BzPe7kmdk", alias: ["Press banca a 1 brazo con mancuerna", "Press de banca a 1 brazo con mancuerna", "Press de banca a 1 brazo con mancuernas", "press banca a 1 brazo con mancuerna", "press de banca a 1 brazo con mancuerna", "press de banca a 1 brazo con mancuernas"] },
+    { nombre: "Press de banca declinado", videoUrl: "https://www.youtube.com/shorts/NEOBG2KgVyA", alias: ["Press banca declinado", "Press de banca declinado", "press banca declinado", "press de banca declinado"] },
+    { nombre: "Press de banca inclinado con barra", videoUrl: "https://www.youtube.com/shorts/g99l4KwY-vo", alias: ["Press banca inclinado con barra", "Press de banca inclinado con barra", "press banca inclinado con barra", "press de banca inclinado con barra"] },
+    { nombre: "Press de banca inclinado con mancuernas", videoUrl: "https://www.youtube.com/shorts/tcw2c5dtqD4", alias: ["Press banca inclinado con mancuernas", "Press de banca inclinado con mancuernas", "press banca inclinado con mancuernas", "press de banca inclinado con mancuernas"] },
+    { nombre: "Press de banca inclinado en smith", videoUrl: "https://www.youtube.com/shorts/XwjuCBcFXQQ", alias: ["Press banca inclinado en smith", "Press de banca inclinado en en smith", "Press de banca inclinado en smith", "Press de banca inclinado smith", "press banca inclinado en smith", "press de banca inclinado en en smith", "press de banca inclinado en smith", "press de banca inclinado smith"] },
+    { nombre: "Press de banca plano con barra", videoUrl: "https://www.youtube.com/shorts/HzkHpIIo4IA", alias: ["Press banca plano con barra", "Press de banca plano con barra", "press banca plano con barra", "press de banca plano con barra", "press plano con barra"] },
+    { nombre: "Press de banca plano con mancuernas", videoUrl: "https://www.youtube.com/shorts/qW519gsE2M8", alias: ["Press banca plano con mancuernas", "Press de banca plano con mancuerna", "Press de banca plano con mancuernas", "press banca plano con mancuernas", "press de banca plano con mancuerna", "press de banca plano con mancuernas", "press plano con mancuernas"] },
+    { nombre: "Press de banca plano en smith", videoUrl: "https://www.youtube.com/shorts/9_tbUqJ45QU", alias: ["Press banca plano en smith", "Press de banca plano en en smith", "Press de banca plano en smith", "Press de banca plano smith", "press banca plano en smith", "press de banca plano en en smith", "press de banca plano en smith", "press de banca plano smith", "press plano en smith"] },
+    { nombre: "Press de hombro 1 brazo", videoUrl: "https://www.youtube.com/shorts/i5cvgQveFbY", alias: ["Press de hombro 1 brazo", "Press hombro 1 brazo", "press de hombro 1 brazo", "press hombro 1 brazo"] },
+    { nombre: "Press de hombro con barra", videoUrl: "https://www.youtube.com/shorts/z_-74FMv5Jg", alias: ["Press de hombro con barra", "Press hombro con barra", "press de hombro con barra", "press hombro con barra"] },
+    { nombre: "Press de hombro con barra sentado", videoUrl: "https://www.youtube.com/shorts/AmcpSwUNPYc", alias: ["Press de hombro con barra sentado", "Press hombro con barra sentado", "press de hombro con barra sentado", "press hombro con barra sentado"] },
+    { nombre: "Press de hombro con mancuernas", videoUrl: "https://www.youtube.com/shorts/96C2nPejfY4", alias: ["Press de hombro con mancuerna", "Press de hombro con mancuernas", "Press hombro con mancuernas", "press de hombro con mancuerna", "press de hombro con mancuernas", "press hombro con mancuernas"] },
+    { nombre: "Press de hombro con mancuernas sentado", videoUrl: "https://www.youtube.com/shorts/R0f2Of6Sl2A", alias: ["Press de hombro con mancuerna sentado", "Press de hombro con mancuernas sentado", "Press hombro con mancuernas sentado", "press de hombro con mancuerna sentado", "press de hombro con mancuernas sentado", "press hombro con mancuernas sentado"] },
+    { nombre: "Press de pecho en maquina sentado", videoUrl: "https://www.youtube.com/shorts/88kSaeQG21Y", alias: ["Press de pecho en maquina sentado", "Press de pecho en máquina sentado", "Press pecho en maquina sentado", "press de pecho en maquina sentado", "press de pecho en máquina sentado", "press pecho en maquina sentado"] },
+    { nombre: "Press de pecho inclinado en maquina", videoUrl: "https://www.youtube.com/shorts/YS6DsKrY8T0", alias: ["Press de pecho inclinado en maquina", "Press de pecho inclinado en máquina", "Press pecho inclinado en maquina", "press de pecho inclinado en maquina", "press de pecho inclinado en máquina", "press pecho inclinado en maquina"] },
+    { nombre: "Press frances con barra", videoUrl: "https://www.youtube.com/watch?v=gY-CqZD0Ktc", alias: ["Press frances con barra", "press frances con barra"] },
+    { nombre: "Press frances con barra W", videoUrl: "https://www.youtube.com/shorts/CAUWI4sNPKk", alias: ["Press frances con barra W", "press frances con barra w"] },
+    { nombre: "Press frances con mancuerna", videoUrl: "https://www.youtube.com/shorts/FgN0vyx8jNE", alias: ["Press frances con mancuerna", "Press frances con mancuernas", "press frances con mancuerna", "press frances con mancuernas"] },
+    { nombre: "Press frances en polea", videoUrl: "https://www.youtube.com/shorts/wNVVttuAGnM", alias: ["Press frances en polea", "press frances en polea"] },
+    { nombre: "Remo con barra", videoUrl: "https://www.youtube.com/shorts/b8FgtZlyEd4", alias: ["Remo con barra", "remo con barra"] },
+    { nombre: "Remo en barra T", videoUrl: "https://www.youtube.com/shorts/uLr8HcW_7ig", alias: ["Remo en barra T", "remo en barra t"] },
+    { nombre: "Remo en landmine", videoUrl: "https://www.youtube.com/watch?v=25lFwuWjKSM", alias: ["Remo en ladmine", "Remo en landmine", "remo en ladmine", "remo en landmine"] },
+    { nombre: "Remo en polea baja 1 brazo", videoUrl: "https://www.youtube.com/shorts/Ol37ocDBdAU", alias: ["Remo en polea baja 1 brazo", "remo en polea baja 1 brazo"] },
+    { nombre: "Remo en polea baja neutro", videoUrl: "https://www.youtube.com/shorts/soxtqUNRt6E", alias: ["Remo en polea baja neutro", "remo en polea baja neutro"] },
+    { nombre: "Remo en polea baja prono", videoUrl: "https://www.youtube.com/watch?v=Vm6E-2tq0bU", alias: ["Remo en polea baja prono", "remo en polea baja prono"] },
+    { nombre: "Remo en polea baja supino", videoUrl: "https://www.youtube.com/shorts/GTb5tId5HG4", alias: ["Remo en polea baja supino", "remo en polea baja supino"] },
+    { nombre: "Remo en smith", videoUrl: "https://www.youtube.com/shorts/lTQJFDyQq0s", alias: ["Remo en en smith", "Remo en smith", "Remo smith", "remo en en smith", "remo en smith", "remo smith"] },
+    { nombre: "Ruedita abdominal", videoUrl: "https://www.youtube.com/shorts/knjliGWvGa4", alias: ["Ruedita abdominal", "ruedita abdominal"] },
+    { nombre: "Segundo tiempo", videoUrl: "https://www.youtube.com/shorts/fWQbTvolNqA", alias: ["Segundo tiempo", "segundo tiempo"] },
+    { nombre: "Sentadilla barra hexagonal", videoUrl: "https://www.youtube.com/shorts/JfhNkNz59lI", alias: ["Sentadilla barra exagonal", "Sentadilla barra hexagonal", "Sentadilla hex bar", "senatdilla barra hexagonal", "sentadilla barra exagonal", "sentadilla barra hexagonal", "sentadilla hex bar", "sentadillas barra hexagonal"] },
+    { nombre: "Sentadilla bulgaras", videoUrl: "https://www.youtube.com/shorts/cytfxsIK_Hk", alias: ["Sentadilla bulgaras", "senatdilla bulgaras", "sentadilla bulgaras", "sentadillas bulgaras"] },
+    { nombre: "Sentadilla con barra", videoUrl: "https://www.youtube.com/shorts/7xeLHxobaWs", alias: ["Sentadilla con barra", "senatdilla con barra", "sentadilla con barra", "sentadillas con barra"] },
+    { nombre: "Sentadilla con polea", videoUrl: "https://www.youtube.com/shorts/0vz9HwV4UKg", alias: ["Sentadilla con polea", "senatdilla con polea", "sentadilla con polea", "sentadillas con polea"] },
+    { nombre: "Sentadilla en smith", videoUrl: "https://www.youtube.com/shorts/eFY7gyLFUcU", alias: ["Sentadilla en en smith", "Sentadilla en smith", "Sentadilla smith", "senatdilla en smith", "sentadilla en en smith", "sentadilla en smith", "sentadilla smith", "sentadillas en smith"] },
+    { nombre: "Sentadilla goblet", videoUrl: "https://www.youtube.com/shorts/3wCp6MN2Z_Q", alias: ["Sentadilla globet", "Sentadilla goblet", "senatdilla goblet", "sentadilla globet", "sentadilla goblet", "sentadillas goblet"] },
+    { nombre: "Sentadilla maquina hack", videoUrl: "https://www.youtube.com/shorts/jXZyJ3KNbWw", alias: ["Sentadilla maquina hack", "Sentadilla máquina hack", "senatdilla maquina hack", "sentadilla maquina hack", "sentadilla máquina hack", "sentadillas maquina hack"] },
+    { nombre: "Sentadilla sumo", videoUrl: "https://www.youtube.com/shorts/rbKBfqqmmwY", alias: ["Sentadilla sumo", "senatdilla sumo", "sentadilla sumo", "sentadillas sumo"] },
+    { nombre: "Tiron al menton", videoUrl: "https://www.youtube.com/shorts/2SAyFkFCoFs", alias: ["Tiron al menton", "tiron al menton"] },
+    { nombre: "Triceps en polea con barra", videoUrl: "https://www.youtube.com/shorts/sU9snn0qTEs", alias: ["Triceps en polea con barra", "triceps en polea con barra", "tríceps en polea con barra"] },
+    { nombre: "Triceps en polea con soga", videoUrl: "https://www.youtube.com/shorts/W7bQVLg3NWA", alias: ["Triceps en polea con soga", "triceps en polea con soga", "tríceps en polea con soga"] },
+    { nombre: "Triceps polea 1 brazo", videoUrl: "https://www.youtube.com/shorts/hip11n3QXzU", alias: ["Triceps polea 1 brazo", "triceps polea 1 brazo", "tríceps polea 1 brazo"] },
+    { nombre: "Twist", videoUrl: "https://www.youtube.com/shorts/vq1FICbQC4Q", alias: ["Twist", "twist"] },
+    { nombre: "Vitalizaciones", videoUrl: "https://www.youtube.com/shorts/gGIo7i-xnQA", alias: ["Vitalizaciones", "vitalizaciones"] },
+    { nombre: "Vuelos frontales con barra", videoUrl: "https://www.youtube.com/shorts/QeJ7INwGgaE", alias: ["Vuelos frontales con barra", "vuelos frontales con barra"] },
+    { nombre: "Vuelos frontales con disco", videoUrl: "https://www.youtube.com/shorts/WMCftjiDQW4", alias: ["Vuelos frontales con disco", "vuelos frontales con disco"] },
+    { nombre: "Vuelos frontales con mancuernas", videoUrl: "https://www.youtube.com/shorts/ErPdiYXDeTw", alias: ["Vuelos frontales con mancuerna", "Vuelos frontales con mancuernas", "vuelos frontales con mancuerna", "vuelos frontales con mancuernas"] },
+    { nombre: "Vuelos frontales con polea", videoUrl: "https://www.youtube.com/shorts/AJ147wzeIfQ", alias: ["Vuelos frontales con polea", "vuelos frontales con polea"] },
+    { nombre: "Vuelos laterales con mancuernas", videoUrl: "https://www.youtube.com/shorts/dd9xo-_ahCg", alias: ["Vuelos laterales con mancuerna", "Vuelos laterales con mancuernas", "vuelos laterales con mancuerna", "vuelos laterales con mancuernas"] },
+    { nombre: "Vuelos laterales en polea", videoUrl: "https://www.youtube.com/shorts/V98wql8IfVA", alias: ["Vuelos laterales en polea", "vuelos laterales en polea"] },
   ];
 
   function normalizarNombreEjercicio(str) {
@@ -3418,11 +3521,94 @@ appState.modalActivo = 'crear_rutina';
 
   function buscarVideoPorNombreEjercicio(nombre) {
     const norm = normalizarNombreEjercicio(nombre);
+    if (!norm) return null;
     const match = CATALOGO_VIDEOS_EJERCICIOS.find(item =>
-      item.alias.some(a => normalizarNombreEjercicio(a) === norm)
+      item.alias.some(a => normalizarNombreEjercicio(a) === norm) ||
+      normalizarNombreEjercicio(item.nombre) === norm
     );
     return match ? match.videoUrl : null;
   }
+
+  function buscarEjerciciosSugeridos(query, limit = 12) {
+    const norm = normalizarNombreEjercicio(query);
+    if (!norm || norm.length < 2) return [];
+    const scored = [];
+    for (const item of CATALOGO_VIDEOS_EJERCICIOS) {
+      const nom = normalizarNombreEjercicio(item.nombre);
+      let score = 0;
+      if (nom === norm) score = 100;
+      else if (nom.startsWith(norm)) score = 80;
+      else if (nom.includes(norm)) score = 60;
+      else {
+        for (const a of item.alias) {
+          const an = normalizarNombreEjercicio(a);
+          if (an === norm) { score = 95; break; }
+          if (an.startsWith(norm)) { score = Math.max(score, 75); }
+          else if (an.includes(norm)) { score = Math.max(score, 50); }
+        }
+      }
+      if (score > 0) scored.push({ ...item, score });
+    }
+    scored.sort((a, b) => b.score - a.score || a.nombre.localeCompare(b.nombre));
+    // unique by videoUrl
+    const seen = new Set();
+    const out = [];
+    for (const s of scored) {
+      if (seen.has(s.videoUrl)) continue;
+      seen.add(s.videoUrl);
+      out.push(s);
+      if (out.length >= limit) break;
+    }
+    return out;
+  }
+
+  window.onEjercicioNombreInput = (diaIdx, ejIdx, val) => {
+    const ej = currentFormDays[diaIdx].ejercicios[ejIdx];
+    ej.nombre = val;
+    // autocompletar video si corresponde
+    if (!ej.videoUrl || ej.videoUrlAuto === true) {
+      const videoAuto = buscarVideoPorNombreEjercicio(val);
+      if (videoAuto) {
+        ej.videoUrl = videoAuto;
+        ej.videoUrlAuto = true;
+        const videoInput = document.querySelector(`[data-video-input="${diaIdx}-${ejIdx}"]`);
+        if (videoInput) videoInput.value = videoAuto;
+      }
+    }
+    // mostrar sugerencias
+    const box = document.getElementById(`ej-suggest-${diaIdx}-${ejIdx}`);
+    if (!box) return;
+    const sugeridos = buscarEjerciciosSugeridos(val);
+    if (!sugeridos.length) {
+      box.style.display = 'none';
+      box.innerHTML = '';
+      return;
+    }
+    box.innerHTML = sugeridos.map(s =>
+      `<button type="button" class="ej-suggest-item" onclick="window.seleccionarEjercicioCatalogo(${diaIdx}, ${ejIdx}, ${JSON.stringify(s.nombre)}, ${JSON.stringify(s.videoUrl)})">${s.nombre}</button>`
+    ).join('');
+    box.style.display = 'block';
+  };
+
+  window.seleccionarEjercicioCatalogo = (diaIdx, ejIdx, nombre, videoUrl) => {
+    const ej = currentFormDays[diaIdx].ejercicios[ejIdx];
+    ej.nombre = nombre;
+    if (!ej.videoUrl || ej.videoUrlAuto === true) {
+      ej.videoUrl = videoUrl;
+      ej.videoUrlAuto = true;
+    }
+    const box = document.getElementById(`ej-suggest-${diaIdx}-${ejIdx}`);
+    if (box) { box.style.display = 'none'; box.innerHTML = ''; }
+    renderFormDays();
+  };
+
+  window.ocultarSugerenciasEjercicio = (diaIdx, ejIdx) => {
+    setTimeout(() => {
+      const box = document.getElementById(`ej-suggest-${diaIdx}-${ejIdx}`);
+      if (box) box.style.display = 'none';
+    }, 180);
+  };
+
 
   function initFormBuilderForNew() {
     currentFormDays = [
@@ -3486,7 +3672,14 @@ appState.modalActivo = 'crear_rutina';
             <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; margin-bottom:6px">
               <div class="form-group" style="margin-bottom:0; flex:1">
                 <label class="form-label" style="font-size:0.75rem">Nombre del Ejercicio</label>
-                <input type="text" class="form-input" value="${ej.nombre}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'nombre', this.value)">
+                <div class="ej-suggest-wrap">
+                  <input type="text" class="form-input" value="${ej.nombre}"
+                    oninput="window.onEjercicioNombreInput(${diaIdx}, ${ejIdx}, this.value)"
+                    onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'nombre', this.value)"
+                    onblur="window.ocultarSugerenciasEjercicio(${diaIdx}, ${ejIdx})"
+                    autocomplete="off">
+                  <div class="ej-suggest-box" id="ej-suggest-${diaIdx}-${ejIdx}" style="display:none"></div>
+                </div>
               </div>
               <div style="display:flex; gap:4px; margin-top:16px">
                 <button type="button" class="btn btn-secondary btn-sm" onclick="window.moveFormExerciseUp(${diaIdx}, ${ejIdx})" style="padding:4px 6px" title="Subir Ejercicio">⬆️</button>
@@ -3517,7 +3710,7 @@ appState.modalActivo = 'crear_rutina';
 
             <div class="form-group" style="margin-bottom:0; margin-top:6px">
               <label class="form-label" style="font-size:0.72rem">🎬 URL de Video/Demo (Opcional)</label>
-              <input type="url" class="form-input" placeholder="https://youtube.com/..." value="${ej.videoUrl || ''}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'videoUrl', this.value)">
+              <input type="url" class="form-input" data-video-input="${diaIdx}-${ejIdx}" placeholder="https://youtube.com/..." value="${ej.videoUrl || ''}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'videoUrl', this.value)">
             </div>
           </div>
         `).join('')}
@@ -4288,9 +4481,112 @@ appState.modalActivo = 'crear_rutina';
 
   // --- Autocompletado de video por nombre de ejercicio (solo formulario, no toca Supabase) ---
   const CATALOGO_VIDEOS_EJERCICIOS = [
-    { videoUrl: 'https://www.youtube.com/shorts/HzkHpIIo4IA', alias: ['press banca', 'press banca plano', 'press banca con barra', 'press banca plano con barra', 'press plano con barra', 'press de banca', 'press de banca con barra'] },
-    { videoUrl: 'https://www.youtube.com/shorts/qW519gsE2M8', alias: ['press banca mancuernas', 'press banca con mancuernas', 'press banca plano con mancuernas', 'press plano mancuernas', 'press plano con mancuernas', 'press de banca con mancuernas'] },
-    { videoUrl: 'https://www.youtube.com/shorts/sAYU5EvtXSo', alias: ['jalon al pecho', 'jalón al pecho', 'jalon dorsalera', 'jalón dorsalera', 'jalon en dorsalera', 'jalón en dorsalera', 'jalon en polea al pecho', 'jalón en polea al pecho'] }
+    { nombre: "Abduccion sentado en maquina", videoUrl: "https://www.youtube.com/shorts/xlp6FYwBFLU", alias: ["Abduccion sentado en maquina", "Abduccion sentado en máquina", "abduccion sentado en maquina", "abduccion sentado en máquina"] },
+    { nombre: "Abs bolitas", videoUrl: "https://www.youtube.com/shorts/Wlw3wvJdhBc", alias: ["Abs bolitas", "abs bolitas"] },
+    { nombre: "Abs rectos con peso", videoUrl: "https://www.youtube.com/shorts/BFTJUFmiwHM", alias: ["Abs rectos con peso", "abs rectos con peso"] },
+    { nombre: "Abs rectos con piernas a 45°", videoUrl: "https://www.youtube.com/shorts/4rttpgLuJR8", alias: ["Abs rectos con piernas a 45°", "abs rectos con piernas a 45°"] },
+    { nombre: "Aduccion sentado en maquina", videoUrl: "https://www.youtube.com/shorts/vlViIgtkvh4", alias: ["Aduccion sentado en maquina", "Aduccion sentado en máquina", "aduccion sentado en maquina", "aduccion sentado en máquina"] },
+    { nombre: "Apertura con empuje en banco plano", videoUrl: "https://www.youtube.com/shorts/Fc1UgcryhrA", alias: ["Apertura con empuje en banco plano", "apertura con empuje en banco plano"] },
+    { nombre: "Apertura en banco inclinado", videoUrl: "https://www.youtube.com/shorts/CQx4FhzelMU", alias: ["Apertura en banco inclinado", "apertura en banco inclinado"] },
+    { nombre: "Apertura en banco plano", videoUrl: "https://www.youtube.com/shorts/26TsSvfg28U", alias: ["Apertura en banco plano", "apertura en banco plano"] },
+    { nombre: "Apertura en polea", videoUrl: "https://www.youtube.com/shorts/QEW6RO0O-ak", alias: ["Apertura en polea", "apertura en polea"] },
+    { nombre: "Arranque a 1 brazo", videoUrl: "https://www.youtube.com/shorts/IVIrE_x5FtE", alias: ["Arranque a 1 brazo", "arranque a 1 brazo"] },
+    { nombre: "Arranque con barra", videoUrl: "https://www.youtube.com/shorts/-7mUZ2RFAw4", alias: ["Arranque con barra", "arranque con barra"] },
+    { nombre: "Biceps con barra", videoUrl: "https://www.youtube.com/shorts/B3Feq30xwpo", alias: ["Biceps con barra", "biceps con barra", "bíceps con barra"] },
+    { nombre: "Biceps con barra en polea", videoUrl: "https://www.youtube.com/shorts/oJGSW0z5Hew", alias: ["Biceps con barra en polea", "biceps con barra en polea", "bíceps con barra en polea"] },
+    { nombre: "Biceps con mancuerna banco inclinado", videoUrl: "https://www.youtube.com/shorts/4LQ0p0ni39Y", alias: ["Biceps con mancuerna banco inclinado", "Biceps con mancuernas banco inclinado", "biceps con mancuerna banco inclinado", "biceps con mancuernas banco inclinado", "bíceps con mancuerna banco inclinado"] },
+    { nombre: "Biceps con mancuernas", videoUrl: "https://www.youtube.com/shorts/WrpQYs_n_Pw", alias: ["Biceps con mancuerna", "Biceps con mancuernas", "biceps con mancuerna", "biceps con mancuernas", "bíceps con mancuernas"] },
+    { nombre: "Biceps con soga en polea", videoUrl: "https://www.youtube.com/shorts/dj99CeV_UUY", alias: ["Biceps con soga en polea", "biceps con soga en polea", "bíceps con soga en polea"] },
+    { nombre: "Biceps en banco scott", videoUrl: "https://www.youtube.com/shorts/Zj0P6gFb9MY", alias: ["Biceps en banco scott", "biceps en banco scott", "bíceps en banco scott"] },
+    { nombre: "Biceps en banco scott con mancuernas", videoUrl: "https://www.youtube.com/shorts/L4AQh3lTICk", alias: ["Biceps en banco scott con mancuerna", "Biceps en banco scott con mancuernas", "biceps en banco scott con mancuerna", "biceps en banco scott con mancuernas", "bíceps en banco scott con mancuernas"] },
+    { nombre: "Biceps martillo", videoUrl: "https://www.youtube.com/shorts/QdEY-VZcPMU", alias: ["Biceps martillo", "biceps martillo", "bíceps martillo"] },
+    { nombre: "Bicho muerto", videoUrl: "https://www.youtube.com/shorts/_o23Ghklahc", alias: ["Bicho muerto", "bicho muerto"] },
+    { nombre: "Bisagras oblicuas", videoUrl: "https://www.youtube.com/shorts/EExl_U2GGEk", alias: ["Bisagras oblicuas", "bisagras oblicuas"] },
+    { nombre: "Camilla de isquios", videoUrl: "https://www.youtube.com/shorts/B6t8MvbTtew", alias: ["Camilla de isquios", "Camilla isquios", "camilla de isquios", "camilla isquios"] },
+    { nombre: "Camilla de isquios 1 pp", videoUrl: "https://www.youtube.com/shorts/Ix7wiKrC7bQ", alias: ["Camilla de isquios 1 pierna", "Camilla de isquios 1 pp", "Camilla de isquios a un pie", "Camilla de isquios unilateral", "Camilla isquios 1 pp", "camilla de isquios 1 pierna", "camilla de isquios 1 pp", "camilla de isquios a un pie", "camilla de isquios unilateral", "camilla isquios 1 pp"] },
+    { nombre: "Cargada", videoUrl: "https://www.youtube.com/shorts/7KMYH9gyeEM", alias: ["Cargada", "cargada"] },
+    { nombre: "Cargada + segundo tiempo", videoUrl: "https://www.youtube.com/shorts/MrG8DIttWVA", alias: ["Cargada + segundo tiempo", "cargada + segundo tiempo"] },
+    { nombre: "Cuadricera", videoUrl: "https://www.youtube.com/shorts/iNvPzf15KKA", alias: ["Cuadricera", "cuadricera"] },
+    { nombre: "Cuadricera 1 pp", videoUrl: "https://www.youtube.com/shorts/OhHvfoomEfY", alias: ["Cuadricera 1 pierna", "Cuadricera 1 pp", "Cuadricera a un pie", "Cuadricera unilateral", "cuadricera 1 pierna", "cuadricera 1 pp", "cuadricera a un pie", "cuadricera unilateral"] },
+    { nombre: "Elevacion cadera en fitball", videoUrl: "https://www.youtube.com/shorts/p4Bwnapg03c", alias: ["Elevacion cadera en fitball", "elevacion cadera en fitball"] },
+    { nombre: "Encogimiento con barra", videoUrl: "https://www.youtube.com/shorts/xgLOVCSFTAc", alias: ["Encogimiento con barra", "encogimiento con barra"] },
+    { nombre: "Encogimiento con mancuernas", videoUrl: "https://www.youtube.com/shorts/0-KrI1Hqpk4", alias: ["Encogimiento con mancuerna", "Encogimiento con mancuernas", "encogimiento con mancuerna", "encogimiento con mancuernas"] },
+    { nombre: "Estocadas fijas en smith", videoUrl: "https://www.youtube.com/shorts/sEE7Qrlf4j4", alias: ["Estocadas fijas en en smith", "Estocadas fijas en smith", "Estocadas fijas smith", "estocada fijas en smith", "estocadas fijas en en smith", "estocadas fijas en smith", "estocadas fijas smith", "zancadas fijas en smith"] },
+    { nombre: "Estocadas hacia adelante", videoUrl: "https://www.youtube.com/shorts/IIJA6XbIdyI", alias: ["Estocadas hacia adelante", "estocada hacia adelante", "estocadas hacia adelante", "zancadas hacia adelante"] },
+    { nombre: "Estocadas hacia atras", videoUrl: "https://www.youtube.com/shorts/pckiYC8Rnsc", alias: ["Estocadas hacia atras", "estocada hacia atras", "estocadas hacia atras", "zancadas hacia atras"] },
+    { nombre: "Face pull", videoUrl: "https://www.youtube.com/shorts/5Yu8DTe4BAQ", alias: ["Face pull", "face pull"] },
+    { nombre: "Fondos en banco", videoUrl: "https://www.youtube.com/shorts/wN_9d37DO4M", alias: ["Fondos en banco", "fondos en banco"] },
+    { nombre: "Fondos en paralelas", videoUrl: "https://www.youtube.com/shorts/s5BLhbKWD3E", alias: ["Fondos en paralelas", "fondos en paralelas"] },
+    { nombre: "Hip thrust", videoUrl: "https://www.youtube.com/shorts/zaSzxo6xleY", alias: ["Hip thrust", "empuje de cadera", "hip thrust", "hipthrust"] },
+    { nombre: "Inferiores carrito", videoUrl: "https://www.youtube.com/shorts/62-5TombKfU", alias: ["Inferiores carrito", "inferiores carrito"] },
+    { nombre: "Inferiores con peso", videoUrl: "https://www.youtube.com/shorts/zMJ6Hqv8-sM", alias: ["Inferiores con peso", "inferiores con peso"] },
+    { nombre: "Inferiores en paralelas", videoUrl: "https://www.youtube.com/watch?v=fX6JwyyW16o", alias: ["Inferiores en paralelas", "inferiores en paralelas"] },
+    { nombre: "Isquios sentado en maquina", videoUrl: "https://www.youtube.com/shorts/6IvQvWZmEsw", alias: ["Isquios sentado en maquina", "Isquios sentado en máquina", "isquios sentado en maquina", "isquios sentado en máquina"] },
+    { nombre: "Isquios sentado en maquina 1 pp", videoUrl: "https://www.youtube.com/shorts/UNc9k9WBXj8", alias: ["Isquios sentado en maquina 1 pierna", "Isquios sentado en maquina 1 pp", "Isquios sentado en maquina a un pie", "Isquios sentado en maquina unilateral", "Isquios sentado en máquina 1 pp", "isquios sentado en maquina 1 pierna", "isquios sentado en maquina 1 pp", "isquios sentado en maquina a un pie", "isquios sentado en maquina unilateral", "isquios sentado en máquina 1 pp"] },
+    { nombre: "Jalon dorsal 1 brazo", videoUrl: "https://www.youtube.com/shorts/rudpTb4A0X8", alias: ["Jalon dorsal 1 brazo", "jalon dorsal 1 brazo", "jalón dorsal 1 brazo"] },
+    { nombre: "Jalon dorsal neutro", videoUrl: "https://www.youtube.com/shorts/Yie3dzpYNtQ", alias: ["Jalon dorsal neutro", "jalon dorsal neutro", "jalón dorsal neutro"] },
+    { nombre: "Jalon dorsal prono amplio", videoUrl: "https://www.youtube.com/shorts/sAYU5EvtXSo", alias: ["Jalon dorsal prono amplio", "jalon al pecho", "jalon dorsal prono amplio", "jalon dorsalera", "jalón al pecho", "jalón dorsal prono amplio"] },
+    { nombre: "Jalon dorsal supino", videoUrl: "https://www.youtube.com/shorts/Q4e_Ya9BnlM", alias: ["Jalon dorsal supino", "jalon dorsal supino", "jalón dorsal supino"] },
+    { nombre: "Peso muerto", videoUrl: "https://www.youtube.com/shorts/WdADxet2RQc", alias: ["Peso muerto", "deadlift", "peso muerto"] },
+    { nombre: "Peso muerto 1 pp", videoUrl: "https://www.youtube.com/shorts/Z3TRkamr5jA", alias: ["Peso muerto 1 pierna", "Peso muerto 1 pp", "Peso muerto a un pie", "Peso muerto unilateral", "deadlift 1 pp", "peso muerto 1 pierna", "peso muerto 1 pp", "peso muerto a un pie", "peso muerto unilateral"] },
+    { nombre: "Plancha frontal", videoUrl: "https://www.youtube.com/shorts/XCOq6lfsFAk", alias: ["Plancha frontal", "plancha frontal"] },
+    { nombre: "Plancha frontal 3 apoyos", videoUrl: "https://www.youtube.com/shorts/umPWS5gofGE", alias: ["Plancha frontal 3 apoyos", "plancha frontal 3 apoyos"] },
+    { nombre: "Plancha frontal subo y bajo", videoUrl: "https://www.youtube.com/shorts/1X1cn0XqaKw", alias: ["Plancha frontal subo y bajo", "plancha frontal subo y bajo"] },
+    { nombre: "Plancha frontal toco hombro", videoUrl: "https://www.youtube.com/shorts/auypDs3TVeM", alias: ["Plancha frontal toco hombro", "plancha frontal toco hombro"] },
+    { nombre: "Plancha lateral", videoUrl: "https://www.youtube.com/shorts/fNsxKTKfMNI", alias: ["Plancha lateral", "plancha lateral"] },
+    { nombre: "Prensa en 45°", videoUrl: "https://www.youtube.com/shorts/NYa0tZCW4fk", alias: ["Prensa en 45°", "prensa en 45°"] },
+    { nombre: "Prensa horizontal", videoUrl: "https://www.youtube.com/shorts/W7bL6i1sJo4", alias: ["Prensa horizontal", "prensa horizontal"] },
+    { nombre: "Prensa horizontal a 1 pp", videoUrl: "https://www.youtube.com/shorts/O6VCiyKvM3c", alias: ["Prensa horizontal a 1 pierna", "Prensa horizontal a 1 pp", "Prensa horizontal a a un pie", "Prensa horizontal a unilateral", "prensa horizontal a 1 pierna", "prensa horizontal a 1 pp", "prensa horizontal a a un pie", "prensa horizontal a unilateral"] },
+    { nombre: "Prensa sumo", videoUrl: "https://www.youtube.com/shorts/SguVlooAwcA", alias: ["Prensa sumo", "prensa sumo"] },
+    { nombre: "Press de banca a 1 brazo con mancuerna", videoUrl: "https://www.youtube.com/watch?v=N_BzPe7kmdk", alias: ["Press banca a 1 brazo con mancuerna", "Press de banca a 1 brazo con mancuerna", "Press de banca a 1 brazo con mancuernas", "press banca a 1 brazo con mancuerna", "press de banca a 1 brazo con mancuerna", "press de banca a 1 brazo con mancuernas"] },
+    { nombre: "Press de banca declinado", videoUrl: "https://www.youtube.com/shorts/NEOBG2KgVyA", alias: ["Press banca declinado", "Press de banca declinado", "press banca declinado", "press de banca declinado"] },
+    { nombre: "Press de banca inclinado con barra", videoUrl: "https://www.youtube.com/shorts/g99l4KwY-vo", alias: ["Press banca inclinado con barra", "Press de banca inclinado con barra", "press banca inclinado con barra", "press de banca inclinado con barra"] },
+    { nombre: "Press de banca inclinado con mancuernas", videoUrl: "https://www.youtube.com/shorts/tcw2c5dtqD4", alias: ["Press banca inclinado con mancuernas", "Press de banca inclinado con mancuernas", "press banca inclinado con mancuernas", "press de banca inclinado con mancuernas"] },
+    { nombre: "Press de banca inclinado en smith", videoUrl: "https://www.youtube.com/shorts/XwjuCBcFXQQ", alias: ["Press banca inclinado en smith", "Press de banca inclinado en en smith", "Press de banca inclinado en smith", "Press de banca inclinado smith", "press banca inclinado en smith", "press de banca inclinado en en smith", "press de banca inclinado en smith", "press de banca inclinado smith"] },
+    { nombre: "Press de banca plano con barra", videoUrl: "https://www.youtube.com/shorts/HzkHpIIo4IA", alias: ["Press banca plano con barra", "Press de banca plano con barra", "press banca plano con barra", "press de banca plano con barra", "press plano con barra"] },
+    { nombre: "Press de banca plano con mancuernas", videoUrl: "https://www.youtube.com/shorts/qW519gsE2M8", alias: ["Press banca plano con mancuernas", "Press de banca plano con mancuerna", "Press de banca plano con mancuernas", "press banca plano con mancuernas", "press de banca plano con mancuerna", "press de banca plano con mancuernas", "press plano con mancuernas"] },
+    { nombre: "Press de banca plano en smith", videoUrl: "https://www.youtube.com/shorts/9_tbUqJ45QU", alias: ["Press banca plano en smith", "Press de banca plano en en smith", "Press de banca plano en smith", "Press de banca plano smith", "press banca plano en smith", "press de banca plano en en smith", "press de banca plano en smith", "press de banca plano smith", "press plano en smith"] },
+    { nombre: "Press de hombro 1 brazo", videoUrl: "https://www.youtube.com/shorts/i5cvgQveFbY", alias: ["Press de hombro 1 brazo", "Press hombro 1 brazo", "press de hombro 1 brazo", "press hombro 1 brazo"] },
+    { nombre: "Press de hombro con barra", videoUrl: "https://www.youtube.com/shorts/z_-74FMv5Jg", alias: ["Press de hombro con barra", "Press hombro con barra", "press de hombro con barra", "press hombro con barra"] },
+    { nombre: "Press de hombro con barra sentado", videoUrl: "https://www.youtube.com/shorts/AmcpSwUNPYc", alias: ["Press de hombro con barra sentado", "Press hombro con barra sentado", "press de hombro con barra sentado", "press hombro con barra sentado"] },
+    { nombre: "Press de hombro con mancuernas", videoUrl: "https://www.youtube.com/shorts/96C2nPejfY4", alias: ["Press de hombro con mancuerna", "Press de hombro con mancuernas", "Press hombro con mancuernas", "press de hombro con mancuerna", "press de hombro con mancuernas", "press hombro con mancuernas"] },
+    { nombre: "Press de hombro con mancuernas sentado", videoUrl: "https://www.youtube.com/shorts/R0f2Of6Sl2A", alias: ["Press de hombro con mancuerna sentado", "Press de hombro con mancuernas sentado", "Press hombro con mancuernas sentado", "press de hombro con mancuerna sentado", "press de hombro con mancuernas sentado", "press hombro con mancuernas sentado"] },
+    { nombre: "Press de pecho en maquina sentado", videoUrl: "https://www.youtube.com/shorts/88kSaeQG21Y", alias: ["Press de pecho en maquina sentado", "Press de pecho en máquina sentado", "Press pecho en maquina sentado", "press de pecho en maquina sentado", "press de pecho en máquina sentado", "press pecho en maquina sentado"] },
+    { nombre: "Press de pecho inclinado en maquina", videoUrl: "https://www.youtube.com/shorts/YS6DsKrY8T0", alias: ["Press de pecho inclinado en maquina", "Press de pecho inclinado en máquina", "Press pecho inclinado en maquina", "press de pecho inclinado en maquina", "press de pecho inclinado en máquina", "press pecho inclinado en maquina"] },
+    { nombre: "Press frances con barra", videoUrl: "https://www.youtube.com/watch?v=gY-CqZD0Ktc", alias: ["Press frances con barra", "press frances con barra"] },
+    { nombre: "Press frances con barra W", videoUrl: "https://www.youtube.com/shorts/CAUWI4sNPKk", alias: ["Press frances con barra W", "press frances con barra w"] },
+    { nombre: "Press frances con mancuerna", videoUrl: "https://www.youtube.com/shorts/FgN0vyx8jNE", alias: ["Press frances con mancuerna", "Press frances con mancuernas", "press frances con mancuerna", "press frances con mancuernas"] },
+    { nombre: "Press frances en polea", videoUrl: "https://www.youtube.com/shorts/wNVVttuAGnM", alias: ["Press frances en polea", "press frances en polea"] },
+    { nombre: "Remo con barra", videoUrl: "https://www.youtube.com/shorts/b8FgtZlyEd4", alias: ["Remo con barra", "remo con barra"] },
+    { nombre: "Remo en barra T", videoUrl: "https://www.youtube.com/shorts/uLr8HcW_7ig", alias: ["Remo en barra T", "remo en barra t"] },
+    { nombre: "Remo en landmine", videoUrl: "https://www.youtube.com/watch?v=25lFwuWjKSM", alias: ["Remo en ladmine", "Remo en landmine", "remo en ladmine", "remo en landmine"] },
+    { nombre: "Remo en polea baja 1 brazo", videoUrl: "https://www.youtube.com/shorts/Ol37ocDBdAU", alias: ["Remo en polea baja 1 brazo", "remo en polea baja 1 brazo"] },
+    { nombre: "Remo en polea baja neutro", videoUrl: "https://www.youtube.com/shorts/soxtqUNRt6E", alias: ["Remo en polea baja neutro", "remo en polea baja neutro"] },
+    { nombre: "Remo en polea baja prono", videoUrl: "https://www.youtube.com/watch?v=Vm6E-2tq0bU", alias: ["Remo en polea baja prono", "remo en polea baja prono"] },
+    { nombre: "Remo en polea baja supino", videoUrl: "https://www.youtube.com/shorts/GTb5tId5HG4", alias: ["Remo en polea baja supino", "remo en polea baja supino"] },
+    { nombre: "Remo en smith", videoUrl: "https://www.youtube.com/shorts/lTQJFDyQq0s", alias: ["Remo en en smith", "Remo en smith", "Remo smith", "remo en en smith", "remo en smith", "remo smith"] },
+    { nombre: "Ruedita abdominal", videoUrl: "https://www.youtube.com/shorts/knjliGWvGa4", alias: ["Ruedita abdominal", "ruedita abdominal"] },
+    { nombre: "Segundo tiempo", videoUrl: "https://www.youtube.com/shorts/fWQbTvolNqA", alias: ["Segundo tiempo", "segundo tiempo"] },
+    { nombre: "Sentadilla barra hexagonal", videoUrl: "https://www.youtube.com/shorts/JfhNkNz59lI", alias: ["Sentadilla barra exagonal", "Sentadilla barra hexagonal", "Sentadilla hex bar", "senatdilla barra hexagonal", "sentadilla barra exagonal", "sentadilla barra hexagonal", "sentadilla hex bar", "sentadillas barra hexagonal"] },
+    { nombre: "Sentadilla bulgaras", videoUrl: "https://www.youtube.com/shorts/cytfxsIK_Hk", alias: ["Sentadilla bulgaras", "senatdilla bulgaras", "sentadilla bulgaras", "sentadillas bulgaras"] },
+    { nombre: "Sentadilla con barra", videoUrl: "https://www.youtube.com/shorts/7xeLHxobaWs", alias: ["Sentadilla con barra", "senatdilla con barra", "sentadilla con barra", "sentadillas con barra"] },
+    { nombre: "Sentadilla con polea", videoUrl: "https://www.youtube.com/shorts/0vz9HwV4UKg", alias: ["Sentadilla con polea", "senatdilla con polea", "sentadilla con polea", "sentadillas con polea"] },
+    { nombre: "Sentadilla en smith", videoUrl: "https://www.youtube.com/shorts/eFY7gyLFUcU", alias: ["Sentadilla en en smith", "Sentadilla en smith", "Sentadilla smith", "senatdilla en smith", "sentadilla en en smith", "sentadilla en smith", "sentadilla smith", "sentadillas en smith"] },
+    { nombre: "Sentadilla goblet", videoUrl: "https://www.youtube.com/shorts/3wCp6MN2Z_Q", alias: ["Sentadilla globet", "Sentadilla goblet", "senatdilla goblet", "sentadilla globet", "sentadilla goblet", "sentadillas goblet"] },
+    { nombre: "Sentadilla maquina hack", videoUrl: "https://www.youtube.com/shorts/jXZyJ3KNbWw", alias: ["Sentadilla maquina hack", "Sentadilla máquina hack", "senatdilla maquina hack", "sentadilla maquina hack", "sentadilla máquina hack", "sentadillas maquina hack"] },
+    { nombre: "Sentadilla sumo", videoUrl: "https://www.youtube.com/shorts/rbKBfqqmmwY", alias: ["Sentadilla sumo", "senatdilla sumo", "sentadilla sumo", "sentadillas sumo"] },
+    { nombre: "Tiron al menton", videoUrl: "https://www.youtube.com/shorts/2SAyFkFCoFs", alias: ["Tiron al menton", "tiron al menton"] },
+    { nombre: "Triceps en polea con barra", videoUrl: "https://www.youtube.com/shorts/sU9snn0qTEs", alias: ["Triceps en polea con barra", "triceps en polea con barra", "tríceps en polea con barra"] },
+    { nombre: "Triceps en polea con soga", videoUrl: "https://www.youtube.com/shorts/W7bQVLg3NWA", alias: ["Triceps en polea con soga", "triceps en polea con soga", "tríceps en polea con soga"] },
+    { nombre: "Triceps polea 1 brazo", videoUrl: "https://www.youtube.com/shorts/hip11n3QXzU", alias: ["Triceps polea 1 brazo", "triceps polea 1 brazo", "tríceps polea 1 brazo"] },
+    { nombre: "Twist", videoUrl: "https://www.youtube.com/shorts/vq1FICbQC4Q", alias: ["Twist", "twist"] },
+    { nombre: "Vitalizaciones", videoUrl: "https://www.youtube.com/shorts/gGIo7i-xnQA", alias: ["Vitalizaciones", "vitalizaciones"] },
+    { nombre: "Vuelos frontales con barra", videoUrl: "https://www.youtube.com/shorts/QeJ7INwGgaE", alias: ["Vuelos frontales con barra", "vuelos frontales con barra"] },
+    { nombre: "Vuelos frontales con disco", videoUrl: "https://www.youtube.com/shorts/WMCftjiDQW4", alias: ["Vuelos frontales con disco", "vuelos frontales con disco"] },
+    { nombre: "Vuelos frontales con mancuernas", videoUrl: "https://www.youtube.com/shorts/ErPdiYXDeTw", alias: ["Vuelos frontales con mancuerna", "Vuelos frontales con mancuernas", "vuelos frontales con mancuerna", "vuelos frontales con mancuernas"] },
+    { nombre: "Vuelos frontales con polea", videoUrl: "https://www.youtube.com/shorts/AJ147wzeIfQ", alias: ["Vuelos frontales con polea", "vuelos frontales con polea"] },
+    { nombre: "Vuelos laterales con mancuernas", videoUrl: "https://www.youtube.com/shorts/dd9xo-_ahCg", alias: ["Vuelos laterales con mancuerna", "Vuelos laterales con mancuernas", "vuelos laterales con mancuerna", "vuelos laterales con mancuernas"] },
+    { nombre: "Vuelos laterales en polea", videoUrl: "https://www.youtube.com/shorts/V98wql8IfVA", alias: ["Vuelos laterales en polea", "vuelos laterales en polea"] },
   ];
 
   function normalizarNombreEjercicio(str) {
@@ -4303,11 +4599,94 @@ appState.modalActivo = 'crear_rutina';
 
   function buscarVideoPorNombreEjercicio(nombre) {
     const norm = normalizarNombreEjercicio(nombre);
+    if (!norm) return null;
     const match = CATALOGO_VIDEOS_EJERCICIOS.find(item =>
-      item.alias.some(a => normalizarNombreEjercicio(a) === norm)
+      item.alias.some(a => normalizarNombreEjercicio(a) === norm) ||
+      normalizarNombreEjercicio(item.nombre) === norm
     );
     return match ? match.videoUrl : null;
   }
+
+  function buscarEjerciciosSugeridos(query, limit = 12) {
+    const norm = normalizarNombreEjercicio(query);
+    if (!norm || norm.length < 2) return [];
+    const scored = [];
+    for (const item of CATALOGO_VIDEOS_EJERCICIOS) {
+      const nom = normalizarNombreEjercicio(item.nombre);
+      let score = 0;
+      if (nom === norm) score = 100;
+      else if (nom.startsWith(norm)) score = 80;
+      else if (nom.includes(norm)) score = 60;
+      else {
+        for (const a of item.alias) {
+          const an = normalizarNombreEjercicio(a);
+          if (an === norm) { score = 95; break; }
+          if (an.startsWith(norm)) { score = Math.max(score, 75); }
+          else if (an.includes(norm)) { score = Math.max(score, 50); }
+        }
+      }
+      if (score > 0) scored.push({ ...item, score });
+    }
+    scored.sort((a, b) => b.score - a.score || a.nombre.localeCompare(b.nombre));
+    // unique by videoUrl
+    const seen = new Set();
+    const out = [];
+    for (const s of scored) {
+      if (seen.has(s.videoUrl)) continue;
+      seen.add(s.videoUrl);
+      out.push(s);
+      if (out.length >= limit) break;
+    }
+    return out;
+  }
+
+  window.onEjercicioNombreInput = (diaIdx, ejIdx, val) => {
+    const ej = currentFormDays[diaIdx].ejercicios[ejIdx];
+    ej.nombre = val;
+    // autocompletar video si corresponde
+    if (!ej.videoUrl || ej.videoUrlAuto === true) {
+      const videoAuto = buscarVideoPorNombreEjercicio(val);
+      if (videoAuto) {
+        ej.videoUrl = videoAuto;
+        ej.videoUrlAuto = true;
+        const videoInput = document.querySelector(`[data-video-input="${diaIdx}-${ejIdx}"]`);
+        if (videoInput) videoInput.value = videoAuto;
+      }
+    }
+    // mostrar sugerencias
+    const box = document.getElementById(`ej-suggest-${diaIdx}-${ejIdx}`);
+    if (!box) return;
+    const sugeridos = buscarEjerciciosSugeridos(val);
+    if (!sugeridos.length) {
+      box.style.display = 'none';
+      box.innerHTML = '';
+      return;
+    }
+    box.innerHTML = sugeridos.map(s =>
+      `<button type="button" class="ej-suggest-item" onclick="window.seleccionarEjercicioCatalogo(${diaIdx}, ${ejIdx}, ${JSON.stringify(s.nombre)}, ${JSON.stringify(s.videoUrl)})">${s.nombre}</button>`
+    ).join('');
+    box.style.display = 'block';
+  };
+
+  window.seleccionarEjercicioCatalogo = (diaIdx, ejIdx, nombre, videoUrl) => {
+    const ej = currentFormDays[diaIdx].ejercicios[ejIdx];
+    ej.nombre = nombre;
+    if (!ej.videoUrl || ej.videoUrlAuto === true) {
+      ej.videoUrl = videoUrl;
+      ej.videoUrlAuto = true;
+    }
+    const box = document.getElementById(`ej-suggest-${diaIdx}-${ejIdx}`);
+    if (box) { box.style.display = 'none'; box.innerHTML = ''; }
+    renderFormDays();
+  };
+
+  window.ocultarSugerenciasEjercicio = (diaIdx, ejIdx) => {
+    setTimeout(() => {
+      const box = document.getElementById(`ej-suggest-${diaIdx}-${ejIdx}`);
+      if (box) box.style.display = 'none';
+    }, 180);
+  };
+
 
   function initFormBuilderForNew() {
     currentFormDays = [
@@ -4371,7 +4750,14 @@ appState.modalActivo = 'crear_rutina';
             <div style="display:flex; justify-content:space-between; align-items:center; gap:6px; margin-bottom:6px">
               <div class="form-group" style="margin-bottom:0; flex:1">
                 <label class="form-label" style="font-size:0.75rem">Nombre del Ejercicio</label>
-                <input type="text" class="form-input" value="${ej.nombre}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'nombre', this.value)">
+                <div class="ej-suggest-wrap">
+                  <input type="text" class="form-input" value="${ej.nombre}"
+                    oninput="window.onEjercicioNombreInput(${diaIdx}, ${ejIdx}, this.value)"
+                    onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'nombre', this.value)"
+                    onblur="window.ocultarSugerenciasEjercicio(${diaIdx}, ${ejIdx})"
+                    autocomplete="off">
+                  <div class="ej-suggest-box" id="ej-suggest-${diaIdx}-${ejIdx}" style="display:none"></div>
+                </div>
               </div>
               <div style="display:flex; gap:4px; margin-top:16px">
                 <button type="button" class="btn btn-secondary btn-sm" onclick="window.moveFormExerciseUp(${diaIdx}, ${ejIdx})" style="padding:4px 6px" title="Subir Ejercicio">⬆️</button>
@@ -4402,7 +4788,7 @@ appState.modalActivo = 'crear_rutina';
 
             <div class="form-group" style="margin-bottom:0; margin-top:6px">
               <label class="form-label" style="font-size:0.72rem">🎬 URL de Video/Demo (Opcional)</label>
-              <input type="url" class="form-input" placeholder="https://youtube.com/..." value="${ej.videoUrl || ''}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'videoUrl', this.value)">
+              <input type="url" class="form-input" data-video-input="${diaIdx}-${ejIdx}" placeholder="https://youtube.com/..." value="${ej.videoUrl || ''}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'videoUrl', this.value)">
             </div>
           </div>
         `).join('')}
