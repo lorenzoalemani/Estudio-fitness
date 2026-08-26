@@ -1,39 +1,35 @@
-const CACHE_NAME = 'estudio-fitness-v6';
+// Bump CACHE_NAME en cada deploy para forzar actualización del SW
+const CACHE_NAME = 'estudio-fitness-v8';
 
-// Assets estáticos: íconos, estilos, manifesto — estrategia Cache-First
+// Solo assets que casi no cambian
 const STATIC_ASSETS = [
-  './',
-  './index.html',
-  './src/styles.css',
-  './src/logo.svg',
   './icons/icon-192x192.svg',
   './icons/icon-512x512.svg',
   './icons/apple-touch-icon.svg',
   './icons/favicon.svg',
-  './manifest.json'
+  './manifest.json',
+  './src/logo.svg'
 ];
 
-// Archivos de lógica JS — estrategia Network-First
-// El browser siempre intenta la red para obtener la versión actualizada.
-// Si la red falla (modo offline), usa la versión cacheada como fallback.
+// Lógica y UI: siempre intentar red primero (así al reabrir se ve lo nuevo)
 const NETWORK_FIRST_ASSETS = [
+  './',
+  './index.html',
+  './src/styles.css',
   './src/supabase.js',
   './src/data.js',
   './src/app.js'
 ];
 
-// Pre-cachear todos los assets en la instalación
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) =>
-      cache.addAll([...STATIC_ASSETS, ...NETWORK_FIRST_ASSETS])
+      cache.addAll([...STATIC_ASSETS, ...NETWORK_FIRST_ASSETS]).catch(() => {})
     )
   );
-  // Tomar control inmediato sin esperar a que cierren las pestañas anteriores
   self.skipWaiting();
 });
 
-// Al activar: eliminar caches de versiones anteriores
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((cacheNames) =>
@@ -42,56 +38,63 @@ self.addEventListener('activate', (event) => {
           .filter((name) => name !== CACHE_NAME)
           .map((name) => caches.delete(name))
       )
-    )
+    ).then(() => self.clients.claim())
   );
-  // Tomar control de todos los clientes abiertos inmediatamente
-  self.clients.claim();
 });
 
-// Estrategia de fetch según el tipo de recurso
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
   const pathname = url.pathname;
 
-  // Solo interceptar peticiones al mismo origen (no CDN externas como Supabase)
   if (url.origin !== self.location.origin) {
-    return; // No interceptar peticiones externas (Supabase API, CDN)
+    return;
   }
 
-  // Network-First para los archivos de lógica JS
-  const isNetworkFirst = NETWORK_FIRST_ASSETS.some((asset) =>
-    pathname.endsWith(asset.replace('./', '/'))
-  );
+  // Nunca cachear el propio SW
+  if (pathname.endsWith('/sw.js')) {
+    event.respondWith(fetch(event.request));
+    return;
+  }
+
+  const isNetworkFirst = NETWORK_FIRST_ASSETS.some((asset) => {
+    const clean = asset.replace('./', '/');
+    if (asset === './') return pathname === '/' || pathname.endsWith('/');
+    return pathname.endsWith(clean) || pathname.endsWith(asset.replace('./', ''));
+  }) || pathname.endsWith('.js') || pathname.endsWith('.css') || pathname.endsWith('.html');
 
   if (isNetworkFirst) {
     event.respondWith(
       fetch(event.request)
         .then((networkResponse) => {
-          // Actualizar el caché con la versión fresca de la red
-          const responseClone = networkResponse.clone();
-          caches.open(CACHE_NAME).then((cache) =>
-            cache.put(event.request, responseClone)
-          );
+          if (networkResponse && networkResponse.ok) {
+            const responseClone = networkResponse.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, responseClone));
+          }
           return networkResponse;
         })
-        .catch(() => {
-          // Red no disponible: servir desde caché (modo offline)
-          return caches.match(event.request);
-        })
+        .catch(() => caches.match(event.request).then((r) => r || caches.match('./index.html')))
     );
     return;
   }
 
-  // Cache-First para assets estáticos (íconos, estilos, HTML)
+  // Cache-First para íconos / manifest
   event.respondWith(
-    caches.match(event.request).then((cachedResponse) => {
-      if (cachedResponse) return cachedResponse;
-      return fetch(event.request).catch(() => caches.match('./index.html'));
+    caches.match(event.request).then((cached) => {
+      if (cached) return cached;
+      return fetch(event.request)
+        .then((networkResponse) => {
+          if (networkResponse && networkResponse.ok) {
+            const clone = networkResponse.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+          }
+          return networkResponse;
+        })
+        .catch(() => caches.match('./index.html'));
     })
   );
 });
 
-// RECEPCIÓN DE NOTIFICACIONES PUSH REALES DESDE EL SERVIDOR (VAPID)
+// Push notifications (sin cambios de lógica)
 self.addEventListener('push', (event) => {
   let payload = {
     title: '🔥 Estudio Fitness',
@@ -125,7 +128,6 @@ self.addEventListener('push', (event) => {
   );
 });
 
-// CLICK EN LA NOTIFICACIÓN DEL SISTEMA OPERATIVO
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const targetUrl = event.notification.data?.url || './';
@@ -144,4 +146,11 @@ self.addEventListener('notificationclick', (event) => {
       }
     })
   );
+});
+
+
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
 });

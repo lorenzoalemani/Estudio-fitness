@@ -35,19 +35,44 @@ window.addEventListener('appinstalled', () => {
 
 document.addEventListener('DOMContentLoaded', () => {
   if ('serviceWorker' in navigator) {
+    // Recargar una sola vez cuando el nuevo SW toma control (evita quedar con JS/CSS viejo)
+    let refreshing = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (refreshing) return;
+      refreshing = true;
+      window.location.reload();
+    });
+
     navigator.serviceWorker.register('./sw.js')
       .then(reg => {
         console.log('✅ Service Worker PWA activo');
-        // INSTRUMENTACIÓN TEMPORAL: SERVICE WORKER VERSION
-        const swVersion = reg.active ? reg.active.scriptURL : 'no active worker';
-        console.log('=== SERVICE WORKER VERSION ===', {
-          scriptURL: swVersion,
-          state: reg.active ? reg.active.state : 'none',
-          controller: navigator.serviceWorker.controller ? navigator.serviceWorker.controller.scriptURL : 'no controller'
+        // Buscar actualización al abrir la app
+        reg.update().catch(() => {});
+        // Si ya hay un SW en waiting, forzar activación
+        if (reg.waiting) {
+          reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+        }
+        reg.addEventListener('updatefound', () => {
+          const worker = reg.installing;
+          if (!worker) return;
+          worker.addEventListener('statechange', () => {
+            if (worker.state === 'installed' && navigator.serviceWorker.controller) {
+              // Nueva versión lista: activar (skipWaiting ya está en sw.js; claim + controllerchange recarga)
+              worker.postMessage({ type: 'SKIP_WAITING' });
+            }
+          });
         });
-        // FIN INSTRUMENTACIÓN
       })
       .catch(err => console.warn('Error SW:', err));
+
+    // Al volver a la app (cerrar y abrir / cambiar de pestaña), chequear update
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        navigator.serviceWorker.getRegistration('./sw.js').then(reg => {
+          if (reg) reg.update().catch(() => {});
+        });
+      }
+    });
 
     navigator.serviceWorker.addEventListener('message', (event) => {
       if (event.data && event.data.type === 'NAVIGATE_ROUTE') {
@@ -1634,19 +1659,44 @@ window.addEventListener('appinstalled', () => {
 
 document.addEventListener('DOMContentLoaded', () => {
   if ('serviceWorker' in navigator) {
+    // Recargar una sola vez cuando el nuevo SW toma control (evita quedar con JS/CSS viejo)
+    let refreshing = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (refreshing) return;
+      refreshing = true;
+      window.location.reload();
+    });
+
     navigator.serviceWorker.register('./sw.js')
       .then(reg => {
         console.log('✅ Service Worker PWA activo');
-        // INSTRUMENTACIÓN TEMPORAL: SERVICE WORKER VERSION
-        const swVersion = reg.active ? reg.active.scriptURL : 'no active worker';
-        console.log('=== SERVICE WORKER VERSION ===', {
-          scriptURL: swVersion,
-          state: reg.active ? reg.active.state : 'none',
-          controller: navigator.serviceWorker.controller ? navigator.serviceWorker.controller.scriptURL : 'no controller'
+        // Buscar actualización al abrir la app
+        reg.update().catch(() => {});
+        // Si ya hay un SW en waiting, forzar activación
+        if (reg.waiting) {
+          reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+        }
+        reg.addEventListener('updatefound', () => {
+          const worker = reg.installing;
+          if (!worker) return;
+          worker.addEventListener('statechange', () => {
+            if (worker.state === 'installed' && navigator.serviceWorker.controller) {
+              // Nueva versión lista: activar (skipWaiting ya está en sw.js; claim + controllerchange recarga)
+              worker.postMessage({ type: 'SKIP_WAITING' });
+            }
+          });
         });
-        // FIN INSTRUMENTACIÓN
       })
       .catch(err => console.warn('Error SW:', err));
+
+    // Al volver a la app (cerrar y abrir / cambiar de pestaña), chequear update
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        navigator.serviceWorker.getRegistration('./sw.js').then(reg => {
+          if (reg) reg.update().catch(() => {});
+        });
+      }
+    });
 
     navigator.serviceWorker.addEventListener('message', (event) => {
       if (event.data && event.data.type === 'NAVIGATE_ROUTE') {
