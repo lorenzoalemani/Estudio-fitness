@@ -932,42 +932,50 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>
       ` : `
         <style>
-          /* Podio: sube desde abajo — orden 3 → 2 → 1, sutil y liviano */
-          @keyframes efPodiumRise {
-            from {
-              opacity: 0;
-              transform: scaleY(0.15);
-            }
-            to {
-              opacity: 1;
-              transform: scaleY(1);
-            }
+          /* Podio: uno por uno 3 → 2 → 1. Nombre del 1º flota sutil (como el trofeo). */
+          @keyframes efColRise {
+            0%   { opacity: 0; transform: scaleY(0.08); }
+            100% { opacity: 1; transform: scaleY(1); }
           }
-          @keyframes efPodiumNameIn {
-            from { opacity: 0; transform: translateY(6px); }
-            to   { opacity: 1; transform: translateY(0); }
+          @keyframes efNameIn {
+            0%   { opacity: 0; transform: translateY(8px); }
+            100% { opacity: 1; transform: translateY(0); }
           }
+          /* Movimiento del nombre del 1º (equivalente al trofeo del video) */
+          @keyframes efNameFloat {
+            0%, 100% { transform: translateY(0); }
+            50%      { transform: translateY(-7px); }
+          }
+
           .podium-slot {
             opacity: 1;
           }
+          /* Columnas empiezan invisibles; aparecen en secuencia clara */
           .podium-block {
+            opacity: 0;
             transform-origin: bottom center !important;
-            animation: efPodiumRise 0.38s cubic-bezier(0.22, 1, 0.36, 1) both !important;
-            will-change: transform, opacity;
+            animation: efColRise 0.42s cubic-bezier(0.25, 0.9, 0.3, 1) both !important;
           }
-          /* Orden de aparición: 3º primero, luego 2º, luego 1º */
-          .podium-slot-3 .podium-block { animation-delay: 0s !important; }
-          .podium-slot-2 .podium-block { animation-delay: 0.12s !important; }
-          .podium-slot-1 .podium-block { animation-delay: 0.24s !important; }
-
           .podium-meta {
-            animation: efPodiumNameIn 0.3s ease both !important;
+            opacity: 0;
+            animation: efNameIn 0.32s ease both !important;
           }
-          .podium-slot-3 .podium-meta { animation-delay: 0.06s !important; }
-          .podium-slot-2 .podium-meta { animation-delay: 0.18s !important; }
-          .podium-slot-1 .podium-meta { animation-delay: 0.30s !important; }
 
-          .podium-block::after { display: none !important; animation: none !important; }
+          /* 3º primero */
+          .podium-slot-3 .podium-block { animation-delay: 0.05s !important; }
+          .podium-slot-3 .podium-meta  { animation-delay: 0.18s !important; }
+          /* 2º después (espera a que termine el 3) */
+          .podium-slot-2 .podium-block { animation-delay: 0.48s !important; }
+          .podium-slot-2 .podium-meta  { animation-delay: 0.60s !important; }
+          /* 1º al final */
+          .podium-slot-1 .podium-block { animation-delay: 0.90s !important; }
+          .podium-slot-1 .podium-meta  {
+            animation:
+              efNameIn 0.32s ease 1.02s both,
+              efNameFloat 1.6s ease-in-out 1.4s 2 !important; /* 2 flotaciones sutiles */
+          }
+
+          .podium-block::after { display: none !important; }
           .podium-slot:hover .podium-block {
             transform: translateY(-3px) !important;
             transition: transform 0.18s ease !important;
@@ -975,6 +983,7 @@ document.addEventListener('DOMContentLoaded', () => {
           @media (prefers-reduced-motion: reduce) {
             .podium-block,
             .podium-meta {
+              opacity: 1 !important;
               animation: none !important;
             }
             .podium-slot:hover .podium-block { transform: none !important; }
@@ -2545,42 +2554,50 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>
       ` : `
         <style>
-          /* Podio: sube desde abajo — orden 3 → 2 → 1, sutil y liviano */
-          @keyframes efPodiumRise {
-            from {
-              opacity: 0;
-              transform: scaleY(0.15);
-            }
-            to {
-              opacity: 1;
-              transform: scaleY(1);
-            }
+          /* Podio: uno por uno 3 → 2 → 1. Nombre del 1º flota sutil (como el trofeo). */
+          @keyframes efColRise {
+            0%   { opacity: 0; transform: scaleY(0.08); }
+            100% { opacity: 1; transform: scaleY(1); }
           }
-          @keyframes efPodiumNameIn {
-            from { opacity: 0; transform: translateY(6px); }
-            to   { opacity: 1; transform: translateY(0); }
+          @keyframes efNameIn {
+            0%   { opacity: 0; transform: translateY(8px); }
+            100% { opacity: 1; transform: translateY(0); }
           }
+          /* Movimiento del nombre del 1º (equivalente al trofeo del video) */
+          @keyframes efNameFloat {
+            0%, 100% { transform: translateY(0); }
+            50%      { transform: translateY(-7px); }
+          }
+
           .podium-slot {
             opacity: 1;
           }
+          /* Columnas empiezan invisibles; aparecen en secuencia clara */
           .podium-block {
+            opacity: 0;
             transform-origin: bottom center !important;
-            animation: efPodiumRise 0.38s cubic-bezier(0.22, 1, 0.36, 1) both !important;
-            will-change: transform, opacity;
+            animation: efColRise 0.42s cubic-bezier(0.25, 0.9, 0.3, 1) both !important;
           }
-          /* Orden de aparición: 3º primero, luego 2º, luego 1º */
-          .podium-slot-3 .podium-block { animation-delay: 0s !important; }
-          .podium-slot-2 .podium-block { animation-delay: 0.12s !important; }
-          .podium-slot-1 .podium-block { animation-delay: 0.24s !important; }
-
           .podium-meta {
-            animation: efPodiumNameIn 0.3s ease both !important;
+            opacity: 0;
+            animation: efNameIn 0.32s ease both !important;
           }
-          .podium-slot-3 .podium-meta { animation-delay: 0.06s !important; }
-          .podium-slot-2 .podium-meta { animation-delay: 0.18s !important; }
-          .podium-slot-1 .podium-meta { animation-delay: 0.30s !important; }
 
-          .podium-block::after { display: none !important; animation: none !important; }
+          /* 3º primero */
+          .podium-slot-3 .podium-block { animation-delay: 0.05s !important; }
+          .podium-slot-3 .podium-meta  { animation-delay: 0.18s !important; }
+          /* 2º después (espera a que termine el 3) */
+          .podium-slot-2 .podium-block { animation-delay: 0.48s !important; }
+          .podium-slot-2 .podium-meta  { animation-delay: 0.60s !important; }
+          /* 1º al final */
+          .podium-slot-1 .podium-block { animation-delay: 0.90s !important; }
+          .podium-slot-1 .podium-meta  {
+            animation:
+              efNameIn 0.32s ease 1.02s both,
+              efNameFloat 1.6s ease-in-out 1.4s 2 !important; /* 2 flotaciones sutiles */
+          }
+
+          .podium-block::after { display: none !important; }
           .podium-slot:hover .podium-block {
             transform: translateY(-3px) !important;
             transition: transform 0.18s ease !important;
@@ -2588,6 +2605,7 @@ document.addEventListener('DOMContentLoaded', () => {
           @media (prefers-reduced-motion: reduce) {
             .podium-block,
             .podium-meta {
+              opacity: 1 !important;
               animation: none !important;
             }
             .podium-slot:hover .podium-block { transform: none !important; }
