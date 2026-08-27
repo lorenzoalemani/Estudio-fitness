@@ -1558,6 +1558,37 @@ class GymStore {
     return transcurridoMs >= 0 && transcurridoMs <= 2 * 60 * 60 * 1000;
   }
 
+  // Borrar un entrenamiento del historial del propio alumno.
+  // Solo permite borrar logs de ese alumnoId. Ajusta puntosTotal localmente
+  // si el log tenía puntos asociados.
+  async eliminarEntrenamiento({ logId, alumnoId }) {
+    const log = this.data.workoutLogs.find(w => w.id === logId);
+    if (!log) throw new Error('Entrenamiento no encontrado.');
+    if (log.alumnoId !== alumnoId) throw new Error('No podés borrar un entrenamiento que no es tuyo.');
+
+    const puntosARestar = Number(log.puntos) || 0;
+
+    if (window.supabaseEngine) {
+      const resultado = await window.supabaseEngine.eliminarWorkoutLogEnSupabase(logId, alumnoId);
+      if (!resultado || resultado.ok !== true) {
+        throw new Error((resultado && resultado.error) || 'No se pudo borrar el entrenamiento en el servidor.');
+      }
+    }
+
+    this.data.workoutLogs = this.data.workoutLogs.filter(w => w.id !== logId);
+
+    const alumno = this.getAlumnoPorId(alumnoId);
+    if (alumno && puntosARestar > 0) {
+      alumno.puntosTotal = Math.max(0, (Number(alumno.puntosTotal) || 0) - puntosARestar);
+    }
+
+    this.saveData();
+    if (typeof this.forceRefreshRanking === 'function') {
+      try { await this.forceRefreshRanking(); } catch (_) {}
+    }
+    return { ok: true, puntosRestados: puntosARestar };
+  }
+
   // Devuelve true si ya existe, ENTRE LOS DATOS QUE TENEMOS LOCALMENTE, un
   // entrenamiento completado del alumno en el mismo día calendario (hora
   // local del dispositivo) que fechaISO. Es la versión offline/optimista

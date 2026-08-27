@@ -104,6 +104,7 @@ document.addEventListener('DOMContentLoaded', () => {
     alumnoSeleccionadoId: null,
     rutinaAEliminarId: null, // rutina pendiente de confirmación de borrado (panel profesor)
     logEnEdicionId: null,    // entrenamiento que el alumno está editando (ventana 2hs)
+    logABorrarId: null,       // entrenamiento pendiente de confirmar borrado
     mostrarDrawerNotifs: false,
     workoutDraftSets: {},       // Estado temporal del entrenamiento en progreso por serie
     borradorEntrenamientoDetectado: null, // borrador recuperado de localStorage, pendiente de confirmar Continuar/Descartar
@@ -523,6 +524,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       ${(appState.modalActivo === 'crear_rutina_propia' || appState.modalActivo === 'editar_rutina_propia') ? renderModalFormularioRutina(appState.modalActivo) : ''}
       ${appState.modalActivo === 'editar_entrenamiento' ? renderModalEditarEntrenamiento(alumno) : ''}
+      ${appState.modalActivo === 'confirmar_borrar_entrenamiento' ? renderModalConfirmarBorrarEntrenamiento(alumno) : ''}
       ${appState.borradorEntrenamientoDetectado ? renderModalRecuperarBorrador() : ''}
 
       ${renderBottomNav()}
@@ -744,6 +746,49 @@ document.addEventListener('DOMContentLoaded', () => {
         renderApp();
       });
     });
+
+    document.querySelectorAll('.btn-borrar-entrenamiento-click').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const logId = btn.dataset.logId;
+        const log = store.data.workoutLogs.find(w => w.id === logId);
+        if (!log) return;
+        appState.logABorrarId = logId;
+        appState.modalActivo = 'confirmar_borrar_entrenamiento';
+        renderApp();
+      });
+    });
+  }
+
+  function renderModalConfirmarBorrarEntrenamiento(alumno) {
+    const log = store.data.workoutLogs.find(w => w.id === appState.logABorrarId);
+    if (!log) return '';
+    const fechaTxt = log.fecha
+      ? new Date(log.fecha).toLocaleString('es-AR', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+      : '';
+    return `
+      <div class="modal-overlay">
+        <div class="modal-content" style="max-width:420px">
+          <div class="modal-header">
+            <h3>🗑️ Borrar entrenamiento</h3>
+            <button class="close-btn" id="btnCloseModal">&times;</button>
+          </div>
+          <p style="color:var(--text-gray); font-size:0.92rem; line-height:1.45; margin-bottom:8px">
+            ¿Seguro que querés borrar este entrenamiento?
+          </p>
+          <div style="background:rgba(255,255,255,0.04); border-radius:10px; padding:12px 14px; margin-bottom:16px">
+            <div style="font-weight:800; color:#fff">${log.diaNombre || 'Entrenamiento'}</div>
+            <div style="font-size:0.8rem; color:var(--text-gray); margin-top:4px">${fechaTxt}</div>
+            ${log.puntos ? `<div style="font-size:0.8rem; color:var(--red-primary); margin-top:6px; font-weight:700">−${log.puntos} pts se restarán del ranking</div>` : ''}
+          </div>
+          <p style="font-size:0.78rem; color:var(--text-muted); margin-bottom:16px">Esta acción no se puede deshacer.</p>
+          <div style="display:flex; justify-content:flex-end; gap:10px">
+            <button type="button" class="btn btn-secondary" id="btnCancelModal">Cancelar</button>
+            <button type="button" class="btn btn-primary" id="btnConfirmarBorrarEntrenamiento" style="background:var(--red-primary)">Sí, borrar</button>
+          </div>
+        </div>
+      </div>
+    `;
   }
 
   function renderModalEditarEntrenamiento(alumno) {
@@ -1437,8 +1482,13 @@ document.addEventListener('DOMContentLoaded', () => {
                           </div>
                           <div style="display:flex; align-items:center; gap:8px">
                             <span class="badge badge-active">Completado</span>
-                            ${permitirEdicion && store.puedeEditarseEntrenamiento(log) ? `
-                              <button class="btn btn-secondary btn-sm btn-editar-entrenamiento-click" data-log-id="${log.id}" style="border-color:var(--yellow-warning); color:var(--yellow-warning); padding:4px 10px; font-size:0.75rem">✏️ Editar entrenamiento</button>
+                            ${permitirEdicion ? `
+                              <div style="display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end">
+                                ${store.puedeEditarseEntrenamiento(log) ? `
+                                  <button class="btn btn-secondary btn-sm btn-editar-entrenamiento-click" data-log-id="${log.id}" style="border-color:var(--yellow-warning); color:var(--yellow-warning); padding:4px 10px; font-size:0.75rem">✏️ Editar</button>
+                                ` : ''}
+                                <button class="btn btn-secondary btn-sm btn-borrar-entrenamiento-click" data-log-id="${log.id}" style="border-color:var(--red-primary); color:var(--red-primary); padding:4px 10px; font-size:0.75rem">🗑️ Borrar</button>
+                              </div>
                             ` : ''}
                           </div>
                         </div>
@@ -1765,6 +1815,7 @@ document.addEventListener('DOMContentLoaded', () => {
     alumnoSeleccionadoId: null,
     rutinaAEliminarId: null, // rutina pendiente de confirmación de borrado (panel profesor)
     logEnEdicionId: null,    // entrenamiento que el alumno está editando (ventana 2hs)
+    logABorrarId: null,       // entrenamiento pendiente de confirmar borrado
     mostrarDrawerNotifs: false,
     workoutDraftSets: {},       // Estado temporal del entrenamiento en progreso por serie
     borradorEntrenamientoDetectado: null, // borrador recuperado de localStorage, pendiente de confirmar Continuar/Descartar
@@ -2184,6 +2235,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       ${(appState.modalActivo === 'crear_rutina_propia' || appState.modalActivo === 'editar_rutina_propia') ? renderModalFormularioRutina(appState.modalActivo) : ''}
       ${appState.modalActivo === 'editar_entrenamiento' ? renderModalEditarEntrenamiento(alumno) : ''}
+      ${appState.modalActivo === 'confirmar_borrar_entrenamiento' ? renderModalConfirmarBorrarEntrenamiento(alumno) : ''}
       ${appState.borradorEntrenamientoDetectado ? renderModalRecuperarBorrador() : ''}
 
       ${renderBottomNav()}
@@ -2405,6 +2457,49 @@ document.addEventListener('DOMContentLoaded', () => {
         renderApp();
       });
     });
+
+    document.querySelectorAll('.btn-borrar-entrenamiento-click').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const logId = btn.dataset.logId;
+        const log = store.data.workoutLogs.find(w => w.id === logId);
+        if (!log) return;
+        appState.logABorrarId = logId;
+        appState.modalActivo = 'confirmar_borrar_entrenamiento';
+        renderApp();
+      });
+    });
+  }
+
+  function renderModalConfirmarBorrarEntrenamiento(alumno) {
+    const log = store.data.workoutLogs.find(w => w.id === appState.logABorrarId);
+    if (!log) return '';
+    const fechaTxt = log.fecha
+      ? new Date(log.fecha).toLocaleString('es-AR', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+      : '';
+    return `
+      <div class="modal-overlay">
+        <div class="modal-content" style="max-width:420px">
+          <div class="modal-header">
+            <h3>🗑️ Borrar entrenamiento</h3>
+            <button class="close-btn" id="btnCloseModal">&times;</button>
+          </div>
+          <p style="color:var(--text-gray); font-size:0.92rem; line-height:1.45; margin-bottom:8px">
+            ¿Seguro que querés borrar este entrenamiento?
+          </p>
+          <div style="background:rgba(255,255,255,0.04); border-radius:10px; padding:12px 14px; margin-bottom:16px">
+            <div style="font-weight:800; color:#fff">${log.diaNombre || 'Entrenamiento'}</div>
+            <div style="font-size:0.8rem; color:var(--text-gray); margin-top:4px">${fechaTxt}</div>
+            ${log.puntos ? `<div style="font-size:0.8rem; color:var(--red-primary); margin-top:6px; font-weight:700">−${log.puntos} pts se restarán del ranking</div>` : ''}
+          </div>
+          <p style="font-size:0.78rem; color:var(--text-muted); margin-bottom:16px">Esta acción no se puede deshacer.</p>
+          <div style="display:flex; justify-content:flex-end; gap:10px">
+            <button type="button" class="btn btn-secondary" id="btnCancelModal">Cancelar</button>
+            <button type="button" class="btn btn-primary" id="btnConfirmarBorrarEntrenamiento" style="background:var(--red-primary)">Sí, borrar</button>
+          </div>
+        </div>
+      </div>
+    `;
   }
 
   function renderModalEditarEntrenamiento(alumno) {
@@ -3098,8 +3193,13 @@ document.addEventListener('DOMContentLoaded', () => {
                           </div>
                           <div style="display:flex; align-items:center; gap:8px">
                             <span class="badge badge-active">Completado</span>
-                            ${permitirEdicion && store.puedeEditarseEntrenamiento(log) ? `
-                              <button class="btn btn-secondary btn-sm btn-editar-entrenamiento-click" data-log-id="${log.id}" style="border-color:var(--yellow-warning); color:var(--yellow-warning); padding:4px 10px; font-size:0.75rem">✏️ Editar entrenamiento</button>
+                            ${permitirEdicion ? `
+                              <div style="display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end">
+                                ${store.puedeEditarseEntrenamiento(log) ? `
+                                  <button class="btn btn-secondary btn-sm btn-editar-entrenamiento-click" data-log-id="${log.id}" style="border-color:var(--yellow-warning); color:var(--yellow-warning); padding:4px 10px; font-size:0.75rem">✏️ Editar</button>
+                                ` : ''}
+                                <button class="btn btn-secondary btn-sm btn-borrar-entrenamiento-click" data-log-id="${log.id}" style="border-color:var(--red-primary); color:var(--red-primary); padding:4px 10px; font-size:0.75rem">🗑️ Borrar</button>
+                              </div>
                             ` : ''}
                           </div>
                         </div>
@@ -4325,6 +4425,28 @@ appState.modalActivo = 'crear_rutina';
       cerrarModalGenerico();
     });
 
+    document.getElementById('btnConfirmarBorrarEntrenamiento')?.addEventListener('click', async () => {
+      const alumno = appState.usuarioActual && appState.usuarioActual.data;
+      const logId = appState.logABorrarId;
+      if (!alumno || !logId) {
+        appState.modalActivo = null;
+        appState.logABorrarId = null;
+        renderApp();
+        return;
+      }
+      const btn = document.getElementById('btnConfirmarBorrarEntrenamiento');
+      if (btn) { btn.disabled = true; btn.textContent = 'Borrando…'; }
+      try {
+        await store.eliminarEntrenamiento({ logId, alumnoId: alumno.id });
+        alert('✅ Entrenamiento borrado.');
+      } catch (err) {
+        alert('❌ No se pudo borrar: ' + (err.message || err));
+      }
+      appState.modalActivo = null;
+      appState.logABorrarId = null;
+      renderApp();
+    });
+
     document.getElementById('btnConfirmarBorradoRutina')?.addEventListener('click', async () => {
       const rId = appState.rutinaAEliminarId;
       const profesorId = window._sessionProfesorId || appState.usuarioActual.data.id;
@@ -5458,6 +5580,28 @@ alert("🚀 ¡Rutina propia creada! Ya podés empezar a entrenarla desde \"Mías
         alert("❌ Error: " + err.message);
       }
       cerrarModalGenerico();
+    });
+
+    document.getElementById('btnConfirmarBorrarEntrenamiento')?.addEventListener('click', async () => {
+      const alumno = appState.usuarioActual && appState.usuarioActual.data;
+      const logId = appState.logABorrarId;
+      if (!alumno || !logId) {
+        appState.modalActivo = null;
+        appState.logABorrarId = null;
+        renderApp();
+        return;
+      }
+      const btn = document.getElementById('btnConfirmarBorrarEntrenamiento');
+      if (btn) { btn.disabled = true; btn.textContent = 'Borrando…'; }
+      try {
+        await store.eliminarEntrenamiento({ logId, alumnoId: alumno.id });
+        alert('✅ Entrenamiento borrado.');
+      } catch (err) {
+        alert('❌ No se pudo borrar: ' + (err.message || err));
+      }
+      appState.modalActivo = null;
+      appState.logABorrarId = null;
+      renderApp();
     });
 
     document.getElementById('btnConfirmarBorradoRutina')?.addEventListener('click', async () => {

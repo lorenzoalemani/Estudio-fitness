@@ -594,7 +594,42 @@ const { data: rpcData, error: rpcErr } = await this.client.rpc(
     }
   }
 
-  // --- EDITAR SERIES DE UN ENTRENAMIENTO YA GUARDADO (ventana de 2hs) ---
+  // --- BORRAR ENTRENAMIENTO DEL HISTORIAL (solo el propio alumno) ---
+  async eliminarWorkoutLogEnSupabase(logId, alumnoId) {
+    if (!this.client) return { ok: false, error: 'Sin conexión a Supabase' };
+    try {
+      const logUuid = this.ensureValidUUID(logId);
+      const alumnoUuid = this.ensureValidUUID(alumnoId);
+
+      // Borrar series primero (FK)
+      const { error: sErr } = await this.client
+        .from('workout_log_sets')
+        .delete()
+        .eq('workout_log_id', logUuid);
+      if (sErr) {
+        console.error('❌ Error borrando workout_log_sets:', sErr);
+        return { ok: false, error: sErr.message };
+      }
+
+      const { error: lErr } = await this.client
+        .from('workout_logs')
+        .delete()
+        .eq('id', logUuid)
+        .eq('alumno_id', alumnoUuid);
+      if (lErr) {
+        console.error('❌ Error borrando workout_logs:', lErr);
+        return { ok: false, error: lErr.message };
+      }
+
+      console.log('✅ Entrenamiento borrado en Supabase:', logUuid);
+      return { ok: true };
+    } catch (err) {
+      console.error('❌ Excepción eliminarWorkoutLogEnSupabase:', err);
+      return { ok: false, error: err.message };
+    }
+  }
+
+    // --- EDITAR SERIES DE UN ENTRENAMIENTO YA GUARDADO (ventana de 2hs) ---
   // RPC segura: valida server-side que el log sea del alumno y que no
   // pasaron más de 2hs desde fecha_entrenamiento antes de reemplazar sets.
   async editarWorkoutLogSetsEnSupabase(logId, alumnoId, setsLog, comentarioGeneral) {
