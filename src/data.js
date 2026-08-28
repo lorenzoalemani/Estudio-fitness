@@ -1612,25 +1612,33 @@ class GymStore {
 
     const puntosARestar = Number(log.puntos) || 0;
 
+    let puntosRestadosServer = puntosARestar;
     if (window.supabaseEngine) {
-      const resultado = await window.supabaseEngine.eliminarWorkoutLogEnSupabase(logId, alumnoId);
+      const resultado = await window.supabaseEngine.eliminarWorkoutLogEnSupabase(logId, alumnoId, puntosARestar);
       if (!resultado || resultado.ok !== true) {
         throw new Error((resultado && resultado.error) || 'No se pudo borrar el entrenamiento en el servidor.');
+      }
+      if (resultado.puntosRestados != null) puntosRestadosServer = Number(resultado.puntosRestados) || 0;
+      const alumno = this.getAlumnoPorId(alumnoId);
+      if (alumno && resultado.puntosTotal != null) {
+        alumno.puntosTotal = Math.max(0, Number(resultado.puntosTotal) || 0);
+      } else if (alumno && puntosRestadosServer > 0) {
+        alumno.puntosTotal = Math.max(0, (Number(alumno.puntosTotal) || 0) - puntosRestadosServer);
+      }
+    } else {
+      const alumno = this.getAlumnoPorId(alumnoId);
+      if (alumno && puntosARestar > 0) {
+        alumno.puntosTotal = Math.max(0, (Number(alumno.puntosTotal) || 0) - puntosARestar);
       }
     }
 
     this.data.workoutLogs = this.data.workoutLogs.filter(w => w.id !== logId);
 
-    const alumno = this.getAlumnoPorId(alumnoId);
-    if (alumno && puntosARestar > 0) {
-      alumno.puntosTotal = Math.max(0, (Number(alumno.puntosTotal) || 0) - puntosARestar);
-    }
-
     this.saveData();
     if (typeof this.forceRefreshRanking === 'function') {
       try { await this.forceRefreshRanking(); } catch (_) {}
     }
-    return { ok: true, puntosRestados: puntosARestar };
+    return { ok: true, puntosRestados: puntosRestadosServer };
   }
 
   // Devuelve true si ya existe, ENTRE LOS DATOS QUE TENEMOS LOCALMENTE, un

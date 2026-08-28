@@ -1536,34 +1536,58 @@ document.addEventListener('DOMContentLoaded', () => {
           </div>`).join('')
       : `<p class="stats-empty">Sin series guardadas para este entrenamiento. Si es un entrenamiento viejo, puede que no se hayan sincronizado las series. Los nuevos sí se guardan completos.</p>`;
 
-    // Comparación inteligente: nombre de día → mismos ejercicios → similares
+    // Comparación: línea de volumen total a lo largo de los últimos entrenamientos comparables
     const { prev, matchType } = _statsFindPreviousComparable(selected, list);
 
-    const volMap = (log) => {
-      const map = {};
+    const totalVol = (log) => {
+      let v = 0;
       (log.sets || []).forEach(s => {
-        const name = s.ejercicioNombre || s.ejercicio || s.nombre || 'Ejercicio';
         const reps = Number(s.repsRealizadas != null ? s.repsRealizadas : (s.reps != null ? s.reps : 0)) || 0;
         const peso = _statsParsePesoKg(s.pesoUtilizado != null ? s.pesoUtilizado : s.peso);
-        map[name] = (map[name] || 0) + reps * peso;
+        v += reps * peso;
       });
-      return map;
+      return Math.round(v);
     };
-    const curVol = volMap(selected);
-    const prevVol = prev ? volMap(prev) : null;
-    const names = Object.keys(curVol);
-    if (prevVol) Object.keys(prevVol).forEach(n => { if (!names.includes(n)) names.push(n); });
-    const labels = names.slice(0, 6);
-    const seriesA = labels.map(n => curVol[n] || 0);
-    const seriesB = prevVol ? labels.map(n => prevVol[n] || 0) : null;
 
-    let compareHint = 'Todavía no hay un entrenamiento anterior comparable.';
-    if (prev && matchType === 'nombre') {
-      compareHint = `Comparando con ${_statsFormatFecha(prev.fecha)} · ${prev.diaNombre || ''} (mismo nombre de día)`;
-    } else if (prev && matchType === 'ejercicios') {
-      compareHint = `Comparando con ${_statsFormatFecha(prev.fecha)} · ${prev.diaNombre || ''} (mismos ejercicios)`;
-    } else if (prev && matchType === 'similares') {
-      compareHint = `Comparando con ${_statsFormatFecha(prev.fecha)} · ${prev.diaNombre || ''} (ejercicios muy similares)`;
+    // Cadena de comparables hacia atrás (mismo nombre / ejercicios), hasta 8, + el actual
+    const chain = [];
+    let cursor = selected;
+    const used = new Set([selected.id]);
+    for (let i = 0; i < 7; i++) {
+      const found = _statsFindPreviousComparable(cursor, list.filter(l => !used.has(l.id) || l.id === cursor.id));
+      // Re-search only among not-yet-used
+      const earlier = list
+        .filter(l => !used.has(l.id) && new Date(l.fecha) < new Date(cursor.fecha))
+        .sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+      let next = null;
+      const key = _statsDiaKey(cursor);
+      next = earlier.find(l => _statsDiaKey(l) === key);
+      if (!next) {
+        const sig = _statsExerciseSignature(cursor);
+        if (sig) next = earlier.find(l => _statsExerciseSignature(l) === sig);
+      }
+      if (!next) break;
+      used.add(next.id);
+      chain.unshift(next);
+      cursor = next;
+    }
+    chain.push(selected);
+
+    const labels = chain.map(l => {
+      try {
+        return new Date(l.fecha).toLocaleDateString('es-AR', { day: '2-digit', month: 'short' });
+      } catch (_) { return '—'; }
+    });
+    const seriesA = chain.map(l => totalVol(l));
+    const seriesB = null; // una sola línea de progreso
+
+    let compareHint = 'Volumen total (reps × kg) de este tipo de entrenamiento en el tiempo.';
+    if (chain.length < 2) {
+      compareHint = 'Todavía no hay entrenamientos anteriores comparables para armar la línea. Cuando repitas este día, vas a ver el progreso.';
+    } else if (matchType === 'nombre') {
+      compareHint = `Progreso de volumen · emparejado por nombre de día (${selected.diaNombre || ''})`;
+    } else if (matchType === 'ejercicios' || matchType === 'similares') {
+      compareHint = 'Progreso de volumen · emparejado por ejercicios similares';
     }
 
     // Calendario
@@ -1615,17 +1639,15 @@ document.addEventListener('DOMContentLoaded', () => {
         <section class="stats-card">
           <div class="stats-card-head">
             <h3>Comparación</h3>
-            <span class="stats-badge">${prev ? (matchType === 'ejercicios' ? 'vs mismos ejercicios' : (matchType === 'similares' ? 'vs similares' : 'vs mismo día')) : 'Solo este'}</span>
+            <span class="stats-badge">${chain.length > 1 ? chain.length + ' sesiones' : 'Solo este'}</span>
           </div>
-          <p class="stats-hint">${prev
-            ? 'Volumen (reps × kg) por ejercicio vs el mismo día anterior.'
-            : 'Cuando repitas este día de rutina, vas a ver la comparación acá.'}</p>
+          <p class="stats-hint">${compareHint}</p>
           <div class="stats-chart-wrap">
             <canvas id="statsLineChart" width="640" height="280" data-chart="${chartPayload}"></canvas>
           </div>
           <div class="stats-legend">
-            <span><i style="background:#3b82f6"></i> Este entrenamiento</span>
-            ${prev ? '<span><i style="background:#94a3b8"></i> Anterior igual</span>' : ''}
+            <span><i style="background:#3b82f6"></i> Volumen total (reps × kg)</span>
+            <span style="color:var(--text-gray)">${chain.length} sesión${chain.length === 1 ? '' : 'es'}</span>
           </div>
         </section>
 
@@ -1675,39 +1697,77 @@ document.addEventListener('DOMContentLoaded', () => {
     const plotH = H - pad.t - pad.b;
     ctx.clearRect(0, 0, W, H);
 
-    const all = seriesB ? seriesA.concat(seriesB) : seriesA.slice();
-    const maxY = Math.max(10, ...all) * 1.15;
+    const all = (seriesA || []).concat(seriesB || []);
+    const maxY = Math.max(10, ...all) * 1.2;
 
     ctx.strokeStyle = 'rgba(255,255,255,0.06)';
     ctx.lineWidth = 1;
     for (let i = 0; i <= 4; i++) {
       const y = pad.t + (plotH * i) / 4;
       ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke();
+      // ticks Y
+      const val = Math.round(maxY * (1 - i / 4));
+      ctx.fillStyle = '#6b7280';
+      ctx.font = '9px system-ui, sans-serif';
+      ctx.textAlign = 'right';
+      ctx.fillText(String(val), pad.l - 6, y + 3);
     }
 
     function xAt(i) {
       if (labels.length <= 1) return pad.l + plotW / 2;
       return pad.l + (plotW * i) / (labels.length - 1);
     }
-    function yAt(v) { return pad.t + plotH - (v / maxY) * plotH; }
+    function yAt(v) { return pad.t + plotH - (Math.max(0, v) / maxY) * plotH; }
 
-    function strokeSeries(data, color) {
+    function strokeSeries(data, color, withArea) {
       if (!data || !data.length) return;
+      // Área bajo la curva
+      if (withArea && data.length >= 1) {
+        ctx.beginPath();
+        data.forEach((v, i) => {
+          const x = xAt(i), y = yAt(v);
+          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        });
+        ctx.lineTo(xAt(data.length - 1), pad.t + plotH);
+        ctx.lineTo(xAt(0), pad.t + plotH);
+        ctx.closePath();
+        const grd = ctx.createLinearGradient(0, pad.t, 0, pad.t + plotH);
+        grd.addColorStop(0, 'rgba(59,130,246,0.35)');
+        grd.addColorStop(1, 'rgba(59,130,246,0.02)');
+        ctx.fillStyle = grd;
+        ctx.fill();
+      }
+      // Línea suave
       ctx.beginPath();
       data.forEach((v, i) => {
         const x = xAt(i), y = yAt(v);
         if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
       });
-      ctx.strokeStyle = color; ctx.lineWidth = 2.5; ctx.lineJoin = 'round'; ctx.stroke();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2.8;
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      ctx.stroke();
+      // Puntos + valor
       data.forEach((v, i) => {
         const x = xAt(i), y = yAt(v);
-        ctx.beginPath(); ctx.arc(x, y, 4.5, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill();
-        ctx.beginPath(); ctx.arc(x, y, 2, 0, Math.PI * 2); ctx.fillStyle = '#0a0a0c'; ctx.fill();
+        ctx.beginPath();
+        ctx.arc(x, y, 5, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(x, y, 2.2, 0, Math.PI * 2);
+        ctx.fillStyle = '#0a0a0c';
+        ctx.fill();
+        ctx.fillStyle = '#e5e7eb';
+        ctx.font = '10px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(String(v), x, y - 10);
       });
     }
 
-    if (seriesB) strokeSeries(seriesB, '#94a3b8');
-    strokeSeries(seriesA, '#3b82f6');
+    if (seriesB) strokeSeries(seriesB, '#94a3b8', false);
+    strokeSeries(seriesA, '#3b82f6', true);
 
     ctx.fillStyle = '#8b8b96';
     ctx.font = '10px system-ui, sans-serif';
@@ -3616,34 +3676,58 @@ document.addEventListener('DOMContentLoaded', () => {
           </div>`).join('')
       : `<p class="stats-empty">Sin series guardadas para este entrenamiento. Si es un entrenamiento viejo, puede que no se hayan sincronizado las series. Los nuevos sí se guardan completos.</p>`;
 
-    // Comparación inteligente: nombre de día → mismos ejercicios → similares
+    // Comparación: línea de volumen total a lo largo de los últimos entrenamientos comparables
     const { prev, matchType } = _statsFindPreviousComparable(selected, list);
 
-    const volMap = (log) => {
-      const map = {};
+    const totalVol = (log) => {
+      let v = 0;
       (log.sets || []).forEach(s => {
-        const name = s.ejercicioNombre || s.ejercicio || s.nombre || 'Ejercicio';
         const reps = Number(s.repsRealizadas != null ? s.repsRealizadas : (s.reps != null ? s.reps : 0)) || 0;
         const peso = _statsParsePesoKg(s.pesoUtilizado != null ? s.pesoUtilizado : s.peso);
-        map[name] = (map[name] || 0) + reps * peso;
+        v += reps * peso;
       });
-      return map;
+      return Math.round(v);
     };
-    const curVol = volMap(selected);
-    const prevVol = prev ? volMap(prev) : null;
-    const names = Object.keys(curVol);
-    if (prevVol) Object.keys(prevVol).forEach(n => { if (!names.includes(n)) names.push(n); });
-    const labels = names.slice(0, 6);
-    const seriesA = labels.map(n => curVol[n] || 0);
-    const seriesB = prevVol ? labels.map(n => prevVol[n] || 0) : null;
 
-    let compareHint = 'Todavía no hay un entrenamiento anterior comparable.';
-    if (prev && matchType === 'nombre') {
-      compareHint = `Comparando con ${_statsFormatFecha(prev.fecha)} · ${prev.diaNombre || ''} (mismo nombre de día)`;
-    } else if (prev && matchType === 'ejercicios') {
-      compareHint = `Comparando con ${_statsFormatFecha(prev.fecha)} · ${prev.diaNombre || ''} (mismos ejercicios)`;
-    } else if (prev && matchType === 'similares') {
-      compareHint = `Comparando con ${_statsFormatFecha(prev.fecha)} · ${prev.diaNombre || ''} (ejercicios muy similares)`;
+    // Cadena de comparables hacia atrás (mismo nombre / ejercicios), hasta 8, + el actual
+    const chain = [];
+    let cursor = selected;
+    const used = new Set([selected.id]);
+    for (let i = 0; i < 7; i++) {
+      const found = _statsFindPreviousComparable(cursor, list.filter(l => !used.has(l.id) || l.id === cursor.id));
+      // Re-search only among not-yet-used
+      const earlier = list
+        .filter(l => !used.has(l.id) && new Date(l.fecha) < new Date(cursor.fecha))
+        .sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+      let next = null;
+      const key = _statsDiaKey(cursor);
+      next = earlier.find(l => _statsDiaKey(l) === key);
+      if (!next) {
+        const sig = _statsExerciseSignature(cursor);
+        if (sig) next = earlier.find(l => _statsExerciseSignature(l) === sig);
+      }
+      if (!next) break;
+      used.add(next.id);
+      chain.unshift(next);
+      cursor = next;
+    }
+    chain.push(selected);
+
+    const labels = chain.map(l => {
+      try {
+        return new Date(l.fecha).toLocaleDateString('es-AR', { day: '2-digit', month: 'short' });
+      } catch (_) { return '—'; }
+    });
+    const seriesA = chain.map(l => totalVol(l));
+    const seriesB = null; // una sola línea de progreso
+
+    let compareHint = 'Volumen total (reps × kg) de este tipo de entrenamiento en el tiempo.';
+    if (chain.length < 2) {
+      compareHint = 'Todavía no hay entrenamientos anteriores comparables para armar la línea. Cuando repitas este día, vas a ver el progreso.';
+    } else if (matchType === 'nombre') {
+      compareHint = `Progreso de volumen · emparejado por nombre de día (${selected.diaNombre || ''})`;
+    } else if (matchType === 'ejercicios' || matchType === 'similares') {
+      compareHint = 'Progreso de volumen · emparejado por ejercicios similares';
     }
 
     // Calendario
@@ -3695,17 +3779,15 @@ document.addEventListener('DOMContentLoaded', () => {
         <section class="stats-card">
           <div class="stats-card-head">
             <h3>Comparación</h3>
-            <span class="stats-badge">${prev ? (matchType === 'ejercicios' ? 'vs mismos ejercicios' : (matchType === 'similares' ? 'vs similares' : 'vs mismo día')) : 'Solo este'}</span>
+            <span class="stats-badge">${chain.length > 1 ? chain.length + ' sesiones' : 'Solo este'}</span>
           </div>
-          <p class="stats-hint">${prev
-            ? 'Volumen (reps × kg) por ejercicio vs el mismo día anterior.'
-            : 'Cuando repitas este día de rutina, vas a ver la comparación acá.'}</p>
+          <p class="stats-hint">${compareHint}</p>
           <div class="stats-chart-wrap">
             <canvas id="statsLineChart" width="640" height="280" data-chart="${chartPayload}"></canvas>
           </div>
           <div class="stats-legend">
-            <span><i style="background:#3b82f6"></i> Este entrenamiento</span>
-            ${prev ? '<span><i style="background:#94a3b8"></i> Anterior igual</span>' : ''}
+            <span><i style="background:#3b82f6"></i> Volumen total (reps × kg)</span>
+            <span style="color:var(--text-gray)">${chain.length} sesión${chain.length === 1 ? '' : 'es'}</span>
           </div>
         </section>
 
@@ -3755,39 +3837,77 @@ document.addEventListener('DOMContentLoaded', () => {
     const plotH = H - pad.t - pad.b;
     ctx.clearRect(0, 0, W, H);
 
-    const all = seriesB ? seriesA.concat(seriesB) : seriesA.slice();
-    const maxY = Math.max(10, ...all) * 1.15;
+    const all = (seriesA || []).concat(seriesB || []);
+    const maxY = Math.max(10, ...all) * 1.2;
 
     ctx.strokeStyle = 'rgba(255,255,255,0.06)';
     ctx.lineWidth = 1;
     for (let i = 0; i <= 4; i++) {
       const y = pad.t + (plotH * i) / 4;
       ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke();
+      // ticks Y
+      const val = Math.round(maxY * (1 - i / 4));
+      ctx.fillStyle = '#6b7280';
+      ctx.font = '9px system-ui, sans-serif';
+      ctx.textAlign = 'right';
+      ctx.fillText(String(val), pad.l - 6, y + 3);
     }
 
     function xAt(i) {
       if (labels.length <= 1) return pad.l + plotW / 2;
       return pad.l + (plotW * i) / (labels.length - 1);
     }
-    function yAt(v) { return pad.t + plotH - (v / maxY) * plotH; }
+    function yAt(v) { return pad.t + plotH - (Math.max(0, v) / maxY) * plotH; }
 
-    function strokeSeries(data, color) {
+    function strokeSeries(data, color, withArea) {
       if (!data || !data.length) return;
+      // Área bajo la curva
+      if (withArea && data.length >= 1) {
+        ctx.beginPath();
+        data.forEach((v, i) => {
+          const x = xAt(i), y = yAt(v);
+          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        });
+        ctx.lineTo(xAt(data.length - 1), pad.t + plotH);
+        ctx.lineTo(xAt(0), pad.t + plotH);
+        ctx.closePath();
+        const grd = ctx.createLinearGradient(0, pad.t, 0, pad.t + plotH);
+        grd.addColorStop(0, 'rgba(59,130,246,0.35)');
+        grd.addColorStop(1, 'rgba(59,130,246,0.02)');
+        ctx.fillStyle = grd;
+        ctx.fill();
+      }
+      // Línea suave
       ctx.beginPath();
       data.forEach((v, i) => {
         const x = xAt(i), y = yAt(v);
         if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
       });
-      ctx.strokeStyle = color; ctx.lineWidth = 2.5; ctx.lineJoin = 'round'; ctx.stroke();
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2.8;
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      ctx.stroke();
+      // Puntos + valor
       data.forEach((v, i) => {
         const x = xAt(i), y = yAt(v);
-        ctx.beginPath(); ctx.arc(x, y, 4.5, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill();
-        ctx.beginPath(); ctx.arc(x, y, 2, 0, Math.PI * 2); ctx.fillStyle = '#0a0a0c'; ctx.fill();
+        ctx.beginPath();
+        ctx.arc(x, y, 5, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(x, y, 2.2, 0, Math.PI * 2);
+        ctx.fillStyle = '#0a0a0c';
+        ctx.fill();
+        ctx.fillStyle = '#e5e7eb';
+        ctx.font = '10px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(String(v), x, y - 10);
       });
     }
 
-    if (seriesB) strokeSeries(seriesB, '#94a3b8');
-    strokeSeries(seriesA, '#3b82f6');
+    if (seriesB) strokeSeries(seriesB, '#94a3b8', false);
+    strokeSeries(seriesA, '#3b82f6', true);
 
     ctx.fillStyle = '#8b8b96';
     ctx.font = '10px system-ui, sans-serif';

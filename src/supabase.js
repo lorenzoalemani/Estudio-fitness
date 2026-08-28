@@ -690,13 +690,32 @@ const { data: rpcData, error: rpcErr } = await this.client.rpc(
   }
 
   // --- BORRAR ENTRENAMIENTO DEL HISTORIAL (solo el propio alumno) ---
-  async eliminarWorkoutLogEnSupabase(logId, alumnoId) {
+  async eliminarWorkoutLogEnSupabase(logId, alumnoId, puntosARestar = 0) {
     if (!this.client) return { ok: false, error: 'Sin conexión a Supabase' };
     try {
       const logUuid = this.ensureValidUUID(logId);
       const alumnoUuid = this.ensureValidUUID(alumnoId);
+      const pts = Math.max(0, Math.round(Number(puntosARestar) || 0));
 
-      // Borrar series primero (FK)
+      // 1) Preferir RPC atómica (borra log+sets y resta puntos_total)
+      try {
+        const { data: rpcData, error: rpcErr } = await this.client.rpc('eliminar_entrenamiento_alumno', {
+          p_workout_log_id: logUuid,
+          p_alumno_id: alumnoUuid,
+          p_puntos_a_restar: pts
+        });
+        if (!rpcErr && rpcData && rpcData.ok !== false) {
+          console.log('✅ Entrenamiento borrado via RPC eliminar_entrenamiento_alumno', rpcData);
+          return { ok: true, puntosRestados: pts, puntosTotal: rpcData.puntosTotal };
+        }
+        if (rpcErr) {
+          console.warn('⚠️ RPC eliminar_entrenamiento_alumno no disponible, fallback manual:', rpcErr.message);
+        }
+      } catch (e) {
+        console.warn('⚠️ RPC eliminar_entrenamiento_alumno falló, fallback manual:', e && e.message);
+      }
+
+      // 2) Fallback: borrar sets + log
       const { error: sErr } = await this.client
         .from('workout_log_sets')
         .delete()
@@ -716,8 +735,34 @@ const { data: rpcData, error: rpcErr } = await this.client.rpc(
         return { ok: false, error: lErr.message };
       }
 
+      // 3) Restar puntos en profiles (fuente del ranking)
+      if (pts > 0) {
+        const { data: prof, error: pReadErr } = await this.client
+          .from('profiles')
+          .select('puntos_total')
+          .eq('id', alumnoUuid)
+          .maybeSingle();
+        if (pReadErr) {
+          console.warn('⚠️ No se pudo leer puntos_total para restar:', pReadErr.message);
+        } else {
+          const actual = Number(prof && prof.puntos_total) || 0;
+          const nuevo = Math.max(0, actual - pts);
+          const { error: pUpErr } = await this.client
+            .from('profiles')
+            .update({ puntos_total: nuevo })
+            .eq('id', alumnoUuid);
+          if (pUpErr) {
+            console.error('❌ No se pudieron restar puntos en profiles:', pUpErr.message);
+            // El log ya se borró; avisamos pero no revertimos el delete
+            return { ok: true, puntosRestados: 0, warning: 'log_borrado_pero_puntos_no_restados' };
+          }
+          console.log('✅ puntos_total actualizado:', actual, '→', nuevo);
+          return { ok: true, puntosRestados: pts, puntosTotal: nuevo };
+        }
+      }
+
       console.log('✅ Entrenamiento borrado en Supabase:', logUuid);
-      return { ok: true };
+      return { ok: true, puntosRestados: pts };
     } catch (err) {
       console.error('❌ Excepción eliminarWorkoutLogEnSupabase:', err);
       return { ok: false, error: err.message };
