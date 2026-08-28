@@ -70,17 +70,24 @@ class SupabaseEngine {
       //    políticas anon que permiten al menos el INSERT de alumnos nuevos.
       //    El SELECT de profiles devuelve vacío para anon — se usa para
       //    detectar si el alumno fue autorizado en otro dispositivo.
-      const [resAuthDnis, resProfiles, resLogs, resLogSets, resNotifs] = await Promise.all([
+      let [resAuthDnis, resProfiles, resLogs, resLogSets, resNotifs] = await Promise.all([
         this.client.from('authorized_dnis').select('*'),
         // puntos_total/racha_semanas/racha_ultima_semana: fuente de verdad del
         // ranking (ver sql/patch_gestion_rutinas_y_puntos.sql). Se leen acá para
         // que cada dispositivo muestre el mismo número, en vez del contador
         // aislado que vivía antes solo en alumno.puntosTotal de localStorage.
         this.client.from('profiles').select('id,dni,nombre,nombre_apodo_profesor,telefono,rol,estado_autorizacion,created_at,puntos_total,racha_semanas,racha_ultima_semana,auth_user_id'),
-        this.client.from('workout_logs').select('*'),
+        // Nested: trae series junto al log (más fiable que un SELECT suelto a sets)
+        this.client.from('workout_logs').select('*, workout_log_sets(*)'),
         this.client.from('workout_log_sets').select('*'),
         this.client.from('notifications').select('*')
       ]);
+
+      // Si el embed falla (nombre de FK distinto), reintentar logs planos
+      if (resLogs.error) {
+        console.warn('⚠️ workout_logs nested select falló, reintento plano:', resLogs.error.message);
+        resLogs = await this.client.from('workout_logs').select('*');
+      }
 
       // IMPORTANTE: distinguimos "consulta falló" (error !== null → no podemos
       // confiar en el resultado, no debe usarse para reconciliar/podar estado
@@ -167,33 +174,44 @@ class SupabaseEngine {
       }
 
       // 3. Historial de entrenamientos
+      const mapSetRow = (s) => ({
+        ejercicioId: s.exercise_goal_id || s.ejercicio_id || null,
+        ejercicioNombre: s.exercise_nombre || s.ejercicio_nombre || s.nombre || s.exercise_name || '',
+        setNumero: s.set_numero != null ? s.set_numero : (s.setNumero || 0),
+        repsRealizadas: s.reps_realizadas != null ? s.reps_realizadas : (s.reps || ''),
+        pesoUtilizado: s.peso_utilizado != null ? s.peso_utilizado : (s.peso || ''),
+        comentarioAlumno: s.comentario_alumno || s.comentario || ''
+      });
+
       const setsByLog = {};
       (resLogSets.data || []).forEach(s => {
-        if (!setsByLog[s.workout_log_id]) setsByLog[s.workout_log_id] = [];
-        const nombre = s.exercise_nombre || s.ejercicio_nombre || s.nombre || s.exercise_name || '';
-        setsByLog[s.workout_log_id].push({
-          ejercicioId: s.exercise_goal_id || s.ejercicio_id || null,
-          ejercicioNombre: nombre,
-          setNumero: s.set_numero != null ? s.set_numero : (s.setNumero || 0),
-          repsRealizadas: s.reps_realizadas != null ? s.reps_realizadas : (s.reps || ''),
-          pesoUtilizado: s.peso_utilizado != null ? s.peso_utilizado : (s.peso || ''),
-          comentarioAlumno: s.comentario_alumno || s.comentario || ""
-        });
+        const lid = s.workout_log_id;
+        if (!lid) return;
+        if (!setsByLog[lid]) setsByLog[lid] = [];
+        setsByLog[lid].push(mapSetRow(s));
       });
 
       const workoutLogs = resLogs.error
         ? null
-        : (resLogs.data || []).map(l => ({
-            id: l.id,
-            alumnoId: l.alumno_id,
-            rutinaId: l.routine_id,
-            diaId: l.dia_id || "dia-1",
-            diaNombre: l.dia_nombre,
-            fecha: l.fecha_entrenamiento,
-            estado: l.estado,
-            comentarioGeneral: l.comentario_general || "",
-            sets: setsByLog[l.id] || []
-          }));
+        : (resLogs.data || []).map(l => {
+            // Preferir series anidadas del join; si no, las del SELECT plano
+            const nested = Array.isArray(l.workout_log_sets) ? l.workout_log_sets.map(mapSetRow) : [];
+            const flat = setsByLog[l.id] || [];
+            const sets = nested.length > 0 ? nested : flat;
+            return {
+              id: l.id,
+              alumnoId: l.alumno_id,
+              rutinaId: l.routine_id,
+              diaId: l.dia_id || 'dia-1',
+              diaNombre: l.dia_nombre,
+              diaNumero: l.dia_numero || 1,
+              fecha: l.fecha_entrenamiento,
+              estado: l.estado,
+              comentarioGeneral: l.comentario_general || '',
+              puntos: l.puntos != null ? l.puntos : undefined,
+              sets
+            };
+          });
 
       const notificaciones = resNotifs.error
         ? null
@@ -579,18 +597,32 @@ const { data: rpcData, error: rpcErr } = await this.client.rpc(
         return;
       }
 
-      for (const s of log.sets) {
-        await this.client.from('workout_log_sets').insert({
-          workout_log_id:   logUuid,
-          exercise_goal_id: s.ejercicioId || null,         // vincula al ejercicio objetivo
-          exercise_nombre:  s.ejercicioNombre,
-          set_numero:       s.setNumero,
-          reps_realizadas:  s.repsRealizadas,
-          peso_utilizado:   s.pesoUtilizado,
-          comentario_alumno:s.comentarioAlumno || null
-        });
+      const sets = Array.isArray(log.sets) ? log.sets : [];
+      let setsOk = 0;
+      let setsFail = 0;
+      for (const s of sets) {
+        const row = {
+          workout_log_id:    logUuid,
+          exercise_nombre:   s.ejercicioNombre || s.ejercicio || s.nombre || 'Ejercicio',
+          set_numero:        s.setNumero != null ? s.setNumero : 1,
+          reps_realizadas:   s.repsRealizadas != null ? s.repsRealizadas : (s.reps != null ? s.reps : null),
+          peso_utilizado:    s.pesoUtilizado != null ? s.pesoUtilizado : (s.peso != null ? String(s.peso) : null),
+          comentario_alumno: s.comentarioAlumno || null
+        };
+        // exercise_goal_id solo si es UUID real; un id local (ej "ej-3") rompe el INSERT
+        const eg = s.ejercicioId || s.exercise_goal_id;
+        if (eg && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(eg))) {
+          row.exercise_goal_id = eg;
+        }
+        const { error: sErr } = await this.client.from('workout_log_sets').insert(row);
+        if (sErr) {
+          setsFail++;
+          console.error('❌ Error INSERT workout_log_sets:', sErr.message || sErr, row);
+        } else {
+          setsOk++;
+        }
       }
-      console.log('✅ Entrenamiento real persistido en Supabase DB.', { logUuid, sets: log.sets.length });
+      console.log('✅ Entrenamiento persistido en Supabase.', { logUuid, setsOk, setsFail, total: sets.length });
     } catch (err) {
       console.error('❌ Excepción guardando entrenamiento real en Supabase DB:', err);
     }
