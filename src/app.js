@@ -4960,11 +4960,17 @@ appState.modalActivo = 'crear_rutina';
       }
     });
 
-    document.getElementById('navStats')?.addEventListener('click', () => {
+    document.getElementById('navStats')?.addEventListener('click', async () => {
       appState.tabCliente = 'stats';
       appState.mostrarDrawerNotifs = false;
       if (appState.statsMonthOffset == null) appState.statsMonthOffset = 0;
       renderApp();
+      if (appState.usuarioActual?.rol === 'alumno' && window.gymStore) {
+        try {
+          await window.gymStore.syncWithSupabase(appState.usuarioActual.data.id);
+          renderApp();
+        } catch (_) {}
+      }
     });
     document.getElementById('navAvisosProf')?.addEventListener('click', toggleNotifDrawer);
 
@@ -6139,11 +6145,17 @@ alert("🚀 ¡Rutina propia creada! Ya podés empezar a entrenarla desde \"Mías
       }
     });
 
-    document.getElementById('navStats')?.addEventListener('click', () => {
+    document.getElementById('navStats')?.addEventListener('click', async () => {
       appState.tabCliente = 'stats';
       appState.mostrarDrawerNotifs = false;
       if (appState.statsMonthOffset == null) appState.statsMonthOffset = 0;
       renderApp();
+      if (appState.usuarioActual?.rol === 'alumno' && window.gymStore) {
+        try {
+          await window.gymStore.syncWithSupabase(appState.usuarioActual.data.id);
+          renderApp();
+        } catch (_) {}
+      }
     });
     document.getElementById('navAvisosProf')?.addEventListener('click', toggleNotifDrawer);
 

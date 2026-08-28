@@ -375,25 +375,53 @@ class GymStore {
         }
 
         if (freshData.workoutLogs !== null) {
+          const remoteIds = new Set(freshData.workoutLogs.map(l => String(l.id)));
+          // Alumnos cubiertos por este snapshot (RLS: el alumno solo ve los suyos;
+          // el profesor ve todos). Solo podamos logs locales de esos alumnos.
+          const alumnosEnRemote = new Set(
+            freshData.workoutLogs.map(l => l.alumnoId).filter(Boolean).map(String)
+          );
+          // Si el sync es de un alumno concreto y el server devolvió lista (aunque
+          // vacía), también podamos ese alumnoId aunque no haya filas.
+          if (alumnoId) alumnosEnRemote.add(String(alumnoId));
+
           freshData.workoutLogs.forEach(sbLog => {
-            const idx = this.data.workoutLogs.findIndex(w => w.id === sbLog.id);
+            const idx = this.data.workoutLogs.findIndex(w => String(w.id) === String(sbLog.id));
             if (idx >= 0) {
-              // Preferir el lado que tenga MÁS series (no borrar detalle del historial)
               const local = this.data.workoutLogs[idx];
               const remoteSets = Array.isArray(sbLog.sets) ? sbLog.sets : [];
               const localSets = Array.isArray(local.sets) ? local.sets : [];
-              const sets = remoteSets.length >= localSets.length ? remoteSets : localSets;
+              // Si el server trae series, ganan; si trae vacío, no inventamos datos
+              // que el server ya no tiene (p.ej. log fantasma post-borrado).
+              const sets = remoteSets.length > 0 ? remoteSets : (localSets.length > 0 && remoteSets.length === 0 && remoteIds.has(String(local.id)) ? remoteSets : localSets);
+              // Simplificado: remote manda. Solo conservar local sets si remote
+              // tiene el log PERO sets vacíos y local tenía (compat carga parcial).
+              const setsFinal = remoteSets.length > 0 ? remoteSets : localSets;
               this.data.workoutLogs[idx] = {
                 ...local,
                 ...sbLog,
-                sets,
-                // conservar puntos locales si el remote no trae
+                sets: setsFinal,
                 puntos: sbLog.puntos != null ? sbLog.puntos : local.puntos
               };
             } else {
               this.data.workoutLogs.unshift(sbLog);
             }
           });
+
+          // Borrar locales que el server ya no tiene (ej. borrados desde el celu)
+          const antes = this.data.workoutLogs.length;
+          this.data.workoutLogs = this.data.workoutLogs.filter(w => {
+            const aid = w.alumnoId != null ? String(w.alumnoId) : null;
+            // Solo tocamos logs de alumnos incluidos en este snapshot
+            if (aid && alumnosEnRemote.has(aid)) {
+              return remoteIds.has(String(w.id));
+            }
+            return true; // otros alumnos / sin id: no tocar
+          });
+          const borrados = antes - this.data.workoutLogs.length;
+          if (borrados > 0) {
+            console.log('🗑️ Historial: eliminados', borrados, 'log(s) locales que ya no están en Supabase');
+          }
           huboCambios = true;
         }
 
