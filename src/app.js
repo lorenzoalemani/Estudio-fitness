@@ -1381,16 +1381,39 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // --- ESTADÍSTICAS DEL ALUMNO (distribución, comparación, constancia) ---
   function _statsMuscleOf(name) {
-    const n = String(name || '');
-    if (/press\s*banca|apertura|fondos|pecho|crossover|cruce\s*de\s*polea|pec\s*deck/i.test(n)) return 'Pecho';
-    if (/militar|hombro|elevaci[oó]n\s*lateral|vuelo|deltoid/i.test(n)) return 'Hombros';
-    if (/jal[oó]n|remo|dominada|espalda|pulldown|face\s*pull/i.test(n)) return 'Espalda';
-    if (/peso\s*muerto|rumano|femoral|isquio/i.test(n)) return 'Femoral';
-    if (/sentadilla|prensa|cu[aá]driceps|extensi[oó]n\s*de\s*cu/i.test(n)) return 'Cuádriceps';
-    if (/gemelo|pantorrilla|elevaci[oó]n\s*de\s*gemelo/i.test(n)) return 'Gemelos';
-    if (/curl|biceps|bíceps/i.test(n)) return 'Bíceps';
-    if (/triceps|tríceps|pushdown|extensi[oó]n\s*de\s*codo/i.test(n)) return 'Tríceps';
-    if (/abdomen|crunch|plancha|core/i.test(n)) return 'Core';
+    // Normalizar: minúsculas, sin acentos, espacios simples
+    const n = String(name || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    // Orden: más específico primero
+    // Piernas / glúteos
+    if (/gemelo|pantorrilla|elevacion de gemelo|calf/.test(n)) return 'Gemelos';
+    if (/femoral|isquio|curl femoral|curl de pierna|leg curl|nordic/.test(n)) return 'Femoral';
+    if (/gluteo|glute|hip thrust|puente de glute|patada de glute|abduccion|abductor|aductor|adductor/.test(n)) return 'Gluteos';
+    if (/sentadilla|squat|prensa|leg press|hack|zancada|lunge|bulgara|extension de cuad|extension de pierna|leg extension|cuadriceps/.test(n)) return 'Cuadriceps';
+    if (/peso muerto|deadlift|rumano|\brdl\b/.test(n)) return 'Femoral';
+
+    // Espalda (dorsalera, jalon, remo, etc.)
+    if (/jalon|dorsalera|dorsal|pulldown|dominada|pull ?up|chin ?up|remo|\brow\b|face pull|pull ?over|pullover|espalda|trapecio|encogimiento/.test(n)) return 'Espalda';
+
+    // Pecho (press plano, press banca, aperturas, fondos…)
+    if (/press (de )?(banca|banco|plano|inclinado|declinado)|bench press|apertura|aperturas|\bfly\b|crossover|cruce( de)? polea|pec ?deck|peck ?deck|fondos|fondo en|dips|pecho|pectoral|push ?up|flexiones/.test(n)) return 'Pecho';
+
+    // Hombros
+    if (/press (militar|hombro|arnold)|shoulder press|elevacion lateral|vuelo lateral|lateral raise|vuelo frontal|elevacion frontal|pajaro|rear delt|hombro|deltoid/.test(n)) return 'Hombros';
+
+    // Brazos
+    if (/triceps|push ?down|pushdown|extension de codo|patada de triceps|fondo en banco/.test(n)) return 'Triceps';
+    if (/biceps|curl (de )?(biceps|barra|mancuerna|polea|martillo|concentrado)|hammer curl/.test(n)) return 'Biceps';
+    if (/\bcurl\b/.test(n)) return 'Biceps';
+
+    // Core
+    if (/abdomen|abdominal|crunch|plancha|core|rueda abdominal|elevacion de piernas/.test(n)) return 'Core';
+
     return 'Otros';
   }
 
@@ -3371,16 +3394,39 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // --- ESTADÍSTICAS DEL ALUMNO (distribución, comparación, constancia) ---
   function _statsMuscleOf(name) {
-    const n = String(name || '');
-    if (/press\s*banca|apertura|fondos|pecho|crossover|cruce\s*de\s*polea|pec\s*deck/i.test(n)) return 'Pecho';
-    if (/militar|hombro|elevaci[oó]n\s*lateral|vuelo|deltoid/i.test(n)) return 'Hombros';
-    if (/jal[oó]n|remo|dominada|espalda|pulldown|face\s*pull/i.test(n)) return 'Espalda';
-    if (/peso\s*muerto|rumano|femoral|isquio/i.test(n)) return 'Femoral';
-    if (/sentadilla|prensa|cu[aá]driceps|extensi[oó]n\s*de\s*cu/i.test(n)) return 'Cuádriceps';
-    if (/gemelo|pantorrilla|elevaci[oó]n\s*de\s*gemelo/i.test(n)) return 'Gemelos';
-    if (/curl|biceps|bíceps/i.test(n)) return 'Bíceps';
-    if (/triceps|tríceps|pushdown|extensi[oó]n\s*de\s*codo/i.test(n)) return 'Tríceps';
-    if (/abdomen|crunch|plancha|core/i.test(n)) return 'Core';
+    // Normalizar: minúsculas, sin acentos, espacios simples
+    const n = String(name || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    // Orden: más específico primero
+    // Piernas / glúteos
+    if (/gemelo|pantorrilla|elevacion de gemelo|calf/.test(n)) return 'Gemelos';
+    if (/femoral|isquio|curl femoral|curl de pierna|leg curl|nordic/.test(n)) return 'Femoral';
+    if (/gluteo|glute|hip thrust|puente de glute|patada de glute|abduccion|abductor|aductor|adductor/.test(n)) return 'Gluteos';
+    if (/sentadilla|squat|prensa|leg press|hack|zancada|lunge|bulgara|extension de cuad|extension de pierna|leg extension|cuadriceps/.test(n)) return 'Cuadriceps';
+    if (/peso muerto|deadlift|rumano|\brdl\b/.test(n)) return 'Femoral';
+
+    // Espalda (dorsalera, jalon, remo, etc.)
+    if (/jalon|dorsalera|dorsal|pulldown|dominada|pull ?up|chin ?up|remo|\brow\b|face pull|pull ?over|pullover|espalda|trapecio|encogimiento/.test(n)) return 'Espalda';
+
+    // Pecho (press plano, press banca, aperturas, fondos…)
+    if (/press (de )?(banca|banco|plano|inclinado|declinado)|bench press|apertura|aperturas|\bfly\b|crossover|cruce( de)? polea|pec ?deck|peck ?deck|fondos|fondo en|dips|pecho|pectoral|push ?up|flexiones/.test(n)) return 'Pecho';
+
+    // Hombros
+    if (/press (militar|hombro|arnold)|shoulder press|elevacion lateral|vuelo lateral|lateral raise|vuelo frontal|elevacion frontal|pajaro|rear delt|hombro|deltoid/.test(n)) return 'Hombros';
+
+    // Brazos
+    if (/triceps|push ?down|pushdown|extension de codo|patada de triceps|fondo en banco/.test(n)) return 'Triceps';
+    if (/biceps|curl (de )?(biceps|barra|mancuerna|polea|martillo|concentrado)|hammer curl/.test(n)) return 'Biceps';
+    if (/\bcurl\b/.test(n)) return 'Biceps';
+
+    // Core
+    if (/abdomen|abdominal|crunch|plancha|core|rueda abdominal|elevacion de piernas/.test(n)) return 'Core';
+
     return 'Otros';
   }
 
