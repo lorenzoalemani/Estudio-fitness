@@ -1536,59 +1536,79 @@ document.addEventListener('DOMContentLoaded', () => {
           </div>`).join('')
       : `<p class="stats-empty">Sin series guardadas para este entrenamiento. Si es un entrenamiento viejo, puede que no se hayan sincronizado las series. Los nuevos sí se guardan completos.</p>`;
 
-    // Comparación: línea de volumen total a lo largo de los últimos entrenamientos comparables
+    // Comparación multi-línea: una línea por sesión comparable (gris) + actual (azul)
+    // Eje X = ejercicios del entrenamiento actual; Y = volumen (reps × kg)
     const { prev, matchType } = _statsFindPreviousComparable(selected, list);
 
-    const totalVol = (log) => {
-      let v = 0;
+    const volMap = (log) => {
+      const map = {};
       (log.sets || []).forEach(s => {
+        const name = String(s.ejercicioNombre || s.ejercicio || s.nombre || 'Ejercicio').trim() || 'Ejercicio';
         const reps = Number(s.repsRealizadas != null ? s.repsRealizadas : (s.reps != null ? s.reps : 0)) || 0;
         const peso = _statsParsePesoKg(s.pesoUtilizado != null ? s.pesoUtilizado : s.peso);
-        v += reps * peso;
+        map[name] = (map[name] || 0) + reps * peso;
       });
-      return Math.round(v);
+      return map;
     };
 
-    // Cadena de comparables hacia atrás (mismo nombre / ejercicios), hasta 8, + el actual
-    const chain = [];
-    let cursor = selected;
-    const used = new Set([selected.id]);
-    for (let i = 0; i < 7; i++) {
-      const found = _statsFindPreviousComparable(cursor, list.filter(l => !used.has(l.id) || l.id === cursor.id));
-      // Re-search only among not-yet-used
-      const earlier = list
-        .filter(l => !used.has(l.id) && new Date(l.fecha) < new Date(cursor.fecha))
-        .sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
-      let next = null;
-      const key = _statsDiaKey(cursor);
-      next = earlier.find(l => _statsDiaKey(l) === key);
-      if (!next) {
-        const sig = _statsExerciseSignature(cursor);
-        if (sig) next = earlier.find(l => _statsExerciseSignature(l) === sig);
-      }
-      if (!next) break;
-      used.add(next.id);
-      chain.unshift(next);
-      cursor = next;
-    }
-    chain.push(selected);
+    // Todos los anteriores comparables (mismo nombre o mismos ejercicios), hasta 8
+    const selDate = new Date(selected.fecha).getTime();
+    const selKey = _statsDiaKey(selected);
+    const selSig = _statsExerciseSignature(selected);
+    const prevSessions = list
+      .filter(l => {
+        if (l.id === selected.id) return false;
+        if (new Date(l.fecha).getTime() >= selDate) return false;
+        if (_statsDiaKey(l) === selKey) return true;
+        if (selSig && _statsExerciseSignature(l) === selSig) return true;
+        return false;
+      })
+      .sort((a, b) => new Date(a.fecha) - new Date(b.fecha)) // viejo → nuevo
+      .slice(-8);
 
-    const labels = chain.map(l => {
-      try {
-        return new Date(l.fecha).toLocaleDateString('es-AR', { day: '2-digit', month: 'short' });
-      } catch (_) { return '—'; }
+    const chain = [...prevSessions, selected]; // para el badge
+    const curVol = volMap(selected);
+    // Eje X: ejercicios del actual (orden de aparición en series)
+    const labels = [];
+    (selected.sets || []).forEach(s => {
+      const name = String(s.ejercicioNombre || s.ejercicio || s.nombre || 'Ejercicio').trim() || 'Ejercicio';
+      if (!labels.includes(name)) labels.push(name);
     });
-    const seriesA = chain.map(l => totalVol(l));
-    const seriesB = null; // una sola línea de progreso
+    // Si no hay series, al menos un punto
+    if (!labels.length) labels.push('Sin series');
 
-    let compareHint = 'Volumen total (reps × kg) de este tipo de entrenamiento en el tiempo.';
+    // seriesList: cada sesión es una línea
+    const seriesList = chain.map((log, idx) => {
+      const isCurrent = log.id === selected.id;
+      const vm = volMap(log);
+      const values = labels.map(n => Math.round(vm[n] || 0));
+      let fechaTxt = '';
+      try {
+        fechaTxt = new Date(log.fecha).toLocaleDateString('es-AR', { day: '2-digit', month: 'short' });
+      } catch (_) {}
+      return {
+        id: log.id,
+        label: isCurrent ? 'Este' : fechaTxt,
+        isCurrent,
+        color: isCurrent ? '#3b82f6' : 'rgba(148,163,184,0.55)',
+        values
+      };
+    });
+
+    // Compat con el drawer viejo del canvas
+    const seriesA = seriesList.find(s => s.isCurrent)?.values || labels.map(() => 0);
+    const seriesB = null;
+
+    let compareHint = 'Cada línea es un entrenamiento. Azul = el que elegiste. Más arriba = más volumen (reps × kg).';
     if (chain.length < 2) {
-      compareHint = 'Todavía no hay entrenamientos anteriores comparables para armar la línea. Cuando repitas este día, vas a ver el progreso.';
+      compareHint = 'Primera vez de este estímulo: línea azul con el volumen de cada ejercicio. Cuando lo repitas, vas a ver las líneas grises de antes.';
     } else if (matchType === 'nombre') {
-      compareHint = `Progreso de volumen · emparejado por nombre de día (${selected.diaNombre || ''})`;
+      compareHint = `Comparando ${chain.length} sesiones · mismo día (${selected.diaNombre || ''}). Azul = actual.`;
     } else if (matchType === 'ejercicios' || matchType === 'similares') {
-      compareHint = 'Progreso de volumen · emparejado por ejercicios similares';
+      compareHint = `Comparando ${chain.length} sesiones · mismos / similares ejercicios. Azul = actual.`;
     }
+
+    const chartPayload = encodeURIComponent(JSON.stringify({ labels, seriesList }));
 
     // Calendario
     const now = new Date();
@@ -1614,8 +1634,6 @@ document.addEventListener('DOMContentLoaded', () => {
       calCells += `<div class="stats-cal-cell${trained.has(d) ? ' trained' : ''}"></div>`;
     }
 
-    // Datos para canvas (JSON en data attrs)
-    const chartPayload = encodeURIComponent(JSON.stringify({ labels, seriesA, seriesB }));
 
     return `
       <div class="stats-page">
@@ -1646,7 +1664,8 @@ document.addEventListener('DOMContentLoaded', () => {
             <canvas id="statsLineChart" width="640" height="280" data-chart="${chartPayload}"></canvas>
           </div>
           <div class="stats-legend">
-            <span><i style="background:#3b82f6"></i> Volumen total (reps × kg)</span>
+            <span><i style="background:#3b82f6"></i> Este entrenamiento</span>
+            <span><i style="background:#94a3b8"></i> Anteriores iguales</span>
             <span style="color:var(--text-gray)">${chain.length} sesión${chain.length === 1 ? '' : 'es'}</span>
           </div>
         </section>
@@ -1680,32 +1699,37 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (_) { return; }
     if (!payload || !payload.labels) return;
     const labels = payload.labels;
-    const seriesA = payload.seriesA || [];
-    const seriesB = payload.seriesB;
+    let seriesList = Array.isArray(payload.seriesList) ? payload.seriesList : [];
+    // Compat: seriesA sola
+    if (!seriesList.length && payload.seriesA) {
+      seriesList = [{ values: payload.seriesA, isCurrent: true, color: '#3b82f6' }];
+      if (payload.seriesB) seriesList.unshift({ values: payload.seriesB, isCurrent: false, color: 'rgba(148,163,184,0.55)' });
+    }
 
     const ctx = canvas.getContext('2d');
     const dpr = window.devicePixelRatio || 1;
     const cssW = canvas.clientWidth || 320;
-    const cssH = 200;
+    const cssH = 220;
     canvas.width = Math.floor(cssW * dpr);
     canvas.height = Math.floor(cssH * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     const W = cssW, H = cssH;
-    const pad = { t: 16, r: 12, b: 40, l: 36 };
+    const pad = { t: 22, r: 12, b: 44, l: 40 };
     const plotW = W - pad.l - pad.r;
     const plotH = H - pad.t - pad.b;
     ctx.clearRect(0, 0, W, H);
 
-    const all = (seriesA || []).concat(seriesB || []);
-    const maxY = Math.max(10, ...all) * 1.2;
+    const allVals = [];
+    seriesList.forEach(s => (s.values || []).forEach(v => allVals.push(Number(v) || 0)));
+    const maxY = Math.max(10, ...allVals) * 1.2;
 
+    // Grid
     ctx.strokeStyle = 'rgba(255,255,255,0.06)';
     ctx.lineWidth = 1;
     for (let i = 0; i <= 4; i++) {
       const y = pad.t + (plotH * i) / 4;
       ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke();
-      // ticks Y
       const val = Math.round(maxY * (1 - i / 4));
       ctx.fillStyle = '#6b7280';
       ctx.font = '9px system-ui, sans-serif';
@@ -1713,68 +1737,66 @@ document.addEventListener('DOMContentLoaded', () => {
       ctx.fillText(String(val), pad.l - 6, y + 3);
     }
 
+    const n = Math.max(1, labels.length);
     function xAt(i) {
-      if (labels.length <= 1) return pad.l + plotW / 2;
-      return pad.l + (plotW * i) / (labels.length - 1);
+      if (n <= 1) return pad.l + plotW / 2;
+      return pad.l + (plotW * i) / (n - 1);
     }
-    function yAt(v) { return pad.t + plotH - (Math.max(0, v) / maxY) * plotH; }
+    function yAt(v) { return pad.t + plotH - (Math.max(0, Number(v) || 0) / maxY) * plotH; }
 
-    function strokeSeries(data, color, withArea) {
-      if (!data || !data.length) return;
-      // Área bajo la curva
-      if (withArea && data.length >= 1) {
+    function drawLine(values, color, thick, isCurrent) {
+      if (!values || !values.length) return;
+      // Si hay un solo ejercicio, dibujar segmento horizontal para que se vea "línea"
+      const pts = values.map((v, i) => ({ x: xAt(i), y: yAt(v), v }));
+      if (pts.length === 1) {
+        const p = pts[0];
+        const x0 = Math.max(pad.l, p.x - plotW * 0.2);
+        const x1 = Math.min(W - pad.r, p.x + plotW * 0.2);
         ctx.beginPath();
-        data.forEach((v, i) => {
-          const x = xAt(i), y = yAt(v);
-          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-        });
-        ctx.lineTo(xAt(data.length - 1), pad.t + plotH);
-        ctx.lineTo(xAt(0), pad.t + plotH);
-        ctx.closePath();
-        const grd = ctx.createLinearGradient(0, pad.t, 0, pad.t + plotH);
-        grd.addColorStop(0, 'rgba(59,130,246,0.35)');
-        grd.addColorStop(1, 'rgba(59,130,246,0.02)');
-        ctx.fillStyle = grd;
-        ctx.fill();
+        ctx.moveTo(x0, p.y);
+        ctx.lineTo(x1, p.y);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = thick;
+        ctx.lineCap = 'round';
+        ctx.stroke();
+      } else {
+        ctx.beginPath();
+        pts.forEach((p, i) => { if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); });
+        ctx.strokeStyle = color;
+        ctx.lineWidth = thick;
+        ctx.lineJoin = 'round';
+        ctx.lineCap = 'round';
+        ctx.stroke();
       }
-      // Línea suave
-      ctx.beginPath();
-      data.forEach((v, i) => {
-        const x = xAt(i), y = yAt(v);
-        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-      });
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 2.8;
-      ctx.lineJoin = 'round';
-      ctx.lineCap = 'round';
-      ctx.stroke();
-      // Puntos + valor
-      data.forEach((v, i) => {
-        const x = xAt(i), y = yAt(v);
+      pts.forEach(p => {
         ctx.beginPath();
-        ctx.arc(x, y, 5, 0, Math.PI * 2);
+        ctx.arc(p.x, p.y, isCurrent ? 5 : 3.5, 0, Math.PI * 2);
         ctx.fillStyle = color;
         ctx.fill();
-        ctx.beginPath();
-        ctx.arc(x, y, 2.2, 0, Math.PI * 2);
-        ctx.fillStyle = '#0a0a0c';
-        ctx.fill();
-        ctx.fillStyle = '#e5e7eb';
-        ctx.font = '10px system-ui, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText(String(v), x, y - 10);
+        if (isCurrent) {
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, 2, 0, Math.PI * 2);
+          ctx.fillStyle = '#0a0a0c';
+          ctx.fill();
+          ctx.fillStyle = '#e5e7eb';
+          ctx.font = '10px system-ui, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText(String(Math.round(p.v)), p.x, p.y - 10);
+        }
       });
     }
 
-    if (seriesB) strokeSeries(seriesB, '#94a3b8', false);
-    strokeSeries(seriesA, '#3b82f6', true);
+    // Primero grises (atrás), después azul (adelante)
+    seriesList.filter(s => !s.isCurrent).forEach(s => drawLine(s.values, s.color || 'rgba(148,163,184,0.5)', 2, false));
+    seriesList.filter(s => s.isCurrent).forEach(s => drawLine(s.values, s.color || '#3b82f6', 3, true));
 
+    // Labels X (ejercicios)
     ctx.fillStyle = '#8b8b96';
-    ctx.font = '10px system-ui, sans-serif';
+    ctx.font = '9px system-ui, sans-serif';
     ctx.textAlign = 'center';
     labels.forEach((lab, i) => {
-      const short = lab.length > 11 ? lab.slice(0, 10) + '…' : lab;
-      ctx.fillText(short, xAt(i), H - 12);
+      const short = lab.length > 10 ? lab.slice(0, 9) + '…' : lab;
+      ctx.fillText(short, xAt(i), H - 14);
     });
   }
 
@@ -3676,59 +3698,79 @@ document.addEventListener('DOMContentLoaded', () => {
           </div>`).join('')
       : `<p class="stats-empty">Sin series guardadas para este entrenamiento. Si es un entrenamiento viejo, puede que no se hayan sincronizado las series. Los nuevos sí se guardan completos.</p>`;
 
-    // Comparación: línea de volumen total a lo largo de los últimos entrenamientos comparables
+    // Comparación multi-línea: una línea por sesión comparable (gris) + actual (azul)
+    // Eje X = ejercicios del entrenamiento actual; Y = volumen (reps × kg)
     const { prev, matchType } = _statsFindPreviousComparable(selected, list);
 
-    const totalVol = (log) => {
-      let v = 0;
+    const volMap = (log) => {
+      const map = {};
       (log.sets || []).forEach(s => {
+        const name = String(s.ejercicioNombre || s.ejercicio || s.nombre || 'Ejercicio').trim() || 'Ejercicio';
         const reps = Number(s.repsRealizadas != null ? s.repsRealizadas : (s.reps != null ? s.reps : 0)) || 0;
         const peso = _statsParsePesoKg(s.pesoUtilizado != null ? s.pesoUtilizado : s.peso);
-        v += reps * peso;
+        map[name] = (map[name] || 0) + reps * peso;
       });
-      return Math.round(v);
+      return map;
     };
 
-    // Cadena de comparables hacia atrás (mismo nombre / ejercicios), hasta 8, + el actual
-    const chain = [];
-    let cursor = selected;
-    const used = new Set([selected.id]);
-    for (let i = 0; i < 7; i++) {
-      const found = _statsFindPreviousComparable(cursor, list.filter(l => !used.has(l.id) || l.id === cursor.id));
-      // Re-search only among not-yet-used
-      const earlier = list
-        .filter(l => !used.has(l.id) && new Date(l.fecha) < new Date(cursor.fecha))
-        .sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
-      let next = null;
-      const key = _statsDiaKey(cursor);
-      next = earlier.find(l => _statsDiaKey(l) === key);
-      if (!next) {
-        const sig = _statsExerciseSignature(cursor);
-        if (sig) next = earlier.find(l => _statsExerciseSignature(l) === sig);
-      }
-      if (!next) break;
-      used.add(next.id);
-      chain.unshift(next);
-      cursor = next;
-    }
-    chain.push(selected);
+    // Todos los anteriores comparables (mismo nombre o mismos ejercicios), hasta 8
+    const selDate = new Date(selected.fecha).getTime();
+    const selKey = _statsDiaKey(selected);
+    const selSig = _statsExerciseSignature(selected);
+    const prevSessions = list
+      .filter(l => {
+        if (l.id === selected.id) return false;
+        if (new Date(l.fecha).getTime() >= selDate) return false;
+        if (_statsDiaKey(l) === selKey) return true;
+        if (selSig && _statsExerciseSignature(l) === selSig) return true;
+        return false;
+      })
+      .sort((a, b) => new Date(a.fecha) - new Date(b.fecha)) // viejo → nuevo
+      .slice(-8);
 
-    const labels = chain.map(l => {
-      try {
-        return new Date(l.fecha).toLocaleDateString('es-AR', { day: '2-digit', month: 'short' });
-      } catch (_) { return '—'; }
+    const chain = [...prevSessions, selected]; // para el badge
+    const curVol = volMap(selected);
+    // Eje X: ejercicios del actual (orden de aparición en series)
+    const labels = [];
+    (selected.sets || []).forEach(s => {
+      const name = String(s.ejercicioNombre || s.ejercicio || s.nombre || 'Ejercicio').trim() || 'Ejercicio';
+      if (!labels.includes(name)) labels.push(name);
     });
-    const seriesA = chain.map(l => totalVol(l));
-    const seriesB = null; // una sola línea de progreso
+    // Si no hay series, al menos un punto
+    if (!labels.length) labels.push('Sin series');
 
-    let compareHint = 'Volumen total (reps × kg) de este tipo de entrenamiento en el tiempo.';
+    // seriesList: cada sesión es una línea
+    const seriesList = chain.map((log, idx) => {
+      const isCurrent = log.id === selected.id;
+      const vm = volMap(log);
+      const values = labels.map(n => Math.round(vm[n] || 0));
+      let fechaTxt = '';
+      try {
+        fechaTxt = new Date(log.fecha).toLocaleDateString('es-AR', { day: '2-digit', month: 'short' });
+      } catch (_) {}
+      return {
+        id: log.id,
+        label: isCurrent ? 'Este' : fechaTxt,
+        isCurrent,
+        color: isCurrent ? '#3b82f6' : 'rgba(148,163,184,0.55)',
+        values
+      };
+    });
+
+    // Compat con el drawer viejo del canvas
+    const seriesA = seriesList.find(s => s.isCurrent)?.values || labels.map(() => 0);
+    const seriesB = null;
+
+    let compareHint = 'Cada línea es un entrenamiento. Azul = el que elegiste. Más arriba = más volumen (reps × kg).';
     if (chain.length < 2) {
-      compareHint = 'Todavía no hay entrenamientos anteriores comparables para armar la línea. Cuando repitas este día, vas a ver el progreso.';
+      compareHint = 'Primera vez de este estímulo: línea azul con el volumen de cada ejercicio. Cuando lo repitas, vas a ver las líneas grises de antes.';
     } else if (matchType === 'nombre') {
-      compareHint = `Progreso de volumen · emparejado por nombre de día (${selected.diaNombre || ''})`;
+      compareHint = `Comparando ${chain.length} sesiones · mismo día (${selected.diaNombre || ''}). Azul = actual.`;
     } else if (matchType === 'ejercicios' || matchType === 'similares') {
-      compareHint = 'Progreso de volumen · emparejado por ejercicios similares';
+      compareHint = `Comparando ${chain.length} sesiones · mismos / similares ejercicios. Azul = actual.`;
     }
+
+    const chartPayload = encodeURIComponent(JSON.stringify({ labels, seriesList }));
 
     // Calendario
     const now = new Date();
@@ -3754,8 +3796,6 @@ document.addEventListener('DOMContentLoaded', () => {
       calCells += `<div class="stats-cal-cell${trained.has(d) ? ' trained' : ''}"></div>`;
     }
 
-    // Datos para canvas (JSON en data attrs)
-    const chartPayload = encodeURIComponent(JSON.stringify({ labels, seriesA, seriesB }));
 
     return `
       <div class="stats-page">
@@ -3786,7 +3826,8 @@ document.addEventListener('DOMContentLoaded', () => {
             <canvas id="statsLineChart" width="640" height="280" data-chart="${chartPayload}"></canvas>
           </div>
           <div class="stats-legend">
-            <span><i style="background:#3b82f6"></i> Volumen total (reps × kg)</span>
+            <span><i style="background:#3b82f6"></i> Este entrenamiento</span>
+            <span><i style="background:#94a3b8"></i> Anteriores iguales</span>
             <span style="color:var(--text-gray)">${chain.length} sesión${chain.length === 1 ? '' : 'es'}</span>
           </div>
         </section>
@@ -3820,32 +3861,37 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (_) { return; }
     if (!payload || !payload.labels) return;
     const labels = payload.labels;
-    const seriesA = payload.seriesA || [];
-    const seriesB = payload.seriesB;
+    let seriesList = Array.isArray(payload.seriesList) ? payload.seriesList : [];
+    // Compat: seriesA sola
+    if (!seriesList.length && payload.seriesA) {
+      seriesList = [{ values: payload.seriesA, isCurrent: true, color: '#3b82f6' }];
+      if (payload.seriesB) seriesList.unshift({ values: payload.seriesB, isCurrent: false, color: 'rgba(148,163,184,0.55)' });
+    }
 
     const ctx = canvas.getContext('2d');
     const dpr = window.devicePixelRatio || 1;
     const cssW = canvas.clientWidth || 320;
-    const cssH = 200;
+    const cssH = 220;
     canvas.width = Math.floor(cssW * dpr);
     canvas.height = Math.floor(cssH * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     const W = cssW, H = cssH;
-    const pad = { t: 16, r: 12, b: 40, l: 36 };
+    const pad = { t: 22, r: 12, b: 44, l: 40 };
     const plotW = W - pad.l - pad.r;
     const plotH = H - pad.t - pad.b;
     ctx.clearRect(0, 0, W, H);
 
-    const all = (seriesA || []).concat(seriesB || []);
-    const maxY = Math.max(10, ...all) * 1.2;
+    const allVals = [];
+    seriesList.forEach(s => (s.values || []).forEach(v => allVals.push(Number(v) || 0)));
+    const maxY = Math.max(10, ...allVals) * 1.2;
 
+    // Grid
     ctx.strokeStyle = 'rgba(255,255,255,0.06)';
     ctx.lineWidth = 1;
     for (let i = 0; i <= 4; i++) {
       const y = pad.t + (plotH * i) / 4;
       ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke();
-      // ticks Y
       const val = Math.round(maxY * (1 - i / 4));
       ctx.fillStyle = '#6b7280';
       ctx.font = '9px system-ui, sans-serif';
@@ -3853,68 +3899,66 @@ document.addEventListener('DOMContentLoaded', () => {
       ctx.fillText(String(val), pad.l - 6, y + 3);
     }
 
+    const n = Math.max(1, labels.length);
     function xAt(i) {
-      if (labels.length <= 1) return pad.l + plotW / 2;
-      return pad.l + (plotW * i) / (labels.length - 1);
+      if (n <= 1) return pad.l + plotW / 2;
+      return pad.l + (plotW * i) / (n - 1);
     }
-    function yAt(v) { return pad.t + plotH - (Math.max(0, v) / maxY) * plotH; }
+    function yAt(v) { return pad.t + plotH - (Math.max(0, Number(v) || 0) / maxY) * plotH; }
 
-    function strokeSeries(data, color, withArea) {
-      if (!data || !data.length) return;
-      // Área bajo la curva
-      if (withArea && data.length >= 1) {
+    function drawLine(values, color, thick, isCurrent) {
+      if (!values || !values.length) return;
+      // Si hay un solo ejercicio, dibujar segmento horizontal para que se vea "línea"
+      const pts = values.map((v, i) => ({ x: xAt(i), y: yAt(v), v }));
+      if (pts.length === 1) {
+        const p = pts[0];
+        const x0 = Math.max(pad.l, p.x - plotW * 0.2);
+        const x1 = Math.min(W - pad.r, p.x + plotW * 0.2);
         ctx.beginPath();
-        data.forEach((v, i) => {
-          const x = xAt(i), y = yAt(v);
-          if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-        });
-        ctx.lineTo(xAt(data.length - 1), pad.t + plotH);
-        ctx.lineTo(xAt(0), pad.t + plotH);
-        ctx.closePath();
-        const grd = ctx.createLinearGradient(0, pad.t, 0, pad.t + plotH);
-        grd.addColorStop(0, 'rgba(59,130,246,0.35)');
-        grd.addColorStop(1, 'rgba(59,130,246,0.02)');
-        ctx.fillStyle = grd;
-        ctx.fill();
+        ctx.moveTo(x0, p.y);
+        ctx.lineTo(x1, p.y);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = thick;
+        ctx.lineCap = 'round';
+        ctx.stroke();
+      } else {
+        ctx.beginPath();
+        pts.forEach((p, i) => { if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); });
+        ctx.strokeStyle = color;
+        ctx.lineWidth = thick;
+        ctx.lineJoin = 'round';
+        ctx.lineCap = 'round';
+        ctx.stroke();
       }
-      // Línea suave
-      ctx.beginPath();
-      data.forEach((v, i) => {
-        const x = xAt(i), y = yAt(v);
-        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-      });
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 2.8;
-      ctx.lineJoin = 'round';
-      ctx.lineCap = 'round';
-      ctx.stroke();
-      // Puntos + valor
-      data.forEach((v, i) => {
-        const x = xAt(i), y = yAt(v);
+      pts.forEach(p => {
         ctx.beginPath();
-        ctx.arc(x, y, 5, 0, Math.PI * 2);
+        ctx.arc(p.x, p.y, isCurrent ? 5 : 3.5, 0, Math.PI * 2);
         ctx.fillStyle = color;
         ctx.fill();
-        ctx.beginPath();
-        ctx.arc(x, y, 2.2, 0, Math.PI * 2);
-        ctx.fillStyle = '#0a0a0c';
-        ctx.fill();
-        ctx.fillStyle = '#e5e7eb';
-        ctx.font = '10px system-ui, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText(String(v), x, y - 10);
+        if (isCurrent) {
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, 2, 0, Math.PI * 2);
+          ctx.fillStyle = '#0a0a0c';
+          ctx.fill();
+          ctx.fillStyle = '#e5e7eb';
+          ctx.font = '10px system-ui, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText(String(Math.round(p.v)), p.x, p.y - 10);
+        }
       });
     }
 
-    if (seriesB) strokeSeries(seriesB, '#94a3b8', false);
-    strokeSeries(seriesA, '#3b82f6', true);
+    // Primero grises (atrás), después azul (adelante)
+    seriesList.filter(s => !s.isCurrent).forEach(s => drawLine(s.values, s.color || 'rgba(148,163,184,0.5)', 2, false));
+    seriesList.filter(s => s.isCurrent).forEach(s => drawLine(s.values, s.color || '#3b82f6', 3, true));
 
+    // Labels X (ejercicios)
     ctx.fillStyle = '#8b8b96';
-    ctx.font = '10px system-ui, sans-serif';
+    ctx.font = '9px system-ui, sans-serif';
     ctx.textAlign = 'center';
     labels.forEach((lab, i) => {
-      const short = lab.length > 11 ? lab.slice(0, 10) + '…' : lab;
-      ctx.fillText(short, xAt(i), H - 12);
+      const short = lab.length > 10 ? lab.slice(0, 9) + '…' : lab;
+      ctx.fillText(short, xAt(i), H - 14);
     });
   }
 
