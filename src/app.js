@@ -1578,7 +1578,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!labels.length) labels.push('Sin series');
 
     // seriesList: cada sesión es una línea
-    const seriesList = chain.map((log, idx) => {
+    // Colores tipo gráfico clásico (azul actual + naranja/verde/etc. anteriores)
+    const prevColors = ['#f97316', '#a78bfa', '#34d399', '#f472b6', '#eab308', '#22d3ee', '#fb7185', '#94a3b8'];
+    let prevColorIdx = 0;
+    const seriesList = chain.map((log) => {
       const isCurrent = log.id === selected.id;
       const vm = volMap(log);
       const values = labels.map(n => Math.round(vm[n] || 0));
@@ -1586,11 +1589,16 @@ document.addEventListener('DOMContentLoaded', () => {
       try {
         fechaTxt = new Date(log.fecha).toLocaleDateString('es-AR', { day: '2-digit', month: 'short' });
       } catch (_) {}
+      let color = '#3b82f6';
+      if (!isCurrent) {
+        color = prevColors[prevColorIdx % prevColors.length];
+        prevColorIdx++;
+      }
       return {
         id: log.id,
         label: isCurrent ? 'Este' : fechaTxt,
         isCurrent,
-        color: isCurrent ? '#3b82f6' : 'rgba(148,163,184,0.55)',
+        color,
         values
       };
     });
@@ -1664,9 +1672,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <canvas id="statsLineChart" width="640" height="280" data-chart="${chartPayload}"></canvas>
           </div>
           <div class="stats-legend">
-            <span><i style="background:#3b82f6"></i> Este entrenamiento</span>
-            <span><i style="background:#94a3b8"></i> Anteriores iguales</span>
-            <span style="color:var(--text-gray)">${chain.length} sesión${chain.length === 1 ? '' : 'es'}</span>
+            ${seriesList.map(s => `<span><i style="background:${s.color}"></i> ${s.isCurrent ? 'Este' : s.label}</span>`).join('')}
           </div>
         </section>
 
@@ -1786,9 +1792,9 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     }
 
-    // Primero grises (atrás), después azul (adelante)
-    seriesList.filter(s => !s.isCurrent).forEach(s => drawLine(s.values, s.color || 'rgba(148,163,184,0.5)', 2, false));
-    seriesList.filter(s => s.isCurrent).forEach(s => drawLine(s.values, s.color || '#3b82f6', 3, true));
+    // Anteriores atrás, actual arriba (como gráfico de varias series)
+    seriesList.filter(s => !s.isCurrent).forEach(s => drawLine(s.values, s.color || '#94a3b8', 2.4, false));
+    seriesList.filter(s => s.isCurrent).forEach(s => drawLine(s.values, s.color || '#3b82f6', 3.2, true));
 
     // Labels X (ejercicios)
     ctx.fillStyle = '#8b8b96';
@@ -3740,7 +3746,10 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!labels.length) labels.push('Sin series');
 
     // seriesList: cada sesión es una línea
-    const seriesList = chain.map((log, idx) => {
+    // Colores tipo gráfico clásico (azul actual + naranja/verde/etc. anteriores)
+    const prevColors = ['#f97316', '#a78bfa', '#34d399', '#f472b6', '#eab308', '#22d3ee', '#fb7185', '#94a3b8'];
+    let prevColorIdx = 0;
+    const seriesList = chain.map((log) => {
       const isCurrent = log.id === selected.id;
       const vm = volMap(log);
       const values = labels.map(n => Math.round(vm[n] || 0));
@@ -3748,11 +3757,16 @@ document.addEventListener('DOMContentLoaded', () => {
       try {
         fechaTxt = new Date(log.fecha).toLocaleDateString('es-AR', { day: '2-digit', month: 'short' });
       } catch (_) {}
+      let color = '#3b82f6';
+      if (!isCurrent) {
+        color = prevColors[prevColorIdx % prevColors.length];
+        prevColorIdx++;
+      }
       return {
         id: log.id,
         label: isCurrent ? 'Este' : fechaTxt,
         isCurrent,
-        color: isCurrent ? '#3b82f6' : 'rgba(148,163,184,0.55)',
+        color,
         values
       };
     });
@@ -3826,9 +3840,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <canvas id="statsLineChart" width="640" height="280" data-chart="${chartPayload}"></canvas>
           </div>
           <div class="stats-legend">
-            <span><i style="background:#3b82f6"></i> Este entrenamiento</span>
-            <span><i style="background:#94a3b8"></i> Anteriores iguales</span>
-            <span style="color:var(--text-gray)">${chain.length} sesión${chain.length === 1 ? '' : 'es'}</span>
+            ${seriesList.map(s => `<span><i style="background:${s.color}"></i> ${s.isCurrent ? 'Este' : s.label}</span>`).join('')}
           </div>
         </section>
 
@@ -3948,9 +3960,9 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     }
 
-    // Primero grises (atrás), después azul (adelante)
-    seriesList.filter(s => !s.isCurrent).forEach(s => drawLine(s.values, s.color || 'rgba(148,163,184,0.5)', 2, false));
-    seriesList.filter(s => s.isCurrent).forEach(s => drawLine(s.values, s.color || '#3b82f6', 3, true));
+    // Anteriores atrás, actual arriba (como gráfico de varias series)
+    seriesList.filter(s => !s.isCurrent).forEach(s => drawLine(s.values, s.color || '#94a3b8', 2.4, false));
+    seriesList.filter(s => s.isCurrent).forEach(s => drawLine(s.values, s.color || '#3b82f6', 3.2, true));
 
     // Labels X (ejercicios)
     ctx.fillStyle = '#8b8b96';
