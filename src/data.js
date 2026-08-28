@@ -378,7 +378,13 @@ class GymStore {
           freshData.workoutLogs.forEach(sbLog => {
             const idx = this.data.workoutLogs.findIndex(w => w.id === sbLog.id);
             if (idx >= 0) {
-              this.data.workoutLogs[idx] = sbLog;
+              // No pisar series locales con un array vacío del server
+              // (pasa si RLS/query de workout_log_sets falla o aún no sincronizó).
+              const local = this.data.workoutLogs[idx];
+              const remoteSets = Array.isArray(sbLog.sets) ? sbLog.sets : [];
+              const localSets = Array.isArray(local.sets) ? local.sets : [];
+              const sets = remoteSets.length > 0 ? remoteSets : localSets;
+              this.data.workoutLogs[idx] = { ...local, ...sbLog, sets };
             } else {
               this.data.workoutLogs.unshift(sbLog);
             }
@@ -1158,7 +1164,12 @@ class GymStore {
   }
 
   getHistorialEntrenamientosReales(alumnoId) {
-    return this.data.workoutLogs.filter(w => w.alumnoId === alumnoId && w.estado === 'completado');
+    // Incluir completados y logs viejos sin estado (antes de estandarizar el campo)
+    return this.data.workoutLogs.filter(w => {
+      if (w.alumnoId !== alumnoId) return false;
+      const est = w.estado;
+      return !est || est === 'completado' || est === 'complete' || est === 'done';
+    });
   }
 
   getAlumnosFiltrados({ busqueda = '', filtro = 'todos' }) {

@@ -170,12 +170,14 @@ class SupabaseEngine {
       const setsByLog = {};
       (resLogSets.data || []).forEach(s => {
         if (!setsByLog[s.workout_log_id]) setsByLog[s.workout_log_id] = [];
+        const nombre = s.exercise_nombre || s.ejercicio_nombre || s.nombre || s.exercise_name || '';
         setsByLog[s.workout_log_id].push({
-          ejercicioNombre: s.exercise_nombre,
-          setNumero: s.set_numero,
-          repsRealizadas: s.reps_realizadas,
-          pesoUtilizado: s.peso_utilizado,
-          comentarioAlumno: s.comentario_alumno || ""
+          ejercicioId: s.exercise_goal_id || s.ejercicio_id || null,
+          ejercicioNombre: nombre,
+          setNumero: s.set_numero != null ? s.set_numero : (s.setNumero || 0),
+          repsRealizadas: s.reps_realizadas != null ? s.reps_realizadas : (s.reps || ''),
+          pesoUtilizado: s.peso_utilizado != null ? s.peso_utilizado : (s.peso || ''),
+          comentarioAlumno: s.comentario_alumno || s.comentario || ""
         });
       });
 

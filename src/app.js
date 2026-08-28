@@ -1460,7 +1460,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const muscleCounts = {};
     let totalSets = 0;
     (selected.sets || []).forEach(s => {
-      const m = _statsMuscleOf(s.ejercicioNombre || s.ejercicio);
+      const m = _statsMuscleOf(s.ejercicioNombre || s.ejercicio || s.nombre || '');
       muscleCounts[m] = (muscleCounts[m] || 0) + 1;
       totalSets++;
     });
@@ -1475,7 +1475,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <div class="stats-muscle-track"><div class="stats-muscle-fill" style="width:${d.pct}%"></div></div>
             <div class="stats-muscle-pct">${d.pct}%</div>
           </div>`).join('')
-      : `<p class="stats-empty">Sin series en este entrenamiento.</p>`;
+      : `<p class="stats-empty">Sin series guardadas para este entrenamiento. Si es un entrenamiento viejo, puede que no se hayan sincronizado las series. Los nuevos sí se guardan completos.</p>`;
 
     // Comparación con anterior mismo día
     const key = _statsDiaKey(selected);
@@ -1486,8 +1486,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const volMap = (log) => {
       const map = {};
       (log.sets || []).forEach(s => {
-        const name = s.ejercicioNombre || s.ejercicio || 'Ejercicio';
-        const reps = Number(s.repsRealizadas != null ? s.repsRealizadas : s.reps) || 0;
+        const name = s.ejercicioNombre || s.ejercicio || s.nombre || 'Ejercicio';
+        const reps = Number(s.repsRealizadas != null ? s.repsRealizadas : (s.reps != null ? s.reps : 0)) || 0;
         const peso = _statsParsePesoKg(s.pesoUtilizado != null ? s.pesoUtilizado : s.peso);
         map[name] = (map[name] || 0) + reps * peso;
       });
@@ -1767,7 +1767,7 @@ document.addEventListener('DOMContentLoaded', () => {
               </div>
 
               <div class="history-accordion-body" id="acc-s${numSemana}-${rId.slice(0,8)}"
-                   style="display:none; padding:10px 0 0">
+                   style="display:${tieneRegistros ? 'block' : 'none'}; padding:10px 0 0">
                 ${!tieneRegistros
                   ? `<div style="text-align:center; color:var(--text-gray); font-size:0.82rem; padding:12px">
                        Sin entrenamientos registrados esta semana.
@@ -1803,10 +1803,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
                         <div style="border-top:1px solid var(--border-color); padding-top:8px">
                           ${(() => {
-                            // Agrupar series por ejercicio
+                            const setsArr = log.sets || [];
+                            if (!setsArr.length) {
+                              return `<div style="font-size:0.82rem; color:var(--text-gray); padding:8px 0">
+                                Sin detalle de series guardado para este entrenamiento.
+                                (Los nuevos entrenamientos sí guardan series, reps y pesos.)
+                              </div>`;
+                            }
                             const ejMap = {};
-                            (log.sets || []).forEach(s => {
-                              const key = s.ejercicioNombre;
+                            setsArr.forEach(s => {
+                              const key = s.ejercicioNombre || s.ejercicio || s.nombre || 'Ejercicio';
                               if (!ejMap[key]) ejMap[key] = [];
                               ejMap[key].push(s);
                             });
@@ -1818,8 +1824,8 @@ document.addEventListener('DOMContentLoaded', () => {
                                 ${sets.map(s => `
                                   <div style="font-size:0.82rem; background:rgba(0,0,0,0.3);
                                               padding:5px 10px; border-radius:6px; margin-bottom:3px">
-                                    Serie ${s.setNumero}: <strong>${s.repsRealizadas} reps</strong>
-                                    con <strong>${s.pesoUtilizado}</strong>
+                                    Serie ${s.setNumero != null ? s.setNumero : ''}: <strong>${s.repsRealizadas != null ? s.repsRealizadas : (s.reps || '—')} reps</strong>
+                                    con <strong>${s.pesoUtilizado != null ? s.pesoUtilizado : (s.peso || '—')}</strong>
                                     ${s.comentarioAlumno ? `<span style="color:var(--yellow-warning)">
                                       · 💬 "${s.comentarioAlumno}"</span>` : ''}
                                   </div>`).join('')}
@@ -3473,7 +3479,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const muscleCounts = {};
     let totalSets = 0;
     (selected.sets || []).forEach(s => {
-      const m = _statsMuscleOf(s.ejercicioNombre || s.ejercicio);
+      const m = _statsMuscleOf(s.ejercicioNombre || s.ejercicio || s.nombre || '');
       muscleCounts[m] = (muscleCounts[m] || 0) + 1;
       totalSets++;
     });
@@ -3488,7 +3494,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <div class="stats-muscle-track"><div class="stats-muscle-fill" style="width:${d.pct}%"></div></div>
             <div class="stats-muscle-pct">${d.pct}%</div>
           </div>`).join('')
-      : `<p class="stats-empty">Sin series en este entrenamiento.</p>`;
+      : `<p class="stats-empty">Sin series guardadas para este entrenamiento. Si es un entrenamiento viejo, puede que no se hayan sincronizado las series. Los nuevos sí se guardan completos.</p>`;
 
     // Comparación con anterior mismo día
     const key = _statsDiaKey(selected);
@@ -3499,8 +3505,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const volMap = (log) => {
       const map = {};
       (log.sets || []).forEach(s => {
-        const name = s.ejercicioNombre || s.ejercicio || 'Ejercicio';
-        const reps = Number(s.repsRealizadas != null ? s.repsRealizadas : s.reps) || 0;
+        const name = s.ejercicioNombre || s.ejercicio || s.nombre || 'Ejercicio';
+        const reps = Number(s.repsRealizadas != null ? s.repsRealizadas : (s.reps != null ? s.reps : 0)) || 0;
         const peso = _statsParsePesoKg(s.pesoUtilizado != null ? s.pesoUtilizado : s.peso);
         map[name] = (map[name] || 0) + reps * peso;
       });
@@ -3780,7 +3786,7 @@ document.addEventListener('DOMContentLoaded', () => {
               </div>
 
               <div class="history-accordion-body" id="acc-s${numSemana}-${rId.slice(0,8)}"
-                   style="display:none; padding:10px 0 0">
+                   style="display:${tieneRegistros ? 'block' : 'none'}; padding:10px 0 0">
                 ${!tieneRegistros
                   ? `<div style="text-align:center; color:var(--text-gray); font-size:0.82rem; padding:12px">
                        Sin entrenamientos registrados esta semana.
@@ -3816,10 +3822,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
                         <div style="border-top:1px solid var(--border-color); padding-top:8px">
                           ${(() => {
-                            // Agrupar series por ejercicio
+                            const setsArr = log.sets || [];
+                            if (!setsArr.length) {
+                              return `<div style="font-size:0.82rem; color:var(--text-gray); padding:8px 0">
+                                Sin detalle de series guardado para este entrenamiento.
+                                (Los nuevos entrenamientos sí guardan series, reps y pesos.)
+                              </div>`;
+                            }
                             const ejMap = {};
-                            (log.sets || []).forEach(s => {
-                              const key = s.ejercicioNombre;
+                            setsArr.forEach(s => {
+                              const key = s.ejercicioNombre || s.ejercicio || s.nombre || 'Ejercicio';
                               if (!ejMap[key]) ejMap[key] = [];
                               ejMap[key].push(s);
                             });
@@ -3831,8 +3843,8 @@ document.addEventListener('DOMContentLoaded', () => {
                                 ${sets.map(s => `
                                   <div style="font-size:0.82rem; background:rgba(0,0,0,0.3);
                                               padding:5px 10px; border-radius:6px; margin-bottom:3px">
-                                    Serie ${s.setNumero}: <strong>${s.repsRealizadas} reps</strong>
-                                    con <strong>${s.pesoUtilizado}</strong>
+                                    Serie ${s.setNumero != null ? s.setNumero : ''}: <strong>${s.repsRealizadas != null ? s.repsRealizadas : (s.reps || '—')} reps</strong>
+                                    con <strong>${s.pesoUtilizado != null ? s.pesoUtilizado : (s.peso || '—')}</strong>
                                     ${s.comentarioAlumno ? `<span style="color:var(--yellow-warning)">
                                       · 💬 "${s.comentarioAlumno}"</span>` : ''}
                                   </div>`).join('')}
