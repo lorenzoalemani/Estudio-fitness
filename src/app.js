@@ -1429,6 +1429,65 @@ document.addEventListener('DOMContentLoaded', () => {
     return raw.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim();
   }
 
+  /** Nombres de ejercicios únicos ordenados (firma del estímulo). */
+  function _statsExerciseSignature(log) {
+    const names = new Set();
+    (log.sets || []).forEach(s => {
+      const n = String(s.ejercicioNombre || s.ejercicio || s.nombre || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (n) names.add(n);
+    });
+    return Array.from(names).sort().join('|');
+  }
+
+  /**
+   * Anterior comparable:
+   * 1) Mismo nombre de día (ej. "Espalda y bicep")
+   * 2) Mismos ejercicios exactos (ej. lunes = jueves con la misma lista)
+   * 3) Solapamiento >= 70% de ejercicios del actual
+   */
+  function _statsFindPreviousComparable(selected, list) {
+    const selDate = new Date(selected.fecha).getTime();
+    const earlier = (list || [])
+      .filter(l => l.id !== selected.id && new Date(l.fecha).getTime() < selDate)
+      .sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+    if (!earlier.length) return { prev: null, matchType: null };
+
+    const key = _statsDiaKey(selected);
+    const byName = earlier.find(l => _statsDiaKey(l) === key);
+    if (byName) return { prev: byName, matchType: 'nombre' };
+
+    const sig = _statsExerciseSignature(selected);
+    if (sig) {
+      const byExact = earlier.find(l => _statsExerciseSignature(l) === sig);
+      if (byExact) return { prev: byExact, matchType: 'ejercicios' };
+    }
+
+    const selSet = new Set(sig ? sig.split('|').filter(Boolean) : []);
+    if (selSet.size >= 2) {
+      let best = null;
+      let bestRatio = 0;
+      earlier.forEach(l => {
+        const other = _statsExerciseSignature(l);
+        if (!other) return;
+        const oSet = new Set(other.split('|'));
+        let inter = 0;
+        selSet.forEach(n => { if (oSet.has(n)) inter++; });
+        const ratio = inter / selSet.size;
+        if (ratio >= 0.7 && ratio > bestRatio) {
+          bestRatio = ratio;
+          best = l;
+        }
+      });
+      if (best) return { prev: best, matchType: 'similares' };
+    }
+    return { prev: null, matchType: null };
+  }
+
   function _statsFormatFecha(iso) {
     try {
       return new Date(iso).toLocaleDateString('es-AR', { weekday: 'short', day: 'numeric', month: 'short' });
@@ -1477,11 +1536,8 @@ document.addEventListener('DOMContentLoaded', () => {
           </div>`).join('')
       : `<p class="stats-empty">Sin series guardadas para este entrenamiento. Si es un entrenamiento viejo, puede que no se hayan sincronizado las series. Los nuevos sí se guardan completos.</p>`;
 
-    // Comparación con anterior mismo día
-    const key = _statsDiaKey(selected);
-    const prev = list
-      .filter(l => l.id !== selected.id && _statsDiaKey(l) === key && new Date(l.fecha) < new Date(selected.fecha))
-      .sort((a, b) => new Date(b.fecha) - new Date(a.fecha))[0] || null;
+    // Comparación inteligente: nombre de día → mismos ejercicios → similares
+    const { prev, matchType } = _statsFindPreviousComparable(selected, list);
 
     const volMap = (log) => {
       const map = {};
@@ -1501,9 +1557,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const seriesA = labels.map(n => curVol[n] || 0);
     const seriesB = prevVol ? labels.map(n => prevVol[n] || 0) : null;
 
-    const compareHint = prev
-      ? `Comparando con ${_statsFormatFecha(prev.fecha)} · ${prev.diaNombre || ''}`
-      : 'Todavía no hay otro entrenamiento del mismo día para comparar.';
+    let compareHint = 'Todavía no hay un entrenamiento anterior comparable.';
+    if (prev && matchType === 'nombre') {
+      compareHint = `Comparando con ${_statsFormatFecha(prev.fecha)} · ${prev.diaNombre || ''} (mismo nombre de día)`;
+    } else if (prev && matchType === 'ejercicios') {
+      compareHint = `Comparando con ${_statsFormatFecha(prev.fecha)} · ${prev.diaNombre || ''} (mismos ejercicios)`;
+    } else if (prev && matchType === 'similares') {
+      compareHint = `Comparando con ${_statsFormatFecha(prev.fecha)} · ${prev.diaNombre || ''} (ejercicios muy similares)`;
+    }
 
     // Calendario
     const now = new Date();
@@ -1554,7 +1615,7 @@ document.addEventListener('DOMContentLoaded', () => {
         <section class="stats-card">
           <div class="stats-card-head">
             <h3>Comparación</h3>
-            <span class="stats-badge">${prev ? 'vs anterior' : 'Solo este'}</span>
+            <span class="stats-badge">${prev ? (matchType === 'ejercicios' ? 'vs mismos ejercicios' : (matchType === 'similares' ? 'vs similares' : 'vs mismo día')) : 'Solo este'}</span>
           </div>
           <p class="stats-hint">${prev
             ? 'Volumen (reps × kg) por ejercicio vs el mismo día anterior.'
@@ -3448,6 +3509,65 @@ document.addEventListener('DOMContentLoaded', () => {
     return raw.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim();
   }
 
+  /** Nombres de ejercicios únicos ordenados (firma del estímulo). */
+  function _statsExerciseSignature(log) {
+    const names = new Set();
+    (log.sets || []).forEach(s => {
+      const n = String(s.ejercicioNombre || s.ejercicio || s.nombre || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (n) names.add(n);
+    });
+    return Array.from(names).sort().join('|');
+  }
+
+  /**
+   * Anterior comparable:
+   * 1) Mismo nombre de día (ej. "Espalda y bicep")
+   * 2) Mismos ejercicios exactos (ej. lunes = jueves con la misma lista)
+   * 3) Solapamiento >= 70% de ejercicios del actual
+   */
+  function _statsFindPreviousComparable(selected, list) {
+    const selDate = new Date(selected.fecha).getTime();
+    const earlier = (list || [])
+      .filter(l => l.id !== selected.id && new Date(l.fecha).getTime() < selDate)
+      .sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+    if (!earlier.length) return { prev: null, matchType: null };
+
+    const key = _statsDiaKey(selected);
+    const byName = earlier.find(l => _statsDiaKey(l) === key);
+    if (byName) return { prev: byName, matchType: 'nombre' };
+
+    const sig = _statsExerciseSignature(selected);
+    if (sig) {
+      const byExact = earlier.find(l => _statsExerciseSignature(l) === sig);
+      if (byExact) return { prev: byExact, matchType: 'ejercicios' };
+    }
+
+    const selSet = new Set(sig ? sig.split('|').filter(Boolean) : []);
+    if (selSet.size >= 2) {
+      let best = null;
+      let bestRatio = 0;
+      earlier.forEach(l => {
+        const other = _statsExerciseSignature(l);
+        if (!other) return;
+        const oSet = new Set(other.split('|'));
+        let inter = 0;
+        selSet.forEach(n => { if (oSet.has(n)) inter++; });
+        const ratio = inter / selSet.size;
+        if (ratio >= 0.7 && ratio > bestRatio) {
+          bestRatio = ratio;
+          best = l;
+        }
+      });
+      if (best) return { prev: best, matchType: 'similares' };
+    }
+    return { prev: null, matchType: null };
+  }
+
   function _statsFormatFecha(iso) {
     try {
       return new Date(iso).toLocaleDateString('es-AR', { weekday: 'short', day: 'numeric', month: 'short' });
@@ -3496,11 +3616,8 @@ document.addEventListener('DOMContentLoaded', () => {
           </div>`).join('')
       : `<p class="stats-empty">Sin series guardadas para este entrenamiento. Si es un entrenamiento viejo, puede que no se hayan sincronizado las series. Los nuevos sí se guardan completos.</p>`;
 
-    // Comparación con anterior mismo día
-    const key = _statsDiaKey(selected);
-    const prev = list
-      .filter(l => l.id !== selected.id && _statsDiaKey(l) === key && new Date(l.fecha) < new Date(selected.fecha))
-      .sort((a, b) => new Date(b.fecha) - new Date(a.fecha))[0] || null;
+    // Comparación inteligente: nombre de día → mismos ejercicios → similares
+    const { prev, matchType } = _statsFindPreviousComparable(selected, list);
 
     const volMap = (log) => {
       const map = {};
@@ -3520,9 +3637,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const seriesA = labels.map(n => curVol[n] || 0);
     const seriesB = prevVol ? labels.map(n => prevVol[n] || 0) : null;
 
-    const compareHint = prev
-      ? `Comparando con ${_statsFormatFecha(prev.fecha)} · ${prev.diaNombre || ''}`
-      : 'Todavía no hay otro entrenamiento del mismo día para comparar.';
+    let compareHint = 'Todavía no hay un entrenamiento anterior comparable.';
+    if (prev && matchType === 'nombre') {
+      compareHint = `Comparando con ${_statsFormatFecha(prev.fecha)} · ${prev.diaNombre || ''} (mismo nombre de día)`;
+    } else if (prev && matchType === 'ejercicios') {
+      compareHint = `Comparando con ${_statsFormatFecha(prev.fecha)} · ${prev.diaNombre || ''} (mismos ejercicios)`;
+    } else if (prev && matchType === 'similares') {
+      compareHint = `Comparando con ${_statsFormatFecha(prev.fecha)} · ${prev.diaNombre || ''} (ejercicios muy similares)`;
+    }
 
     // Calendario
     const now = new Date();
@@ -3573,7 +3695,7 @@ document.addEventListener('DOMContentLoaded', () => {
         <section class="stats-card">
           <div class="stats-card-head">
             <h3>Comparación</h3>
-            <span class="stats-badge">${prev ? 'vs anterior' : 'Solo este'}</span>
+            <span class="stats-badge">${prev ? (matchType === 'ejercicios' ? 'vs mismos ejercicios' : (matchType === 'similares' ? 'vs similares' : 'vs mismo día')) : 'Solo este'}</span>
           </div>
           <p class="stats-hint">${prev
             ? 'Volumen (reps × kg) por ejercicio vs el mismo día anterior.'
