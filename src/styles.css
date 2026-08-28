@@ -1189,3 +1189,211 @@ body {
     padding: 10px;
   }
 }
+
+/* ---- Estadísticas alumno ---- */
+.stats-page {
+  max-width: 800px;
+  margin: 0 auto;
+  padding-bottom: 8px;
+}
+.stats-title {
+  margin: 0 0 4px;
+  font-size: 1.4rem;
+  font-weight: 900;
+  letter-spacing: -0.02em;
+}
+.stats-sub {
+  margin: 0 0 16px;
+  color: var(--text-gray);
+  font-size: 0.88rem;
+  line-height: 1.4;
+}
+.stats-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  padding: 16px;
+  margin-bottom: 14px;
+}
+.stats-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.stats-card-head h3 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 800;
+}
+.stats-label {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-gray);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 8px;
+}
+.stats-select {
+  width: 100%;
+  appearance: none;
+  background: rgba(0,0,0,0.35);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  color: #fff;
+  padding: 12px 14px;
+  font-size: 0.95rem;
+  font-family: inherit;
+  font-weight: 600;
+}
+.stats-select:focus {
+  outline: none;
+  border-color: rgba(59,130,246,0.55);
+}
+.stats-hint {
+  margin: 8px 0 0;
+  font-size: 0.78rem;
+  color: var(--text-gray);
+}
+.stats-badge {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #93c5fd;
+  background: rgba(59,130,246,0.12);
+  border: 1px solid rgba(59,130,246,0.25);
+  padding: 4px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.stats-muscle-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.stats-muscle-name {
+  font-size: 0.95rem;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+.stats-muscle-track {
+  height: 12px;
+  background: rgba(255,255,255,0.08);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.stats-muscle-fill {
+  height: 100%;
+  background: #3b82f6;
+  border-radius: 999px;
+  transition: width 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.stats-muscle-pct {
+  text-align: right;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text-gray);
+  margin-top: 6px;
+}
+.stats-chart-wrap {
+  width: 100%;
+  overflow: hidden;
+  border-radius: 12px;
+  background: rgba(0,0,0,0.25);
+  padding: 8px 4px 4px;
+  margin-top: 8px;
+}
+#statsLineChart {
+  width: 100% !important;
+  height: auto !important;
+  display: block;
+}
+.stats-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 12px;
+  font-size: 0.78rem;
+  color: var(--text-gray);
+}
+.stats-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.stats-legend i {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.stats-month-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-transform: capitalize;
+}
+.stats-icon-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  background: rgba(255,255,255,0.04);
+  color: #fff;
+  font-size: 1.1rem;
+  cursor: pointer;
+  line-height: 1;
+}
+.stats-cal-weekdays {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+  margin: 10px 0 6px;
+  text-align: center;
+  font-size: 0.68rem;
+  color: var(--text-gray);
+  font-weight: 700;
+}
+.stats-cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+}
+.stats-cal-cell {
+  aspect-ratio: 1;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.1);
+}
+.stats-cal-cell.empty { background: transparent; }
+.stats-cal-cell.trained {
+  background: #3b82f6;
+  box-shadow: 0 0 0 1px rgba(59,130,246,0.3);
+}
+.stats-cal-legend {
+  display: flex;
+  gap: 16px;
+  margin-top: 14px;
+  font-size: 0.78rem;
+  color: var(--text-gray);
+}
+.stats-cal-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.stats-cal-legend i {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  display: inline-block;
+}
+.stats-cal-legend i.on { background: #3b82f6; }
+.stats-cal-legend i.off { background: rgba(255,255,255,0.1); }
+.stats-empty {
+  color: var(--text-gray);
+  font-size: 0.88rem;
+  margin: 0;
+}

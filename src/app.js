@@ -106,6 +106,8 @@ document.addEventListener('DOMContentLoaded', () => {
     logEnEdicionId: null,    // entrenamiento que el alumno está editando (ventana 2hs)
     logABorrarId: null,       // entrenamiento pendiente de confirmar borrado
     finalizandoEntrenamiento: false, // candado anti doble-toque al finalizar
+    statsSelectedLogId: null,
+    statsMonthOffset: 0,
     mostrarDrawerNotifs: false,
     workoutDraftSets: {},       // Estado temporal del entrenamiento en progreso por serie
     borradorEntrenamientoDetectado: null, // borrador recuperado de localStorage, pendiente de confirmar Continuar/Descartar
@@ -274,6 +276,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const iconAlumnos = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 3 3.87"/></svg>`;
     const iconMisRutinas = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="8" r="4"/><path d="M2 21v-1a7 7 0 0 1 7-7h1.5"/><path d="M18 14v6M15 17h6"/></svg>`;
     const iconRanking = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 21h8M12 17v4M7 4h10v4a5 5 0 0 1-10 0V4Z"/><path d="M7 6H4a2 2 0 0 0 2 4M17 6h3a2 2 0 0 1-2 4"/></svg>`;
+    const iconStats = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 16V9"/><path d="M12 16v-5"/><path d="M17 16V7"/></svg>`;
 
     const items = isProfesor ? [
       { id: 'navAlumnos',    label: 'Alumnos', icon: iconAlumnos, active: appState.modalActivo === null && !appState.mostrarDrawerNotifs },
@@ -283,7 +286,7 @@ document.addEventListener('DOMContentLoaded', () => {
       { id: 'navMisRutinas',   label: 'Mías',       icon: iconMisRutinas, active: appState.tabCliente === 'mis_rutinas' && !appState.mostrarDrawerNotifs },
       { id: 'navRanking',      label: 'Ranking',    icon: iconRanking,   active: appState.tabCliente === 'ranking' && !appState.mostrarDrawerNotifs },
       { id: 'navHistorial',    label: 'Historial', icon: iconHistorial, active: appState.tabCliente === 'historial' && !appState.mostrarDrawerNotifs },
-      { id: 'navAvisosAlumno', label: 'Avisos',     icon: iconAvisos,    active: appState.mostrarDrawerNotifs, badge: unreadCount }
+      { id: 'navStats',        label: 'Stats',      icon: iconStats,     active: appState.tabCliente === 'stats' && !appState.mostrarDrawerNotifs }
     ];
 
     return `
@@ -521,6 +524,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         ${appState.tabCliente === 'ranking' ? renderRankingView() : ''}
         ${appState.tabCliente === 'historial' ? renderHistorialAgrupado(historialEntrenamientos, store.data.rutinas, true) : ''}
+        ${appState.tabCliente === 'stats' ? renderStatsView(historialEntrenamientos) : ''}
       </main>
 
       ${(appState.modalActivo === 'crear_rutina_propia' || appState.modalActivo === 'editar_rutina_propia') ? renderModalFormularioRutina(appState.modalActivo) : ''}
@@ -536,6 +540,7 @@ document.addEventListener('DOMContentLoaded', () => {
     bindBottomNavEvents();
     bindMisRutinasEvents(alumno);
     bindHistorialEvents(alumno);
+    if (appState.tabCliente === 'stats') bindStatsEvents(historialEntrenamientos);
     bindBorradorEntrenamientoEvents();
 
     // Eventos de navegación por tarjetas de rutina (excluye las de "Mis Rutinas",
@@ -1373,6 +1378,279 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // --- HISTORIAL AGRUPADO: Rutina → Semana → Día → Ejercicios → Series ---
+
+  // --- ESTADÍSTICAS DEL ALUMNO (distribución, comparación, constancia) ---
+  function _statsMuscleOf(name) {
+    const n = String(name || '');
+    if (/press\s*banca|apertura|fondos|pecho|crossover|cruce\s*de\s*polea|pec\s*deck/i.test(n)) return 'Pecho';
+    if (/militar|hombro|elevaci[oó]n\s*lateral|vuelo|deltoid/i.test(n)) return 'Hombros';
+    if (/jal[oó]n|remo|dominada|espalda|pulldown|face\s*pull/i.test(n)) return 'Espalda';
+    if (/peso\s*muerto|rumano|femoral|isquio/i.test(n)) return 'Femoral';
+    if (/sentadilla|prensa|cu[aá]driceps|extensi[oó]n\s*de\s*cu/i.test(n)) return 'Cuádriceps';
+    if (/gemelo|pantorrilla|elevaci[oó]n\s*de\s*gemelo/i.test(n)) return 'Gemelos';
+    if (/curl|biceps|bíceps/i.test(n)) return 'Bíceps';
+    if (/triceps|tríceps|pushdown|extensi[oó]n\s*de\s*codo/i.test(n)) return 'Tríceps';
+    if (/abdomen|crunch|plancha|core/i.test(n)) return 'Core';
+    return 'Otros';
+  }
+
+  function _statsParsePesoKg(peso) {
+    if (peso == null || peso === '') return 0;
+    if (typeof peso === 'number') return peso;
+    const m = String(peso).replace(',', '.').match(/-?\d+(\.\d+)?/);
+    return m ? parseFloat(m[0]) : 0;
+  }
+
+  function _statsDiaKey(log) {
+    const raw = String(log.diaNombre || log.diaId || log.diaNumero || 'dia').toLowerCase();
+    return raw.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim();
+  }
+
+  function _statsFormatFecha(iso) {
+    try {
+      return new Date(iso).toLocaleDateString('es-AR', { weekday: 'short', day: 'numeric', month: 'short' });
+    } catch (_) {
+      return '—';
+    }
+  }
+
+  function renderStatsView(logs) {
+    const list = (logs || []).slice().sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+    if (!list.length) {
+      return `<div class="stats-page">
+        <h2 class="stats-title">Estadísticas</h2>
+        <p class="stats-sub">Todavía no hay entrenamientos registrados. Completá una sesión para ver distribución, progreso y constancia.</p>
+      </div>`;
+    }
+
+    if (!appState.statsSelectedLogId || !list.find(l => l.id === appState.statsSelectedLogId)) {
+      appState.statsSelectedLogId = list[0].id;
+    }
+    if (appState.statsMonthOffset == null) appState.statsMonthOffset = 0;
+
+    const selected = list.find(l => l.id === appState.statsSelectedLogId) || list[0];
+    const options = list.map(l =>
+      `<option value="${l.id}" ${l.id === selected.id ? 'selected' : ''}>${_statsFormatFecha(l.fecha)} · ${l.diaNombre || 'Entrenamiento'}</option>`
+    ).join('');
+
+    // Distribución muscular por series
+    const muscleCounts = {};
+    let totalSets = 0;
+    (selected.sets || []).forEach(s => {
+      const m = _statsMuscleOf(s.ejercicioNombre || s.ejercicio);
+      muscleCounts[m] = (muscleCounts[m] || 0) + 1;
+      totalSets++;
+    });
+    const muscleDist = Object.entries(muscleCounts)
+      .map(([name, n]) => ({ name, pct: totalSets ? Math.round((n / totalSets) * 100) : 0, n }))
+      .sort((a, b) => b.pct - a.pct);
+
+    const muscleHtml = muscleDist.length
+      ? muscleDist.map(d => `
+          <div class="stats-muscle-row">
+            <div class="stats-muscle-name">${d.name}</div>
+            <div class="stats-muscle-track"><div class="stats-muscle-fill" style="width:${d.pct}%"></div></div>
+            <div class="stats-muscle-pct">${d.pct}%</div>
+          </div>`).join('')
+      : `<p class="stats-empty">Sin series en este entrenamiento.</p>`;
+
+    // Comparación con anterior mismo día
+    const key = _statsDiaKey(selected);
+    const prev = list
+      .filter(l => l.id !== selected.id && _statsDiaKey(l) === key && new Date(l.fecha) < new Date(selected.fecha))
+      .sort((a, b) => new Date(b.fecha) - new Date(a.fecha))[0] || null;
+
+    const volMap = (log) => {
+      const map = {};
+      (log.sets || []).forEach(s => {
+        const name = s.ejercicioNombre || s.ejercicio || 'Ejercicio';
+        const reps = Number(s.repsRealizadas != null ? s.repsRealizadas : s.reps) || 0;
+        const peso = _statsParsePesoKg(s.pesoUtilizado != null ? s.pesoUtilizado : s.peso);
+        map[name] = (map[name] || 0) + reps * peso;
+      });
+      return map;
+    };
+    const curVol = volMap(selected);
+    const prevVol = prev ? volMap(prev) : null;
+    const names = Object.keys(curVol);
+    if (prevVol) Object.keys(prevVol).forEach(n => { if (!names.includes(n)) names.push(n); });
+    const labels = names.slice(0, 6);
+    const seriesA = labels.map(n => curVol[n] || 0);
+    const seriesB = prevVol ? labels.map(n => prevVol[n] || 0) : null;
+
+    const compareHint = prev
+      ? `Comparando con ${_statsFormatFecha(prev.fecha)} · ${prev.diaNombre || ''}`
+      : 'Todavía no hay otro entrenamiento del mismo día para comparar.';
+
+    // Calendario
+    const now = new Date();
+    const offset = Number(appState.statsMonthOffset) || 0;
+    const viewDate = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+    const y = viewDate.getFullYear();
+    const m = viewDate.getMonth();
+    const lastDay = new Date(y, m + 1, 0).getDate();
+    let startPad = new Date(y, m, 1).getDay() - 1;
+    if (startPad < 0) startPad = 6;
+    const trained = new Set();
+    list.forEach(l => {
+      const d = new Date(l.fecha);
+      if (d.getFullYear() === y && d.getMonth() === m) trained.add(d.getDate());
+    });
+    let trainedCount = 0;
+    for (let d = 1; d <= lastDay; d++) if (trained.has(d)) trainedCount++;
+    const rate = (trainedCount / lastDay * 7).toFixed(1);
+    const monthLabel = viewDate.toLocaleDateString('es-AR', { month: 'long', year: 'numeric' });
+    let calCells = '';
+    for (let i = 0; i < startPad; i++) calCells += '<div class="stats-cal-cell empty"></div>';
+    for (let d = 1; d <= lastDay; d++) {
+      calCells += `<div class="stats-cal-cell${trained.has(d) ? ' trained' : ''}"></div>`;
+    }
+
+    // Datos para canvas (JSON en data attrs)
+    const chartPayload = encodeURIComponent(JSON.stringify({ labels, seriesA, seriesB }));
+
+    return `
+      <div class="stats-page">
+        <h2 class="stats-title">Estadísticas</h2>
+        <p class="stats-sub">Elegí un entrenamiento y mirá distribución, progreso y constancia.</p>
+
+        <section class="stats-card">
+          <label class="stats-label" for="statsSelectWorkout">Entrenamiento</label>
+          <select id="statsSelectWorkout" class="stats-select">${options}</select>
+          <p class="stats-hint">${compareHint}</p>
+        </section>
+
+        <section class="stats-card">
+          <div class="stats-card-head">
+            <h3>Distribución muscular</h3>
+            <span class="stats-badge">${muscleDist.length ? muscleDist.length + ' grupos' : '—'}</span>
+          </div>
+          <div class="stats-muscle-bars">${muscleHtml}</div>
+        </section>
+
+        <section class="stats-card">
+          <div class="stats-card-head">
+            <h3>Comparación</h3>
+            <span class="stats-badge">${prev ? 'vs anterior' : 'Solo este'}</span>
+          </div>
+          <p class="stats-hint">${prev
+            ? 'Volumen (reps × kg) por ejercicio vs el mismo día anterior.'
+            : 'Cuando repitas este día de rutina, vas a ver la comparación acá.'}</p>
+          <div class="stats-chart-wrap">
+            <canvas id="statsLineChart" width="640" height="280" data-chart="${chartPayload}"></canvas>
+          </div>
+          <div class="stats-legend">
+            <span><i style="background:#3b82f6"></i> Este entrenamiento</span>
+            ${prev ? '<span><i style="background:#94a3b8"></i> Anterior igual</span>' : ''}
+          </div>
+        </section>
+
+        <section class="stats-card">
+          <div class="stats-card-head">
+            <h3>Constancia</h3>
+            <div class="stats-month-nav">
+              <button type="button" class="stats-icon-btn" id="statsPrevMonth">‹</button>
+              <span>${monthLabel}</span>
+              <button type="button" class="stats-icon-btn" id="statsNextMonth">›</button>
+            </div>
+          </div>
+          <p class="stats-hint">${trainedCount}/${lastDay} días · ~${rate}×/semana</p>
+          <div class="stats-cal-weekdays"><span>L</span><span>M</span><span>X</span><span>J</span><span>V</span><span>S</span><span>D</span></div>
+          <div class="stats-cal-grid">${calCells}</div>
+          <div class="stats-cal-legend">
+            <span><i class="on"></i> Entrenó</span>
+            <span><i class="off"></i> Descanso</span>
+          </div>
+        </section>
+      </div>
+    `;
+  }
+
+  function _drawStatsLineChart(canvas) {
+    if (!canvas) return;
+    let payload = null;
+    try {
+      payload = JSON.parse(decodeURIComponent(canvas.getAttribute('data-chart') || '') || 'null');
+    } catch (_) { return; }
+    if (!payload || !payload.labels) return;
+    const labels = payload.labels;
+    const seriesA = payload.seriesA || [];
+    const seriesB = payload.seriesB;
+
+    const ctx = canvas.getContext('2d');
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth || 320;
+    const cssH = 200;
+    canvas.width = Math.floor(cssW * dpr);
+    canvas.height = Math.floor(cssH * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    const W = cssW, H = cssH;
+    const pad = { t: 16, r: 12, b: 40, l: 36 };
+    const plotW = W - pad.l - pad.r;
+    const plotH = H - pad.t - pad.b;
+    ctx.clearRect(0, 0, W, H);
+
+    const all = seriesB ? seriesA.concat(seriesB) : seriesA.slice();
+    const maxY = Math.max(10, ...all) * 1.15;
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= 4; i++) {
+      const y = pad.t + (plotH * i) / 4;
+      ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke();
+    }
+
+    function xAt(i) {
+      if (labels.length <= 1) return pad.l + plotW / 2;
+      return pad.l + (plotW * i) / (labels.length - 1);
+    }
+    function yAt(v) { return pad.t + plotH - (v / maxY) * plotH; }
+
+    function strokeSeries(data, color) {
+      if (!data || !data.length) return;
+      ctx.beginPath();
+      data.forEach((v, i) => {
+        const x = xAt(i), y = yAt(v);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      });
+      ctx.strokeStyle = color; ctx.lineWidth = 2.5; ctx.lineJoin = 'round'; ctx.stroke();
+      data.forEach((v, i) => {
+        const x = xAt(i), y = yAt(v);
+        ctx.beginPath(); ctx.arc(x, y, 4.5, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill();
+        ctx.beginPath(); ctx.arc(x, y, 2, 0, Math.PI * 2); ctx.fillStyle = '#0a0a0c'; ctx.fill();
+      });
+    }
+
+    if (seriesB) strokeSeries(seriesB, '#94a3b8');
+    strokeSeries(seriesA, '#3b82f6');
+
+    ctx.fillStyle = '#8b8b96';
+    ctx.font = '10px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    labels.forEach((lab, i) => {
+      const short = lab.length > 11 ? lab.slice(0, 10) + '…' : lab;
+      ctx.fillText(short, xAt(i), H - 12);
+    });
+  }
+
+  function bindStatsEvents(logs) {
+    const list = logs || [];
+    document.getElementById('statsSelectWorkout')?.addEventListener('change', (e) => {
+      appState.statsSelectedLogId = e.target.value;
+      renderApp();
+    });
+    document.getElementById('statsPrevMonth')?.addEventListener('click', () => {
+      appState.statsMonthOffset = (Number(appState.statsMonthOffset) || 0) - 1;
+      renderApp();
+    });
+    document.getElementById('statsNextMonth')?.addEventListener('click', () => {
+      appState.statsMonthOffset = (Number(appState.statsMonthOffset) || 0) + 1;
+      renderApp();
+    });
+    requestAnimationFrame(() => _drawStatsLineChart(document.getElementById('statsLineChart')));
+  }
+
   // permitirEdicion: SOLO true cuando el alumno ve su PROPIO historial
   // (renderClientDashboard). El historial que el profesor ve de un alumno
   // (renderModalHistorialAlumno) llama esta misma función sin el flag,
@@ -1818,6 +2096,8 @@ document.addEventListener('DOMContentLoaded', () => {
     logEnEdicionId: null,    // entrenamiento que el alumno está editando (ventana 2hs)
     logABorrarId: null,       // entrenamiento pendiente de confirmar borrado
     finalizandoEntrenamiento: false, // candado anti doble-toque al finalizar
+    statsSelectedLogId: null,
+    statsMonthOffset: 0,
     mostrarDrawerNotifs: false,
     workoutDraftSets: {},       // Estado temporal del entrenamiento en progreso por serie
     borradorEntrenamientoDetectado: null, // borrador recuperado de localStorage, pendiente de confirmar Continuar/Descartar
@@ -1986,6 +2266,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const iconAlumnos = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 3 3.87"/></svg>`;
     const iconMisRutinas = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="8" r="4"/><path d="M2 21v-1a7 7 0 0 1 7-7h1.5"/><path d="M18 14v6M15 17h6"/></svg>`;
     const iconRanking = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 21h8M12 17v4M7 4h10v4a5 5 0 0 1-10 0V4Z"/><path d="M7 6H4a2 2 0 0 0 2 4M17 6h3a2 2 0 0 1-2 4"/></svg>`;
+    const iconStats = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 16V9"/><path d="M12 16v-5"/><path d="M17 16V7"/></svg>`;
 
     const items = isProfesor ? [
       { id: 'navAlumnos',    label: 'Alumnos', icon: iconAlumnos, active: appState.modalActivo === null && !appState.mostrarDrawerNotifs },
@@ -1995,7 +2276,7 @@ document.addEventListener('DOMContentLoaded', () => {
       { id: 'navMisRutinas',   label: 'Mías',       icon: iconMisRutinas, active: appState.tabCliente === 'mis_rutinas' && !appState.mostrarDrawerNotifs },
       { id: 'navRanking',      label: 'Ranking',    icon: iconRanking,   active: appState.tabCliente === 'ranking' && !appState.mostrarDrawerNotifs },
       { id: 'navHistorial',    label: 'Historial', icon: iconHistorial, active: appState.tabCliente === 'historial' && !appState.mostrarDrawerNotifs },
-      { id: 'navAvisosAlumno', label: 'Avisos',     icon: iconAvisos,    active: appState.mostrarDrawerNotifs, badge: unreadCount }
+      { id: 'navStats',        label: 'Stats',      icon: iconStats,     active: appState.tabCliente === 'stats' && !appState.mostrarDrawerNotifs }
     ];
 
     return `
@@ -2233,6 +2514,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         ${appState.tabCliente === 'ranking' ? renderRankingView() : ''}
         ${appState.tabCliente === 'historial' ? renderHistorialAgrupado(historialEntrenamientos, store.data.rutinas, true) : ''}
+        ${appState.tabCliente === 'stats' ? renderStatsView(historialEntrenamientos) : ''}
       </main>
 
       ${(appState.modalActivo === 'crear_rutina_propia' || appState.modalActivo === 'editar_rutina_propia') ? renderModalFormularioRutina(appState.modalActivo) : ''}
@@ -2248,6 +2530,7 @@ document.addEventListener('DOMContentLoaded', () => {
     bindBottomNavEvents();
     bindMisRutinasEvents(alumno);
     bindHistorialEvents(alumno);
+    if (appState.tabCliente === 'stats') bindStatsEvents(historialEntrenamientos);
     bindBorradorEntrenamientoEvents();
 
     // Eventos de navegación por tarjetas de rutina (excluye las de "Mis Rutinas",
@@ -3085,6 +3368,279 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   // --- HISTORIAL AGRUPADO: Rutina → Semana → Día → Ejercicios → Series ---
+
+  // --- ESTADÍSTICAS DEL ALUMNO (distribución, comparación, constancia) ---
+  function _statsMuscleOf(name) {
+    const n = String(name || '');
+    if (/press\s*banca|apertura|fondos|pecho|crossover|cruce\s*de\s*polea|pec\s*deck/i.test(n)) return 'Pecho';
+    if (/militar|hombro|elevaci[oó]n\s*lateral|vuelo|deltoid/i.test(n)) return 'Hombros';
+    if (/jal[oó]n|remo|dominada|espalda|pulldown|face\s*pull/i.test(n)) return 'Espalda';
+    if (/peso\s*muerto|rumano|femoral|isquio/i.test(n)) return 'Femoral';
+    if (/sentadilla|prensa|cu[aá]driceps|extensi[oó]n\s*de\s*cu/i.test(n)) return 'Cuádriceps';
+    if (/gemelo|pantorrilla|elevaci[oó]n\s*de\s*gemelo/i.test(n)) return 'Gemelos';
+    if (/curl|biceps|bíceps/i.test(n)) return 'Bíceps';
+    if (/triceps|tríceps|pushdown|extensi[oó]n\s*de\s*codo/i.test(n)) return 'Tríceps';
+    if (/abdomen|crunch|plancha|core/i.test(n)) return 'Core';
+    return 'Otros';
+  }
+
+  function _statsParsePesoKg(peso) {
+    if (peso == null || peso === '') return 0;
+    if (typeof peso === 'number') return peso;
+    const m = String(peso).replace(',', '.').match(/-?\d+(\.\d+)?/);
+    return m ? parseFloat(m[0]) : 0;
+  }
+
+  function _statsDiaKey(log) {
+    const raw = String(log.diaNombre || log.diaId || log.diaNumero || 'dia').toLowerCase();
+    return raw.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim();
+  }
+
+  function _statsFormatFecha(iso) {
+    try {
+      return new Date(iso).toLocaleDateString('es-AR', { weekday: 'short', day: 'numeric', month: 'short' });
+    } catch (_) {
+      return '—';
+    }
+  }
+
+  function renderStatsView(logs) {
+    const list = (logs || []).slice().sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+    if (!list.length) {
+      return `<div class="stats-page">
+        <h2 class="stats-title">Estadísticas</h2>
+        <p class="stats-sub">Todavía no hay entrenamientos registrados. Completá una sesión para ver distribución, progreso y constancia.</p>
+      </div>`;
+    }
+
+    if (!appState.statsSelectedLogId || !list.find(l => l.id === appState.statsSelectedLogId)) {
+      appState.statsSelectedLogId = list[0].id;
+    }
+    if (appState.statsMonthOffset == null) appState.statsMonthOffset = 0;
+
+    const selected = list.find(l => l.id === appState.statsSelectedLogId) || list[0];
+    const options = list.map(l =>
+      `<option value="${l.id}" ${l.id === selected.id ? 'selected' : ''}>${_statsFormatFecha(l.fecha)} · ${l.diaNombre || 'Entrenamiento'}</option>`
+    ).join('');
+
+    // Distribución muscular por series
+    const muscleCounts = {};
+    let totalSets = 0;
+    (selected.sets || []).forEach(s => {
+      const m = _statsMuscleOf(s.ejercicioNombre || s.ejercicio);
+      muscleCounts[m] = (muscleCounts[m] || 0) + 1;
+      totalSets++;
+    });
+    const muscleDist = Object.entries(muscleCounts)
+      .map(([name, n]) => ({ name, pct: totalSets ? Math.round((n / totalSets) * 100) : 0, n }))
+      .sort((a, b) => b.pct - a.pct);
+
+    const muscleHtml = muscleDist.length
+      ? muscleDist.map(d => `
+          <div class="stats-muscle-row">
+            <div class="stats-muscle-name">${d.name}</div>
+            <div class="stats-muscle-track"><div class="stats-muscle-fill" style="width:${d.pct}%"></div></div>
+            <div class="stats-muscle-pct">${d.pct}%</div>
+          </div>`).join('')
+      : `<p class="stats-empty">Sin series en este entrenamiento.</p>`;
+
+    // Comparación con anterior mismo día
+    const key = _statsDiaKey(selected);
+    const prev = list
+      .filter(l => l.id !== selected.id && _statsDiaKey(l) === key && new Date(l.fecha) < new Date(selected.fecha))
+      .sort((a, b) => new Date(b.fecha) - new Date(a.fecha))[0] || null;
+
+    const volMap = (log) => {
+      const map = {};
+      (log.sets || []).forEach(s => {
+        const name = s.ejercicioNombre || s.ejercicio || 'Ejercicio';
+        const reps = Number(s.repsRealizadas != null ? s.repsRealizadas : s.reps) || 0;
+        const peso = _statsParsePesoKg(s.pesoUtilizado != null ? s.pesoUtilizado : s.peso);
+        map[name] = (map[name] || 0) + reps * peso;
+      });
+      return map;
+    };
+    const curVol = volMap(selected);
+    const prevVol = prev ? volMap(prev) : null;
+    const names = Object.keys(curVol);
+    if (prevVol) Object.keys(prevVol).forEach(n => { if (!names.includes(n)) names.push(n); });
+    const labels = names.slice(0, 6);
+    const seriesA = labels.map(n => curVol[n] || 0);
+    const seriesB = prevVol ? labels.map(n => prevVol[n] || 0) : null;
+
+    const compareHint = prev
+      ? `Comparando con ${_statsFormatFecha(prev.fecha)} · ${prev.diaNombre || ''}`
+      : 'Todavía no hay otro entrenamiento del mismo día para comparar.';
+
+    // Calendario
+    const now = new Date();
+    const offset = Number(appState.statsMonthOffset) || 0;
+    const viewDate = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+    const y = viewDate.getFullYear();
+    const m = viewDate.getMonth();
+    const lastDay = new Date(y, m + 1, 0).getDate();
+    let startPad = new Date(y, m, 1).getDay() - 1;
+    if (startPad < 0) startPad = 6;
+    const trained = new Set();
+    list.forEach(l => {
+      const d = new Date(l.fecha);
+      if (d.getFullYear() === y && d.getMonth() === m) trained.add(d.getDate());
+    });
+    let trainedCount = 0;
+    for (let d = 1; d <= lastDay; d++) if (trained.has(d)) trainedCount++;
+    const rate = (trainedCount / lastDay * 7).toFixed(1);
+    const monthLabel = viewDate.toLocaleDateString('es-AR', { month: 'long', year: 'numeric' });
+    let calCells = '';
+    for (let i = 0; i < startPad; i++) calCells += '<div class="stats-cal-cell empty"></div>';
+    for (let d = 1; d <= lastDay; d++) {
+      calCells += `<div class="stats-cal-cell${trained.has(d) ? ' trained' : ''}"></div>`;
+    }
+
+    // Datos para canvas (JSON en data attrs)
+    const chartPayload = encodeURIComponent(JSON.stringify({ labels, seriesA, seriesB }));
+
+    return `
+      <div class="stats-page">
+        <h2 class="stats-title">Estadísticas</h2>
+        <p class="stats-sub">Elegí un entrenamiento y mirá distribución, progreso y constancia.</p>
+
+        <section class="stats-card">
+          <label class="stats-label" for="statsSelectWorkout">Entrenamiento</label>
+          <select id="statsSelectWorkout" class="stats-select">${options}</select>
+          <p class="stats-hint">${compareHint}</p>
+        </section>
+
+        <section class="stats-card">
+          <div class="stats-card-head">
+            <h3>Distribución muscular</h3>
+            <span class="stats-badge">${muscleDist.length ? muscleDist.length + ' grupos' : '—'}</span>
+          </div>
+          <div class="stats-muscle-bars">${muscleHtml}</div>
+        </section>
+
+        <section class="stats-card">
+          <div class="stats-card-head">
+            <h3>Comparación</h3>
+            <span class="stats-badge">${prev ? 'vs anterior' : 'Solo este'}</span>
+          </div>
+          <p class="stats-hint">${prev
+            ? 'Volumen (reps × kg) por ejercicio vs el mismo día anterior.'
+            : 'Cuando repitas este día de rutina, vas a ver la comparación acá.'}</p>
+          <div class="stats-chart-wrap">
+            <canvas id="statsLineChart" width="640" height="280" data-chart="${chartPayload}"></canvas>
+          </div>
+          <div class="stats-legend">
+            <span><i style="background:#3b82f6"></i> Este entrenamiento</span>
+            ${prev ? '<span><i style="background:#94a3b8"></i> Anterior igual</span>' : ''}
+          </div>
+        </section>
+
+        <section class="stats-card">
+          <div class="stats-card-head">
+            <h3>Constancia</h3>
+            <div class="stats-month-nav">
+              <button type="button" class="stats-icon-btn" id="statsPrevMonth">‹</button>
+              <span>${monthLabel}</span>
+              <button type="button" class="stats-icon-btn" id="statsNextMonth">›</button>
+            </div>
+          </div>
+          <p class="stats-hint">${trainedCount}/${lastDay} días · ~${rate}×/semana</p>
+          <div class="stats-cal-weekdays"><span>L</span><span>M</span><span>X</span><span>J</span><span>V</span><span>S</span><span>D</span></div>
+          <div class="stats-cal-grid">${calCells}</div>
+          <div class="stats-cal-legend">
+            <span><i class="on"></i> Entrenó</span>
+            <span><i class="off"></i> Descanso</span>
+          </div>
+        </section>
+      </div>
+    `;
+  }
+
+  function _drawStatsLineChart(canvas) {
+    if (!canvas) return;
+    let payload = null;
+    try {
+      payload = JSON.parse(decodeURIComponent(canvas.getAttribute('data-chart') || '') || 'null');
+    } catch (_) { return; }
+    if (!payload || !payload.labels) return;
+    const labels = payload.labels;
+    const seriesA = payload.seriesA || [];
+    const seriesB = payload.seriesB;
+
+    const ctx = canvas.getContext('2d');
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = canvas.clientWidth || 320;
+    const cssH = 200;
+    canvas.width = Math.floor(cssW * dpr);
+    canvas.height = Math.floor(cssH * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    const W = cssW, H = cssH;
+    const pad = { t: 16, r: 12, b: 40, l: 36 };
+    const plotW = W - pad.l - pad.r;
+    const plotH = H - pad.t - pad.b;
+    ctx.clearRect(0, 0, W, H);
+
+    const all = seriesB ? seriesA.concat(seriesB) : seriesA.slice();
+    const maxY = Math.max(10, ...all) * 1.15;
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= 4; i++) {
+      const y = pad.t + (plotH * i) / 4;
+      ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke();
+    }
+
+    function xAt(i) {
+      if (labels.length <= 1) return pad.l + plotW / 2;
+      return pad.l + (plotW * i) / (labels.length - 1);
+    }
+    function yAt(v) { return pad.t + plotH - (v / maxY) * plotH; }
+
+    function strokeSeries(data, color) {
+      if (!data || !data.length) return;
+      ctx.beginPath();
+      data.forEach((v, i) => {
+        const x = xAt(i), y = yAt(v);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      });
+      ctx.strokeStyle = color; ctx.lineWidth = 2.5; ctx.lineJoin = 'round'; ctx.stroke();
+      data.forEach((v, i) => {
+        const x = xAt(i), y = yAt(v);
+        ctx.beginPath(); ctx.arc(x, y, 4.5, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill();
+        ctx.beginPath(); ctx.arc(x, y, 2, 0, Math.PI * 2); ctx.fillStyle = '#0a0a0c'; ctx.fill();
+      });
+    }
+
+    if (seriesB) strokeSeries(seriesB, '#94a3b8');
+    strokeSeries(seriesA, '#3b82f6');
+
+    ctx.fillStyle = '#8b8b96';
+    ctx.font = '10px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    labels.forEach((lab, i) => {
+      const short = lab.length > 11 ? lab.slice(0, 10) + '…' : lab;
+      ctx.fillText(short, xAt(i), H - 12);
+    });
+  }
+
+  function bindStatsEvents(logs) {
+    const list = logs || [];
+    document.getElementById('statsSelectWorkout')?.addEventListener('change', (e) => {
+      appState.statsSelectedLogId = e.target.value;
+      renderApp();
+    });
+    document.getElementById('statsPrevMonth')?.addEventListener('click', () => {
+      appState.statsMonthOffset = (Number(appState.statsMonthOffset) || 0) - 1;
+      renderApp();
+    });
+    document.getElementById('statsNextMonth')?.addEventListener('click', () => {
+      appState.statsMonthOffset = (Number(appState.statsMonthOffset) || 0) + 1;
+      renderApp();
+    });
+    requestAnimationFrame(() => _drawStatsLineChart(document.getElementById('statsLineChart')));
+  }
+
   // permitirEdicion: SOLO true cuando el alumno ve su PROPIO historial
   // (renderClientDashboard). El historial que el profesor ve de un alumno
   // (renderModalHistorialAlumno) llama esta misma función sin el flag,
@@ -4217,7 +4773,12 @@ appState.modalActivo = 'crear_rutina';
       renderApp();
     });
 
-    document.getElementById('navAvisosAlumno')?.addEventListener('click', toggleNotifDrawer);
+    document.getElementById('navStats')?.addEventListener('click', () => {
+      appState.tabCliente = 'stats';
+      appState.mostrarDrawerNotifs = false;
+      if (appState.statsMonthOffset == null) appState.statsMonthOffset = 0;
+      renderApp();
+    });
     document.getElementById('navAvisosProf')?.addEventListener('click', toggleNotifDrawer);
 
     document.getElementById('navAlumnos')?.addEventListener('click', () => {
@@ -5384,7 +5945,12 @@ alert("🚀 ¡Rutina propia creada! Ya podés empezar a entrenarla desde \"Mías
       renderApp();
     });
 
-    document.getElementById('navAvisosAlumno')?.addEventListener('click', toggleNotifDrawer);
+    document.getElementById('navStats')?.addEventListener('click', () => {
+      appState.tabCliente = 'stats';
+      appState.mostrarDrawerNotifs = false;
+      if (appState.statsMonthOffset == null) appState.statsMonthOffset = 0;
+      renderApp();
+    });
     document.getElementById('navAvisosProf')?.addEventListener('click', toggleNotifDrawer);
 
     document.getElementById('navAlumnos')?.addEventListener('click', () => {
