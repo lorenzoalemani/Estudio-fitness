@@ -4825,10 +4825,17 @@ appState.modalActivo = 'crear_rutina';
       renderApp();
     });
 
-    document.getElementById('navHistorial')?.addEventListener('click', () => {
+    document.getElementById('navHistorial')?.addEventListener('click', async () => {
       appState.tabCliente = 'historial';
       appState.mostrarDrawerNotifs = false;
       renderApp();
+      // Re-sync para traer series completas desde Supabase
+      if (appState.usuarioActual?.rol === 'alumno' && window.gymStore) {
+        try {
+          await window.gymStore.syncWithSupabase(appState.usuarioActual.data.id);
+          renderApp();
+        } catch (_) {}
+      }
     });
 
     document.getElementById('navStats')?.addEventListener('click', () => {
@@ -5997,10 +6004,17 @@ alert("🚀 ¡Rutina propia creada! Ya podés empezar a entrenarla desde \"Mías
       renderApp();
     });
 
-    document.getElementById('navHistorial')?.addEventListener('click', () => {
+    document.getElementById('navHistorial')?.addEventListener('click', async () => {
       appState.tabCliente = 'historial';
       appState.mostrarDrawerNotifs = false;
       renderApp();
+      // Re-sync para traer series completas desde Supabase
+      if (appState.usuarioActual?.rol === 'alumno' && window.gymStore) {
+        try {
+          await window.gymStore.syncWithSupabase(appState.usuarioActual.data.id);
+          renderApp();
+        } catch (_) {}
+      }
     });
 
     document.getElementById('navStats')?.addEventListener('click', () => {

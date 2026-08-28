@@ -378,13 +378,18 @@ class GymStore {
           freshData.workoutLogs.forEach(sbLog => {
             const idx = this.data.workoutLogs.findIndex(w => w.id === sbLog.id);
             if (idx >= 0) {
-              // No pisar series locales con un array vacío del server
-              // (pasa si RLS/query de workout_log_sets falla o aún no sincronizó).
+              // Preferir el lado que tenga MÁS series (no borrar detalle del historial)
               const local = this.data.workoutLogs[idx];
               const remoteSets = Array.isArray(sbLog.sets) ? sbLog.sets : [];
               const localSets = Array.isArray(local.sets) ? local.sets : [];
-              const sets = remoteSets.length > 0 ? remoteSets : localSets;
-              this.data.workoutLogs[idx] = { ...local, ...sbLog, sets };
+              const sets = remoteSets.length >= localSets.length ? remoteSets : localSets;
+              this.data.workoutLogs[idx] = {
+                ...local,
+                ...sbLog,
+                sets,
+                // conservar puntos locales si el remote no trae
+                puntos: sbLog.puntos != null ? sbLog.puntos : local.puntos
+              };
             } else {
               this.data.workoutLogs.unshift(sbLog);
             }

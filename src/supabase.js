@@ -173,7 +173,7 @@ class SupabaseEngine {
         }
       }
 
-      // 3. Historial de entrenamientos
+      // 3. Historial de entrenamientos + series
       const mapSetRow = (s) => ({
         ejercicioId: s.exercise_goal_id || s.ejercicio_id || null,
         ejercicioNombre: s.exercise_nombre || s.ejercicio_nombre || s.nombre || s.exercise_name || '',
@@ -183,20 +183,55 @@ class SupabaseEngine {
         comentarioAlumno: s.comentario_alumno || s.comentario || ''
       });
 
-      const setsByLog = {};
-      (resLogSets.data || []).forEach(s => {
-        const lid = s.workout_log_id;
-        if (!lid) return;
-        if (!setsByLog[lid]) setsByLog[lid] = [];
-        setsByLog[lid].push(mapSetRow(s));
-      });
+      if (resLogSets.error) {
+        console.warn('⚠️ SELECT workout_log_sets falló:', resLogSets.error.message || resLogSets.error);
+      } else {
+        console.log('📦 workout_log_sets recibidos:', (resLogSets.data || []).length);
+      }
+      if (resLogs.error) {
+        console.warn('⚠️ SELECT workout_logs falló:', resLogs.error.message || resLogs.error);
+      } else {
+        console.log('📦 workout_logs recibidos:', (resLogs.data || []).length);
+      }
 
-      const workoutLogs = resLogs.error
+      const setsByLog = {};
+      const addSet = (lid, row) => {
+        if (!lid) return;
+        const key = String(lid);
+        if (!setsByLog[key]) setsByLog[key] = [];
+        setsByLog[key].push(row);
+      };
+      (resLogSets.data || []).forEach(s => addSet(s.workout_log_id, mapSetRow(s)));
+
+      // Si el SELECT global de sets vino vacío pero hay logs, pedir series por IDs
+      // (más compatible con RLS y evita perder historial con detalle).
+      let logRows = resLogs.error ? null : (resLogs.data || []);
+      if (logRows && logRows.length && Object.keys(setsByLog).length === 0) {
+        const ids = logRows.map(l => l.id).filter(Boolean);
+        for (let i = 0; i < ids.length; i += 50) {
+          const chunk = ids.slice(i, i + 50);
+          try {
+            const { data: extraSets, error: extraErr } = await this.client
+              .from('workout_log_sets')
+              .select('*')
+              .in('workout_log_id', chunk);
+            if (extraErr) {
+              console.warn('⚠️ SELECT sets por ids falló:', extraErr.message);
+            } else {
+              (extraSets || []).forEach(s => addSet(s.workout_log_id, mapSetRow(s)));
+            }
+          } catch (e) {
+            console.warn('⚠️ Excepción sets por ids:', e && e.message);
+          }
+        }
+        console.log('📦 sets tras re-fetch por ids, logs con series:', Object.keys(setsByLog).length);
+      }
+
+      const workoutLogs = logRows === null
         ? null
-        : (resLogs.data || []).map(l => {
-            // Preferir series anidadas del join; si no, las del SELECT plano
+        : logRows.map(l => {
             const nested = Array.isArray(l.workout_log_sets) ? l.workout_log_sets.map(mapSetRow) : [];
-            const flat = setsByLog[l.id] || [];
+            const flat = setsByLog[String(l.id)] || setsByLog[l.id] || [];
             const sets = nested.length > 0 ? nested : flat;
             return {
               id: l.id,
@@ -597,32 +632,58 @@ const { data: rpcData, error: rpcErr } = await this.client.rpc(
         return;
       }
 
+      // IMPORTANTE: NO mandar exercise_goal_id.
+      // Si el UUID no existe en exercise_goals, Postgres rechaza el INSERT por FK
+      // y las series nunca se guardaban (workout_logs sí, sets = 0).
+      // Para el historial alcanza con exercise_nombre + reps + peso.
       const sets = Array.isArray(log.sets) ? log.sets : [];
-      let setsOk = 0;
-      let setsFail = 0;
-      for (const s of sets) {
-        const row = {
+      const rows = sets.map((s, i) => {
+        const repsRaw = s.repsRealizadas != null ? s.repsRealizadas : s.reps;
+        let reps = parseInt(String(repsRaw).replace(/[^\d-]/g, ''), 10);
+        if (!Number.isFinite(reps) || reps < 0) reps = 0;
+
+        let peso = s.pesoUtilizado != null ? s.pesoUtilizado : s.peso;
+        if (peso == null || String(peso).trim() === '') peso = '0';
+        peso = String(peso);
+
+        const nombre = (s.ejercicioNombre || s.ejercicio || s.nombre || 'Ejercicio').toString().trim() || 'Ejercicio';
+        let setNum = parseInt(s.setNumero, 10);
+        if (!Number.isFinite(setNum) || setNum < 1) setNum = i + 1;
+
+        return {
           workout_log_id:    logUuid,
-          exercise_nombre:   s.ejercicioNombre || s.ejercicio || s.nombre || 'Ejercicio',
-          set_numero:        s.setNumero != null ? s.setNumero : 1,
-          reps_realizadas:   s.repsRealizadas != null ? s.repsRealizadas : (s.reps != null ? s.reps : null),
-          peso_utilizado:    s.pesoUtilizado != null ? s.pesoUtilizado : (s.peso != null ? String(s.peso) : null),
+          exercise_nombre:   nombre,
+          set_numero:        setNum,
+          reps_realizadas:   reps,
+          peso_utilizado:    peso,
           comentario_alumno: s.comentarioAlumno || null
         };
-        // exercise_goal_id solo si es UUID real; un id local (ej "ej-3") rompe el INSERT
-        const eg = s.ejercicioId || s.exercise_goal_id;
-        if (eg && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(eg))) {
-          row.exercise_goal_id = eg;
-        }
-        const { error: sErr } = await this.client.from('workout_log_sets').insert(row);
-        if (sErr) {
-          setsFail++;
-          console.error('❌ Error INSERT workout_log_sets:', sErr.message || sErr, row);
+      });
+
+      let setsOk = 0;
+      let setsFail = 0;
+      // Insert en lote (más rápido); si falla, reintento fila por fila
+      if (rows.length) {
+        const { error: batchErr } = await this.client.from('workout_log_sets').insert(rows);
+        if (!batchErr) {
+          setsOk = rows.length;
         } else {
-          setsOk++;
+          console.warn('⚠️ Insert lote de series falló, reintento 1x1:', batchErr.message || batchErr);
+          for (const row of rows) {
+            const { error: sErr } = await this.client.from('workout_log_sets').insert(row);
+            if (sErr) {
+              setsFail++;
+              console.error('❌ Error INSERT workout_log_sets:', sErr.message || sErr, row);
+            } else {
+              setsOk++;
+            }
+          }
         }
       }
-      console.log('✅ Entrenamiento persistido en Supabase.', { logUuid, setsOk, setsFail, total: sets.length });
+      console.log('✅ Entrenamiento persistido en Supabase.', { logUuid, setsOk, setsFail, total: rows.length });
+      if (setsFail > 0 && setsOk === 0) {
+        console.error('❌ Ninguna serie se guardó. Revisá consola / RLS / NOT NULL.');
+      }
     } catch (err) {
       console.error('❌ Excepción guardando entrenamiento real en Supabase DB:', err);
     }
