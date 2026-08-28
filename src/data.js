@@ -1679,12 +1679,9 @@ class GymStore {
         // Refresca el ranking en memoria para que el puntaje recién ganado
         // se vea de inmediato, sin esperar al próximo visibilitychange/sync.
         await this.forceRefreshRanking();
-        
-        // Fuerza el re-renderizado de la UI con el ranking actualizado
-        if (typeof window.renderApp === 'function') {
-          console.log("🎨 guardarEntrenamientoReal: Re-renderizando UI con ranking actualizado...");
-          window.renderApp();
-        }
+        // NO llamar renderApp acá: el handler de "Finalizar" ya re-renderiza
+        // al terminar. Un render intermedio recreaba el botón habilitado y
+        // permitía un segundo toque → doble entrenamiento + mensajes cruzados.
       }
     }
 

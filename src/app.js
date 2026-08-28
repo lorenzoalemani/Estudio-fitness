@@ -105,6 +105,7 @@ document.addEventListener('DOMContentLoaded', () => {
     rutinaAEliminarId: null, // rutina pendiente de confirmación de borrado (panel profesor)
     logEnEdicionId: null,    // entrenamiento que el alumno está editando (ventana 2hs)
     logABorrarId: null,       // entrenamiento pendiente de confirmar borrado
+    finalizandoEntrenamiento: false, // candado anti doble-toque al finalizar
     mostrarDrawerNotifs: false,
     workoutDraftSets: {},       // Estado temporal del entrenamiento en progreso por serie
     borradorEntrenamientoDetectado: null, // borrador recuperado de localStorage, pendiente de confirmar Continuar/Descartar
@@ -1816,6 +1817,7 @@ document.addEventListener('DOMContentLoaded', () => {
     rutinaAEliminarId: null, // rutina pendiente de confirmación de borrado (panel profesor)
     logEnEdicionId: null,    // entrenamiento que el alumno está editando (ventana 2hs)
     logABorrarId: null,       // entrenamiento pendiente de confirmar borrado
+    finalizandoEntrenamiento: false, // candado anti doble-toque al finalizar
     mostrarDrawerNotifs: false,
     workoutDraftSets: {},       // Estado temporal del entrenamiento en progreso por serie
     borradorEntrenamientoDetectado: null, // borrador recuperado de localStorage, pendiente de confirmar Continuar/Descartar
@@ -4328,6 +4330,10 @@ appState.modalActivo = 'crear_rutina';
     });
 
     document.getElementById('btnFinishWorkout')?.addEventListener('click', async (e) => {
+      // Candado: evita doble toque / re-entrada mientras guarda
+      if (appState.finalizandoEntrenamiento) return;
+      appState.finalizandoEntrenamiento = true;
+
       const dia = appState.diaActivoEntrenamiento;
       const alumno = appState.usuarioActual.data;
       const rutinaActiva = store.getRutinaPorId(appState.rutinaSeleccionadaId) || store.getRutinaActiva(alumno.id);
@@ -4337,7 +4343,7 @@ appState.modalActivo = 'crear_rutina';
         const ejData = appState.workoutDraftSets[ejId];
         ejData.sets.forEach(s => {
           setsLogArr.push({
-            ejercicioId:       ejId,              // para vincular exercise_goal_id en Supabase
+            ejercicioId:       ejId,
             ejercicioNombre:   ejData.nombre,
             setNumero:         s.setNumero,
             repsRealizadas:    s.reps,
@@ -4347,52 +4353,58 @@ appState.modalActivo = 'crear_rutina';
         });
       });
 
-      // VALIDACIÓN CRÍTICA: Verificar que existe una rutina activa válida
-      // Si no hay rutina en Supabase, el alumno debe contactar al profesor
       if (!rutinaActiva) {
+        appState.finalizandoEntrenamiento = false;
         alert('❌ No tienes una rutina activa asignada.\n\nContacta a tu profesor para que te asigne una rutina de entrenamiento.');
         renderApp();
         return;
       }
 
-      // guardarEntrenamientoReal es async: guarda local de forma optimista y
-      // espera la confirmación autoritativa del servidor (RPC de puntos) antes
-      // de mostrar el mensaje final, así el alumno nunca ve un número de
-      // puntos que el servidor va a corregir un segundo después.
       const btn = e.currentTarget;
-      btn.disabled = true;
-      btn.textContent = '⏳ Guardando...';
-
-      const logGuardado = await store.guardarEntrenamientoReal({
-        alumnoId:         alumno.id,
-        rutinaId:         rutinaActiva.id,
-        diaId:            dia.id,
-        diaNombre:        dia.nombre,
-        diaNumero:        dia.diaNumero || 1,    // número real del día en la rutina
-        setsLog:          setsLogArr,
-        comentarioGeneral: appState.workoutGeneralComment || ''
-      });
-
-      // VALIDACIÓN CRÍTICA: Verificar que la RPC confirmó los puntos en el servidor
-      const puntosConfirmadosPorServidor = logGuardado?.puntosConfirmadosPorServidor === true;
-      
-      if (!puntosConfirmadosPorServidor) {
-        // La RPC falló silenciosamente → No se pueden dar por válidos los puntos
-        alert(`⚠️ Entrenamiento guardado en tu historial, pero no se pudieron guardar los puntos en el servidor.\n\nIntentaremos de nuevo automáticamente. Si el problema persiste, contactá al profesor.`);
-      } else {
-        // La RPC fue exitosa → Mostrar el mensaje de éxito real
-        const puntosGanados = Math.round((logGuardado?.puntos || 0));
-        const bonusTexto = logGuardado?.bonusRacha ? ` (incluye +${logGuardado.bonusRacha} 🔥 bonus por racha semanal)` : '';
-        const mensajePuntos = logGuardado?.yaHuboEntrenamientoHoy
-          ? `Ya sumaste puntos hoy con otro entrenamiento — este quedó guardado en tu historial, pero no otorga puntos adicionales (solo se otorgan puntos una vez por día).`
-          : `+${puntosGanados} puntos ganados${bonusTexto}`;
-        alert(`🏆 ¡Entrenamiento completado y guardado en tu historial!\n${mensajePuntos}`);
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = '⏳ Guardando...';
       }
-      clearWorkoutDraft();
-      appState.diaActivoEntrenamiento = null;
-      appState.tabCliente = 'historial';
-      renderApp();
+
+      try {
+        const logGuardado = await store.guardarEntrenamientoReal({
+          alumnoId:         alumno.id,
+          rutinaId:         rutinaActiva.id,
+          diaId:            dia.id,
+          diaNombre:        dia.nombre,
+          diaNumero:        dia.diaNumero || 1,
+          setsLog:          setsLogArr,
+          comentarioGeneral: appState.workoutGeneralComment || ''
+        });
+
+        const puntosConfirmadosPorServidor = logGuardado?.puntosConfirmadosPorServidor === true;
+
+        if (!puntosConfirmadosPorServidor) {
+          alert('⚠️ Entrenamiento guardado en tu historial, pero no se pudieron confirmar los puntos en el servidor.\n\nSi el problema persiste, contactá al profesor.');
+        } else if (logGuardado?.yaHuboEntrenamientoHoy) {
+          alert('🏆 ¡Entrenamiento completado y guardado en tu historial!\nYa sumaste puntos hoy con otro entrenamiento — este quedó en el historial, pero no otorga puntos adicionales (solo una vez por día).');
+        } else {
+          const puntosGanados = Math.round((logGuardado?.puntos || 0));
+          const bonusTexto = logGuardado?.bonusRacha ? ` (incluye +${logGuardado.bonusRacha} 🔥 bonus por racha)` : '';
+          alert(`🏆 ¡Entrenamiento completado y guardado en tu historial!\n+${puntosGanados} puntos ganados${bonusTexto}`);
+        }
+
+        clearWorkoutDraft();
+        appState.diaActivoEntrenamiento = null;
+        appState.tabCliente = 'historial';
+      } catch (err) {
+        console.error('Error al finalizar entrenamiento:', err);
+        alert('❌ No se pudo guardar el entrenamiento: ' + ((err && err.message) || 'error desconocido'));
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = '✅ Finalizar Entrenamiento';
+        }
+      } finally {
+        appState.finalizandoEntrenamiento = false;
+        renderApp();
+      }
     });
+
 
     const cerrarModalGenerico = () => {
       appState.modalActivo = null;
@@ -5485,6 +5497,10 @@ alert("🚀 ¡Rutina propia creada! Ya podés empezar a entrenarla desde \"Mías
     });
 
     document.getElementById('btnFinishWorkout')?.addEventListener('click', async (e) => {
+      // Candado: evita doble toque / re-entrada mientras guarda
+      if (appState.finalizandoEntrenamiento) return;
+      appState.finalizandoEntrenamiento = true;
+
       const dia = appState.diaActivoEntrenamiento;
       const alumno = appState.usuarioActual.data;
       const rutinaActiva = store.getRutinaPorId(appState.rutinaSeleccionadaId) || store.getRutinaActiva(alumno.id);
@@ -5494,7 +5510,7 @@ alert("🚀 ¡Rutina propia creada! Ya podés empezar a entrenarla desde \"Mías
         const ejData = appState.workoutDraftSets[ejId];
         ejData.sets.forEach(s => {
           setsLogArr.push({
-            ejercicioId:       ejId,              // para vincular exercise_goal_id en Supabase
+            ejercicioId:       ejId,
             ejercicioNombre:   ejData.nombre,
             setNumero:         s.setNumero,
             repsRealizadas:    s.reps,
@@ -5504,52 +5520,58 @@ alert("🚀 ¡Rutina propia creada! Ya podés empezar a entrenarla desde \"Mías
         });
       });
 
-      // VALIDACIÓN CRÍTICA: Verificar que existe una rutina activa válida
-      // Si no hay rutina en Supabase, el alumno debe contactar al profesor
       if (!rutinaActiva) {
+        appState.finalizandoEntrenamiento = false;
         alert('❌ No tienes una rutina activa asignada.\n\nContacta a tu profesor para que te asigne una rutina de entrenamiento.');
         renderApp();
         return;
       }
 
-      // guardarEntrenamientoReal es async: guarda local de forma optimista y
-      // espera la confirmación autoritativa del servidor (RPC de puntos) antes
-      // de mostrar el mensaje final, así el alumno nunca ve un número de
-      // puntos que el servidor va a corregir un segundo después.
       const btn = e.currentTarget;
-      btn.disabled = true;
-      btn.textContent = '⏳ Guardando...';
-
-      const logGuardado = await store.guardarEntrenamientoReal({
-        alumnoId:         alumno.id,
-        rutinaId:         rutinaActiva.id,
-        diaId:            dia.id,
-        diaNombre:        dia.nombre,
-        diaNumero:        dia.diaNumero || 1,    // número real del día en la rutina
-        setsLog:          setsLogArr,
-        comentarioGeneral: appState.workoutGeneralComment || ''
-      });
-
-      // VALIDACIÓN CRÍTICA: Verificar que la RPC confirmó los puntos en el servidor
-      const puntosConfirmadosPorServidor = logGuardado?.puntosConfirmadosPorServidor === true;
-      
-      if (!puntosConfirmadosPorServidor) {
-        // La RPC falló silenciosamente → No se pueden dar por válidos los puntos
-        alert(`⚠️ Entrenamiento guardado en tu historial, pero no se pudieron guardar los puntos en el servidor.\n\nIntentaremos de nuevo automáticamente. Si el problema persiste, contactá al profesor.`);
-      } else {
-        // La RPC fue exitosa → Mostrar el mensaje de éxito real
-        const puntosGanados = Math.round((logGuardado?.puntos || 0));
-        const bonusTexto = logGuardado?.bonusRacha ? ` (incluye +${logGuardado.bonusRacha} 🔥 bonus por racha semanal)` : '';
-        const mensajePuntos = logGuardado?.yaHuboEntrenamientoHoy
-          ? `Ya sumaste puntos hoy con otro entrenamiento — este quedó guardado en tu historial, pero no otorga puntos adicionales (solo se otorgan puntos una vez por día).`
-          : `+${puntosGanados} puntos ganados${bonusTexto}`;
-        alert(`🏆 ¡Entrenamiento completado y guardado en tu historial!\n${mensajePuntos}`);
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = '⏳ Guardando...';
       }
-      clearWorkoutDraft();
-      appState.diaActivoEntrenamiento = null;
-      appState.tabCliente = 'historial';
-      renderApp();
+
+      try {
+        const logGuardado = await store.guardarEntrenamientoReal({
+          alumnoId:         alumno.id,
+          rutinaId:         rutinaActiva.id,
+          diaId:            dia.id,
+          diaNombre:        dia.nombre,
+          diaNumero:        dia.diaNumero || 1,
+          setsLog:          setsLogArr,
+          comentarioGeneral: appState.workoutGeneralComment || ''
+        });
+
+        const puntosConfirmadosPorServidor = logGuardado?.puntosConfirmadosPorServidor === true;
+
+        if (!puntosConfirmadosPorServidor) {
+          alert('⚠️ Entrenamiento guardado en tu historial, pero no se pudieron confirmar los puntos en el servidor.\n\nSi el problema persiste, contactá al profesor.');
+        } else if (logGuardado?.yaHuboEntrenamientoHoy) {
+          alert('🏆 ¡Entrenamiento completado y guardado en tu historial!\nYa sumaste puntos hoy con otro entrenamiento — este quedó en el historial, pero no otorga puntos adicionales (solo una vez por día).');
+        } else {
+          const puntosGanados = Math.round((logGuardado?.puntos || 0));
+          const bonusTexto = logGuardado?.bonusRacha ? ` (incluye +${logGuardado.bonusRacha} 🔥 bonus por racha)` : '';
+          alert(`🏆 ¡Entrenamiento completado y guardado en tu historial!\n+${puntosGanados} puntos ganados${bonusTexto}`);
+        }
+
+        clearWorkoutDraft();
+        appState.diaActivoEntrenamiento = null;
+        appState.tabCliente = 'historial';
+      } catch (err) {
+        console.error('Error al finalizar entrenamiento:', err);
+        alert('❌ No se pudo guardar el entrenamiento: ' + ((err && err.message) || 'error desconocido'));
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = '✅ Finalizar Entrenamiento';
+        }
+      } finally {
+        appState.finalizandoEntrenamiento = false;
+        renderApp();
+      }
     });
+
 
     const cerrarModalGenerico = () => {
       appState.modalActivo = null;
