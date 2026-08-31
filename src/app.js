@@ -1514,6 +1514,14 @@ document.addEventListener('DOMContentLoaded', () => {
       const rid = l.rutinaId || 'sin-rutina';
       if (!rutinaIdsEnLogs.includes(rid)) rutinaIdsEnLogs.push(rid);
     });
+    // Incluir rutinas del store (alumno) aunque todavía no tengan logs
+    const alumnoIdStats = (appState.usuarioActual && appState.usuarioActual.data && appState.usuarioActual.data.id)
+      ? String(appState.usuarioActual.data.id) : null;
+    rutinasStore.forEach(r => {
+      if (!r || !r.id) return;
+      if (alumnoIdStats && r.alumnoId && String(r.alumnoId) !== alumnoIdStats) return;
+      if (!rutinaIdsEnLogs.includes(r.id)) rutinaIdsEnLogs.push(r.id);
+    });
     const rutinaOpciones = rutinaIdsEnLogs.map(rid => {
       const r = rutinasStore.find(x => x.id === rid);
       const titulo = r ? r.titulo : (rid === 'sin-rutina' ? 'Sin rutina' : 'Rutina');
@@ -1526,13 +1534,24 @@ document.addEventListener('DOMContentLoaded', () => {
     const rutinaIdActiva = appState.statsSelectedRutinaId;
 
     const logsDeRutina = list.filter(l => (l.rutinaId || 'sin-rutina') === rutinaIdActiva);
-    // Días únicos por nombre (pecho / espalda / pierna…), sin importar cuántas veces se repitieron
+    const rutinaObj = rutinasStore.find(x => x.id === rutinaIdActiva) || null;
+
+    // Días: de la rutina actual (se actualiza al editar) + los que aparezcan en logs
     const diasMap = new Map();
+    if (rutinaObj && Array.isArray(rutinaObj.dias)) {
+      rutinaObj.dias.forEach(d => {
+        const fake = { diaNombre: d.nombre, diaId: d.id, diaNumero: d.diaNumero };
+        const key = _statsDiaKey(fake);
+        if (!key) return;
+        if (!diasMap.has(key)) diasMap.set(key, { key, label: d.nombre || key, dayObj: d });
+        else if (!diasMap.get(key).dayObj) diasMap.get(key).dayObj = d;
+      });
+    }
     logsDeRutina.forEach(l => {
       const key = _statsDiaKey(l);
       if (!key) return;
       if (!diasMap.has(key)) {
-        diasMap.set(key, { key, label: l.diaNombre || key });
+        diasMap.set(key, { key, label: l.diaNombre || key, dayObj: null });
       }
     });
     const diasOpciones = Array.from(diasMap.values());
@@ -1541,8 +1560,9 @@ document.addEventListener('DOMContentLoaded', () => {
       appState.statsSelectedDiaKey = diasOpciones.length ? diasOpciones[0].key : null;
     }
     const diaKeyActiva = appState.statsSelectedDiaKey;
+    const diaMeta = diasOpciones.find(d => d.key === diaKeyActiva) || null;
 
-    // Sesión de referencia = la más reciente de esa rutina + ese día
+    // Sesión de referencia (gráfico de comparación) = la más reciente de esa rutina + ese día
     const logsDelDia = logsDeRutina
       .filter(l => _statsDiaKey(l) === diaKeyActiva)
       .sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
@@ -1556,14 +1576,34 @@ document.addEventListener('DOMContentLoaded', () => {
       `<option value="${d.key}" ${d.key === diaKeyActiva ? 'selected' : ''}>${d.label}</option>`
     ).join('');
 
-    // Distribución muscular por series
+    // Distribución muscular: según la RUTINA ACTUAL (ejercicios del día),
+    // así al editar la rutina se actualiza de inmediato. Si no hay día en la
+    // rutina, se usa la última sesión registrada como fallback.
     const muscleCounts = {};
     let totalSets = 0;
-    (selected.sets || []).forEach(s => {
-      const m = _statsMuscleOf(s.ejercicioNombre || s.ejercicio || s.nombre || '');
-      muscleCounts[m] = (muscleCounts[m] || 0) + 1;
-      totalSets++;
-    });
+    let muscleFuente = 'rutina';
+    const ejerciciosRutinaDia = (diaMeta && diaMeta.dayObj && Array.isArray(diaMeta.dayObj.ejercicios))
+      ? diaMeta.dayObj.ejercicios
+      : null;
+
+    if (ejerciciosRutinaDia && ejerciciosRutinaDia.length) {
+      ejerciciosRutinaDia.forEach(ej => {
+        // Entrada en calor no cuenta en la distribución principal
+        if (ej.esEntradaEnCalor) return;
+        const m = _statsMuscleOf(ej.nombre || '');
+        const series = Number(ej.seriesTarget != null ? ej.seriesTarget : ej.series) || 1;
+        muscleCounts[m] = (muscleCounts[m] || 0) + series;
+        totalSets += series;
+      });
+    }
+    if (totalSets === 0) {
+      muscleFuente = 'sesion';
+      (selected.sets || []).forEach(s => {
+        const m = _statsMuscleOf(s.ejercicioNombre || s.ejercicio || s.nombre || '');
+        muscleCounts[m] = (muscleCounts[m] || 0) + 1;
+        totalSets++;
+      });
+    }
     const muscleDist = Object.entries(muscleCounts)
       .map(([name, n]) => ({ name, pct: totalSets ? Math.round((n / totalSets) * 100) : 0, n }))
       .sort((a, b) => b.pct - a.pct);
@@ -1575,7 +1615,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <div class="stats-muscle-track"><div class="stats-muscle-fill" style="width:${d.pct}%"></div></div>
             <div class="stats-muscle-pct">${d.pct}%</div>
           </div>`).join('')
-      : `<p class="stats-empty">Sin series guardadas para este entrenamiento. Si es un entrenamiento viejo, puede que no se hayan sincronizado las series. Los nuevos sí se guardan completos.</p>`;
+      : `<p class="stats-empty">No hay ejercicios en este día de la rutina ni series en el historial.</p>`;
 
     // Comparación multi-línea: una línea por sesión comparable (gris) + actual (azul)
     // Eje X = ejercicios del entrenamiento actual; Y = volumen (reps × kg)
@@ -1704,8 +1744,11 @@ document.addEventListener('DOMContentLoaded', () => {
         <section class="stats-card">
           <div class="stats-card-head">
             <h3>Distribución muscular</h3>
-            <span class="stats-badge">${muscleDist.length ? muscleDist.length + ' grupos' : '—'}</span>
+            <span class="stats-badge">${muscleFuente === 'rutina' ? 'Según rutina' : 'Última sesión'}${muscleDist.length ? ' · ' + muscleDist.length + ' grupos' : ''}</span>
           </div>
+          <p class="stats-hint">${muscleFuente === 'rutina'
+            ? 'Se calcula con los ejercicios actuales de este día en la rutina (se actualiza al editarla).'
+            : 'No se encontró el día en la rutina; se usa la última sesión registrada.'}</p>
           <div class="stats-muscle-bars">${muscleHtml}</div>
         </section>
 
@@ -3743,6 +3786,14 @@ document.addEventListener('DOMContentLoaded', () => {
       const rid = l.rutinaId || 'sin-rutina';
       if (!rutinaIdsEnLogs.includes(rid)) rutinaIdsEnLogs.push(rid);
     });
+    // Incluir rutinas del store (alumno) aunque todavía no tengan logs
+    const alumnoIdStats = (appState.usuarioActual && appState.usuarioActual.data && appState.usuarioActual.data.id)
+      ? String(appState.usuarioActual.data.id) : null;
+    rutinasStore.forEach(r => {
+      if (!r || !r.id) return;
+      if (alumnoIdStats && r.alumnoId && String(r.alumnoId) !== alumnoIdStats) return;
+      if (!rutinaIdsEnLogs.includes(r.id)) rutinaIdsEnLogs.push(r.id);
+    });
     const rutinaOpciones = rutinaIdsEnLogs.map(rid => {
       const r = rutinasStore.find(x => x.id === rid);
       const titulo = r ? r.titulo : (rid === 'sin-rutina' ? 'Sin rutina' : 'Rutina');
@@ -3755,13 +3806,24 @@ document.addEventListener('DOMContentLoaded', () => {
     const rutinaIdActiva = appState.statsSelectedRutinaId;
 
     const logsDeRutina = list.filter(l => (l.rutinaId || 'sin-rutina') === rutinaIdActiva);
-    // Días únicos por nombre (pecho / espalda / pierna…), sin importar cuántas veces se repitieron
+    const rutinaObj = rutinasStore.find(x => x.id === rutinaIdActiva) || null;
+
+    // Días: de la rutina actual (se actualiza al editar) + los que aparezcan en logs
     const diasMap = new Map();
+    if (rutinaObj && Array.isArray(rutinaObj.dias)) {
+      rutinaObj.dias.forEach(d => {
+        const fake = { diaNombre: d.nombre, diaId: d.id, diaNumero: d.diaNumero };
+        const key = _statsDiaKey(fake);
+        if (!key) return;
+        if (!diasMap.has(key)) diasMap.set(key, { key, label: d.nombre || key, dayObj: d });
+        else if (!diasMap.get(key).dayObj) diasMap.get(key).dayObj = d;
+      });
+    }
     logsDeRutina.forEach(l => {
       const key = _statsDiaKey(l);
       if (!key) return;
       if (!diasMap.has(key)) {
-        diasMap.set(key, { key, label: l.diaNombre || key });
+        diasMap.set(key, { key, label: l.diaNombre || key, dayObj: null });
       }
     });
     const diasOpciones = Array.from(diasMap.values());
@@ -3770,8 +3832,9 @@ document.addEventListener('DOMContentLoaded', () => {
       appState.statsSelectedDiaKey = diasOpciones.length ? diasOpciones[0].key : null;
     }
     const diaKeyActiva = appState.statsSelectedDiaKey;
+    const diaMeta = diasOpciones.find(d => d.key === diaKeyActiva) || null;
 
-    // Sesión de referencia = la más reciente de esa rutina + ese día
+    // Sesión de referencia (gráfico de comparación) = la más reciente de esa rutina + ese día
     const logsDelDia = logsDeRutina
       .filter(l => _statsDiaKey(l) === diaKeyActiva)
       .sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
@@ -3785,14 +3848,34 @@ document.addEventListener('DOMContentLoaded', () => {
       `<option value="${d.key}" ${d.key === diaKeyActiva ? 'selected' : ''}>${d.label}</option>`
     ).join('');
 
-    // Distribución muscular por series
+    // Distribución muscular: según la RUTINA ACTUAL (ejercicios del día),
+    // así al editar la rutina se actualiza de inmediato. Si no hay día en la
+    // rutina, se usa la última sesión registrada como fallback.
     const muscleCounts = {};
     let totalSets = 0;
-    (selected.sets || []).forEach(s => {
-      const m = _statsMuscleOf(s.ejercicioNombre || s.ejercicio || s.nombre || '');
-      muscleCounts[m] = (muscleCounts[m] || 0) + 1;
-      totalSets++;
-    });
+    let muscleFuente = 'rutina';
+    const ejerciciosRutinaDia = (diaMeta && diaMeta.dayObj && Array.isArray(diaMeta.dayObj.ejercicios))
+      ? diaMeta.dayObj.ejercicios
+      : null;
+
+    if (ejerciciosRutinaDia && ejerciciosRutinaDia.length) {
+      ejerciciosRutinaDia.forEach(ej => {
+        // Entrada en calor no cuenta en la distribución principal
+        if (ej.esEntradaEnCalor) return;
+        const m = _statsMuscleOf(ej.nombre || '');
+        const series = Number(ej.seriesTarget != null ? ej.seriesTarget : ej.series) || 1;
+        muscleCounts[m] = (muscleCounts[m] || 0) + series;
+        totalSets += series;
+      });
+    }
+    if (totalSets === 0) {
+      muscleFuente = 'sesion';
+      (selected.sets || []).forEach(s => {
+        const m = _statsMuscleOf(s.ejercicioNombre || s.ejercicio || s.nombre || '');
+        muscleCounts[m] = (muscleCounts[m] || 0) + 1;
+        totalSets++;
+      });
+    }
     const muscleDist = Object.entries(muscleCounts)
       .map(([name, n]) => ({ name, pct: totalSets ? Math.round((n / totalSets) * 100) : 0, n }))
       .sort((a, b) => b.pct - a.pct);
@@ -3804,7 +3887,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <div class="stats-muscle-track"><div class="stats-muscle-fill" style="width:${d.pct}%"></div></div>
             <div class="stats-muscle-pct">${d.pct}%</div>
           </div>`).join('')
-      : `<p class="stats-empty">Sin series guardadas para este entrenamiento. Si es un entrenamiento viejo, puede que no se hayan sincronizado las series. Los nuevos sí se guardan completos.</p>`;
+      : `<p class="stats-empty">No hay ejercicios en este día de la rutina ni series en el historial.</p>`;
 
     // Comparación multi-línea: una línea por sesión comparable (gris) + actual (azul)
     // Eje X = ejercicios del entrenamiento actual; Y = volumen (reps × kg)
@@ -3933,8 +4016,11 @@ document.addEventListener('DOMContentLoaded', () => {
         <section class="stats-card">
           <div class="stats-card-head">
             <h3>Distribución muscular</h3>
-            <span class="stats-badge">${muscleDist.length ? muscleDist.length + ' grupos' : '—'}</span>
+            <span class="stats-badge">${muscleFuente === 'rutina' ? 'Según rutina' : 'Última sesión'}${muscleDist.length ? ' · ' + muscleDist.length + ' grupos' : ''}</span>
           </div>
+          <p class="stats-hint">${muscleFuente === 'rutina'
+            ? 'Se calcula con los ejercicios actuales de este día en la rutina (se actualiza al editarla).'
+            : 'No se encontró el día en la rutina; se usa la última sesión registrada.'}</p>
           <div class="stats-muscle-bars">${muscleHtml}</div>
         </section>
 
