@@ -1388,31 +1388,48 @@ document.addEventListener('DOMContentLoaded', () => {
       .replace(/[\u0300-\u036f]/g, '')
       .replace(/\s+/g, ' ')
       .trim();
+    if (!n) return 'Otros';
 
-    // Orden: más específico primero
-    // Piernas / glúteos
-    if (/gemelo|pantorrilla|elevacion de gemelo|calf/.test(n)) return 'Gemelos';
-    if (/femoral|isquio|curl femoral|curl de pierna|leg curl|nordic/.test(n)) return 'Femoral';
-    if (/gluteo|glute|hip thrust|puente de glute|patada de glute|abduccion|abductor|aductor|adductor/.test(n)) return 'Gluteos';
-    if (/sentadilla|squat|prensa|leg press|hack|zancada|lunge|bulgara|extension de cuad|extension de pierna|leg extension|cuadriceps/.test(n)) return 'Cuadriceps';
-    if (/peso muerto|deadlift|rumano|\brdl\b/.test(n)) return 'Femoral';
+    // --- Orden: más específico primero (evitar que "press" genérico coma todo) ---
 
-    // Espalda (dorsalera, jalon, remo, etc.)
-    if (/jalon|dorsalera|dorsal|pulldown|dominada|pull ?up|chin ?up|remo|\brow\b|face pull|pull ?over|pullover|espalda|trapecio|encogimiento/.test(n)) return 'Espalda';
+    // Tríceps (antes que pecho: press francés, fondos en paralelas a veces pecho, extension)
+    if (/triceps|tricep|press frances|frances|skull ?crusher|extension (de )?(triceps|codo)|extension tras( de)? nuca|extension trasnuca|patada de triceps|kickback|push ?down|pushdown|fondos en paralela|fondo en paralela|press cerrado|press agarre cerrado/.test(n)) return 'Triceps';
 
-    // Pecho (press plano, press banca, aperturas, fondos…)
-    if (/press (de )?(banca|banco|plano|inclinado|declinado)|bench press|apertura|aperturas|\bfly\b|crossover|cruce( de)? polea|pec ?deck|peck ?deck|fondos|fondo en|dips|pecho|pectoral|push ?up|flexiones/.test(n)) return 'Pecho';
+    // Bíceps
+    if (/biceps|bicep|curl (de )?(biceps|barra|mancuerna|polea|martillo|concentrado|predicador|scott)|hammer curl|curl martillo|curl scott|curl predicador|curl con barra|curl con mancuern/.test(n)) return 'Biceps';
+    if (/\bcurl\b/.test(n) && !/femoral|pierna|leg curl|isquio/.test(n)) return 'Biceps';
 
-    // Hombros
-    if (/press (militar|hombro|arnold)|shoulder press|elevacion lateral|vuelo lateral|lateral raise|vuelo frontal|elevacion frontal|pajaro|rear delt|hombro|deltoid/.test(n)) return 'Hombros';
+    // Hombros (vuelos laterales, press arnold, militar, pallof a veces core pero pallof es core)
+    if (/press arnold|arnold press|press militar|militar|shoulder press|press de hombro|press hombro|press de hombros/.test(n)) return 'Hombros';
+    if (/vuelo?s? laterales?|elevacion(es)? laterales?|lateral raise|vuelo?s? frontales?|elevacion(es)? frontales?|front raise/.test(n)) return 'Hombros';
+    if (/pajaro|face pull|rear delt|deltoides? posterior|elevacion posterior/.test(n)) return 'Hombros';
+    if (/rotacion (de )?hombro|rotacion externa|hombro con banda/.test(n)) return 'Hombros';
+    if (/\bhombro|\bhombros\b|deltoid/.test(n)) return 'Hombros';
 
-    // Brazos
-    if (/triceps|push ?down|pushdown|extension de codo|patada de triceps|fondo en banco/.test(n)) return 'Triceps';
-    if (/biceps|curl (de )?(biceps|barra|mancuerna|polea|martillo|concentrado)|hammer curl/.test(n)) return 'Biceps';
-    if (/\bcurl\b/.test(n)) return 'Biceps';
+    // Espalda ANTES que pecho (ej. "jalon al pecho" es espalda, no pecho)
+    if (/jalon|dorsalera|dorsal|pulldown|dominada|pull ?up|chin ?up/.test(n)) return 'Espalda';
+    if (/\bremo\b|\brows?\b/.test(n)) return 'Espalda';
+    if (/pull ?over|pullover|encogimiento|trapecio|espalda/.test(n)) return 'Espalda';
 
-    // Core
-    if (/abdomen|abdominal|crunch|plancha|core|rueda abdominal|elevacion de piernas/.test(n)) return 'Core';
+    // Pecho
+    if (/press (de )?(banca|banco|plano|inclinado|declinado)|bench press|press plano|press inclinado|press declinado/.test(n)) return 'Pecho';
+    if (/apertura|aperturas|\bfly\b|crossover|cruce(s)?( de)?( cable|polea)?|pec ?deck|peck ?deck|contractora/.test(n)) return 'Pecho';
+    if (/fondos en banco|fondo en banco|fondos entre bancos|push ?up|flexiones/.test(n)) return 'Pecho';
+    if (/\bpecho\b|pectoral/.test(n) && !/jalon|dorsal|remo/.test(n)) return 'Pecho';
+    if (/press en smith|press en maquina/.test(n) && /pecho|banca|plano|inclinado/.test(n)) return 'Pecho';
+
+    // Piernas
+    if (/gemelo|pantorrilla|elevacion de gemelo|calf|suelo de gemelo/.test(n)) return 'Gemelos';
+    if (/femoral|isquio|curl femoral|curl de pierna|leg curl|nordic|camilla de isquio/.test(n)) return 'Femoral';
+    if (/gluteo|glute|hip thrust|puente de glute|patada de glute|abduccion|abductor|aductor|adductor|patada glute/.test(n)) return 'Gluteos';
+    if (/sentadilla|squat|prensa|leg press|hack|zancada|estocada|lunge|bulgara|extension de cuad|extension de pierna|leg extension|cuadriceps|cuadricera/.test(n)) return 'Cuadriceps';
+    if (/peso muerto|deadlift|rumano|\brdl\b|cargada/.test(n)) return 'Femoral';
+
+    // Core / abdomen
+    if (/abdomen|abdominal|abs\b|crunch|plancha|core|rueda abdominal|elevacion de piernas|sit ?up|situp|press pallof|pallof|wall ball|burpee|burpi/.test(n)) return 'Core';
+
+    // Press genérico sin contexto: suele ser pecho en gimnasio arg
+    if (/\bpress\b/.test(n) && !/pierna|hombro|militar|arnold|frances|triceps|pallof/.test(n)) return 'Pecho';
 
     return 'Otros';
   }
@@ -3660,31 +3677,48 @@ document.addEventListener('DOMContentLoaded', () => {
       .replace(/[\u0300-\u036f]/g, '')
       .replace(/\s+/g, ' ')
       .trim();
+    if (!n) return 'Otros';
 
-    // Orden: más específico primero
-    // Piernas / glúteos
-    if (/gemelo|pantorrilla|elevacion de gemelo|calf/.test(n)) return 'Gemelos';
-    if (/femoral|isquio|curl femoral|curl de pierna|leg curl|nordic/.test(n)) return 'Femoral';
-    if (/gluteo|glute|hip thrust|puente de glute|patada de glute|abduccion|abductor|aductor|adductor/.test(n)) return 'Gluteos';
-    if (/sentadilla|squat|prensa|leg press|hack|zancada|lunge|bulgara|extension de cuad|extension de pierna|leg extension|cuadriceps/.test(n)) return 'Cuadriceps';
-    if (/peso muerto|deadlift|rumano|\brdl\b/.test(n)) return 'Femoral';
+    // --- Orden: más específico primero (evitar que "press" genérico coma todo) ---
 
-    // Espalda (dorsalera, jalon, remo, etc.)
-    if (/jalon|dorsalera|dorsal|pulldown|dominada|pull ?up|chin ?up|remo|\brow\b|face pull|pull ?over|pullover|espalda|trapecio|encogimiento/.test(n)) return 'Espalda';
+    // Tríceps (antes que pecho: press francés, fondos en paralelas a veces pecho, extension)
+    if (/triceps|tricep|press frances|frances|skull ?crusher|extension (de )?(triceps|codo)|extension tras( de)? nuca|extension trasnuca|patada de triceps|kickback|push ?down|pushdown|fondos en paralela|fondo en paralela|press cerrado|press agarre cerrado/.test(n)) return 'Triceps';
 
-    // Pecho (press plano, press banca, aperturas, fondos…)
-    if (/press (de )?(banca|banco|plano|inclinado|declinado)|bench press|apertura|aperturas|\bfly\b|crossover|cruce( de)? polea|pec ?deck|peck ?deck|fondos|fondo en|dips|pecho|pectoral|push ?up|flexiones/.test(n)) return 'Pecho';
+    // Bíceps
+    if (/biceps|bicep|curl (de )?(biceps|barra|mancuerna|polea|martillo|concentrado|predicador|scott)|hammer curl|curl martillo|curl scott|curl predicador|curl con barra|curl con mancuern/.test(n)) return 'Biceps';
+    if (/\bcurl\b/.test(n) && !/femoral|pierna|leg curl|isquio/.test(n)) return 'Biceps';
 
-    // Hombros
-    if (/press (militar|hombro|arnold)|shoulder press|elevacion lateral|vuelo lateral|lateral raise|vuelo frontal|elevacion frontal|pajaro|rear delt|hombro|deltoid/.test(n)) return 'Hombros';
+    // Hombros (vuelos laterales, press arnold, militar, pallof a veces core pero pallof es core)
+    if (/press arnold|arnold press|press militar|militar|shoulder press|press de hombro|press hombro|press de hombros/.test(n)) return 'Hombros';
+    if (/vuelo?s? laterales?|elevacion(es)? laterales?|lateral raise|vuelo?s? frontales?|elevacion(es)? frontales?|front raise/.test(n)) return 'Hombros';
+    if (/pajaro|face pull|rear delt|deltoides? posterior|elevacion posterior/.test(n)) return 'Hombros';
+    if (/rotacion (de )?hombro|rotacion externa|hombro con banda/.test(n)) return 'Hombros';
+    if (/\bhombro|\bhombros\b|deltoid/.test(n)) return 'Hombros';
 
-    // Brazos
-    if (/triceps|push ?down|pushdown|extension de codo|patada de triceps|fondo en banco/.test(n)) return 'Triceps';
-    if (/biceps|curl (de )?(biceps|barra|mancuerna|polea|martillo|concentrado)|hammer curl/.test(n)) return 'Biceps';
-    if (/\bcurl\b/.test(n)) return 'Biceps';
+    // Espalda ANTES que pecho (ej. "jalon al pecho" es espalda, no pecho)
+    if (/jalon|dorsalera|dorsal|pulldown|dominada|pull ?up|chin ?up/.test(n)) return 'Espalda';
+    if (/\bremo\b|\brows?\b/.test(n)) return 'Espalda';
+    if (/pull ?over|pullover|encogimiento|trapecio|espalda/.test(n)) return 'Espalda';
 
-    // Core
-    if (/abdomen|abdominal|crunch|plancha|core|rueda abdominal|elevacion de piernas/.test(n)) return 'Core';
+    // Pecho
+    if (/press (de )?(banca|banco|plano|inclinado|declinado)|bench press|press plano|press inclinado|press declinado/.test(n)) return 'Pecho';
+    if (/apertura|aperturas|\bfly\b|crossover|cruce(s)?( de)?( cable|polea)?|pec ?deck|peck ?deck|contractora/.test(n)) return 'Pecho';
+    if (/fondos en banco|fondo en banco|fondos entre bancos|push ?up|flexiones/.test(n)) return 'Pecho';
+    if (/\bpecho\b|pectoral/.test(n) && !/jalon|dorsal|remo/.test(n)) return 'Pecho';
+    if (/press en smith|press en maquina/.test(n) && /pecho|banca|plano|inclinado/.test(n)) return 'Pecho';
+
+    // Piernas
+    if (/gemelo|pantorrilla|elevacion de gemelo|calf|suelo de gemelo/.test(n)) return 'Gemelos';
+    if (/femoral|isquio|curl femoral|curl de pierna|leg curl|nordic|camilla de isquio/.test(n)) return 'Femoral';
+    if (/gluteo|glute|hip thrust|puente de glute|patada de glute|abduccion|abductor|aductor|adductor|patada glute/.test(n)) return 'Gluteos';
+    if (/sentadilla|squat|prensa|leg press|hack|zancada|estocada|lunge|bulgara|extension de cuad|extension de pierna|leg extension|cuadriceps|cuadricera/.test(n)) return 'Cuadriceps';
+    if (/peso muerto|deadlift|rumano|\brdl\b|cargada/.test(n)) return 'Femoral';
+
+    // Core / abdomen
+    if (/abdomen|abdominal|abs\b|crunch|plancha|core|rueda abdominal|elevacion de piernas|sit ?up|situp|press pallof|pallof|wall ball|burpee|burpi/.test(n)) return 'Core';
+
+    // Press genérico sin contexto: suele ser pecho en gimnasio arg
+    if (/\bpress\b/.test(n) && !/pierna|hombro|militar|arnold|frances|triceps|pallof/.test(n)) return 'Pecho';
 
     return 'Otros';
   }
