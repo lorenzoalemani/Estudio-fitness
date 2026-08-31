@@ -431,6 +431,16 @@ class GymStore {
           this.saveData();
         }
 
+        // Recuperar series desde DB (logs viejos con series>0 en Supabase)
+        if (window.supabaseEngine && typeof window.supabaseEngine.enriquecerSeriesDeLogs === 'function') {
+          try {
+            await window.supabaseEngine.enriquecerSeriesDeLogs(this.data.workoutLogs);
+            this.saveData();
+          } catch (e) {
+            console.warn('⚠️ enrich series post-sync:', e && e.message);
+          }
+        }
+
         // Ranking: se actualiza en cada sync exitosa (con o sin cambios de
         // negocio), porque cualquier sync puede ocurrir tras un nuevo entrenamiento
         // de cualquier otro alumno. La RPC get_ranking_publico() (SECURITY DEFINER)

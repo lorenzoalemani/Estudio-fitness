@@ -5526,10 +5526,13 @@ appState.modalActivo = 'crear_rutina';
       appState.tabCliente = 'historial';
       appState.mostrarDrawerNotifs = false;
       renderApp();
-      // Re-sync para traer series completas desde Supabase
       if (appState.usuarioActual?.rol === 'alumno' && window.gymStore) {
         try {
           await window.gymStore.syncWithSupabase(appState.usuarioActual.data.id);
+          if (window.supabaseEngine && window.supabaseEngine.enriquecerSeriesDeLogs) {
+            await window.supabaseEngine.enriquecerSeriesDeLogs(window.gymStore.data.workoutLogs);
+            window.gymStore.saveData();
+          }
           renderApp();
         } catch (_) {}
       }
@@ -6791,10 +6794,13 @@ alert("🚀 ¡Rutina propia creada! Ya podés empezar a entrenarla desde \"Mías
       appState.tabCliente = 'historial';
       appState.mostrarDrawerNotifs = false;
       renderApp();
-      // Re-sync para traer series completas desde Supabase
       if (appState.usuarioActual?.rol === 'alumno' && window.gymStore) {
         try {
           await window.gymStore.syncWithSupabase(appState.usuarioActual.data.id);
+          if (window.supabaseEngine && window.supabaseEngine.enriquecerSeriesDeLogs) {
+            await window.supabaseEngine.enriquecerSeriesDeLogs(window.gymStore.data.workoutLogs);
+            window.gymStore.saveData();
+          }
           renderApp();
         } catch (_) {}
       }

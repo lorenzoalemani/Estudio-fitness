@@ -609,83 +609,103 @@ const { data: rpcData, error: rpcErr } = await this.client.rpc(
   }
 
   async guardarWorkoutLogEnSupabase(log) {
-    if (!this.client) return;
+    if (!this.client) return { ok: false, error: 'sin_cliente' };
     try {
-      const logUuid    = this.ensureValidUUID(log.id);  // ya es UUID nativo, ensureValidUUID lo pasa sin cambios
+      const logUuid    = this.ensureValidUUID(log.id);
       const alumnoUuid = this.ensureValidUUID(log.alumnoId);
-      const routineUuid= this.ensureValidUUID(log.rutinaId);
+      let routineUuid = null;
+      try { routineUuid = this.ensureValidUUID(log.rutinaId); } catch (_) { routineUuid = log.rutinaId || null; }
       log.id = logUuid;
 
-      const { error: lErr } = await this.client.from('workout_logs').insert({
+      const payloadLog = {
         id:                  logUuid,
         alumno_id:           alumnoUuid,
         routine_id:          routineUuid,
-        dia_numero:          log.diaNumero || 1,           // número real del día
+        dia_numero:          log.diaNumero || 1,
         dia_nombre:          log.diaNombre,
         comentario_general:  log.comentarioGeneral || null,
         estado:              log.estado || 'completado',
-        fecha_entrenamiento: log.fecha                     // fecha real del alumno
-      });
+        fecha_entrenamiento: log.fecha
+      };
 
+      const { error: lErr } = await this.client.from('workout_logs').insert(payloadLog);
       if (lErr) {
-        console.error('❌ Error en INSERT workout_logs:', lErr);
-        return;
+        // Si ya existe el log, seguimos igual e intentamos las series
+        console.warn('⚠️ INSERT workout_logs:', lErr.message || lErr);
+        // si falla el log, igual intentamos series (puede existir ya el log)
       }
 
-      // IMPORTANTE: NO mandar exercise_goal_id.
-      // Si el UUID no existe en exercise_goals, Postgres rechaza el INSERT por FK
-      // y las series nunca se guardaban (workout_logs sí, sets = 0).
-      // Para el historial alcanza con exercise_nombre + reps + peso.
       const sets = Array.isArray(log.sets) ? log.sets : [];
+      console.log('📝 Guardando series:', sets.length, 'para log', logUuid);
+
       const rows = sets.map((s, i) => {
         const repsRaw = s.repsRealizadas != null ? s.repsRealizadas : s.reps;
-        let reps = parseInt(String(repsRaw).replace(/[^\d-]/g, ''), 10);
+        let reps = parseInt(String(repsRaw == null ? '0' : repsRaw).replace(/[^\d-]/g, ''), 10);
         if (!Number.isFinite(reps) || reps < 0) reps = 0;
 
-        let peso = s.pesoUtilizado != null ? s.pesoUtilizado : s.peso;
-        if (peso == null || String(peso).trim() === '') peso = '0';
-        peso = String(peso);
+        let pesoRaw = s.pesoUtilizado != null ? s.pesoUtilizado : s.peso;
+        if (pesoRaw == null || String(pesoRaw).trim() === '') pesoRaw = '0';
+        // Dejar string legible ("60 kg") o número; la columna suele ser text
+        const peso = String(pesoRaw);
 
         const nombre = (s.ejercicioNombre || s.ejercicio || s.nombre || 'Ejercicio').toString().trim() || 'Ejercicio';
         let setNum = parseInt(s.setNumero, 10);
         if (!Number.isFinite(setNum) || setNum < 1) setNum = i + 1;
 
+        // SOLO columnas seguras — sin exercise_goal_id
         return {
-          workout_log_id:    logUuid,
-          exercise_nombre:   nombre,
-          set_numero:        setNum,
-          reps_realizadas:   reps,
-          peso_utilizado:    peso,
-          comentario_alumno: s.comentarioAlumno || null
+          workout_log_id:  logUuid,
+          exercise_nombre: nombre,
+          set_numero:      setNum,
+          reps_realizadas: reps,
+          peso_utilizado:  peso
         };
       });
 
       let setsOk = 0;
       let setsFail = 0;
-      // Insert en lote (más rápido); si falla, reintento fila por fila
+      let lastErr = null;
+
       if (rows.length) {
+        // 1) lote
         const { error: batchErr } = await this.client.from('workout_log_sets').insert(rows);
         if (!batchErr) {
           setsOk = rows.length;
         } else {
-          console.warn('⚠️ Insert lote de series falló, reintento 1x1:', batchErr.message || batchErr);
+          lastErr = batchErr;
+          console.warn('⚠️ Insert lote series falló:', batchErr.message || batchErr, batchErr);
+          // 2) una por una
           for (const row of rows) {
             const { error: sErr } = await this.client.from('workout_log_sets').insert(row);
             if (sErr) {
               setsFail++;
-              console.error('❌ Error INSERT workout_log_sets:', sErr.message || sErr, row);
+              lastErr = sErr;
+              console.error('❌ INSERT set:', sErr.message || sErr, sErr, row);
             } else {
               setsOk++;
             }
           }
         }
       }
-      console.log('✅ Entrenamiento persistido en Supabase.', { logUuid, setsOk, setsFail, total: rows.length });
-      if (setsFail > 0 && setsOk === 0) {
-        console.error('❌ Ninguna serie se guardó. Revisá consola / RLS / NOT NULL.');
+
+      // Verificar en DB
+      try {
+        const { count } = await this.client
+          .from('workout_log_sets')
+          .select('id', { count: 'exact', head: true })
+          .eq('workout_log_id', logUuid);
+        console.log('✅ Entrenamiento persistido.', { logUuid, setsOk, setsFail, total: rows.length, countInDb: count });
+      } catch (_) {
+        console.log('✅ Entrenamiento persistido.', { logUuid, setsOk, setsFail, total: rows.length });
       }
+
+      if (rows.length > 0 && setsOk === 0) {
+        return { ok: false, error: (lastErr && lastErr.message) || 'series_no_guardadas', setsOk: 0 };
+      }
+      return { ok: true, setsOk, setsFail };
     } catch (err) {
       console.error('❌ Excepción guardando entrenamiento real en Supabase DB:', err);
+      return { ok: false, error: err.message };
     }
   }
 
