@@ -1397,3 +1397,40 @@ body {
   font-size: 0.88rem;
   margin: 0;
 }
+
+/* ---- Entrada en calor / activación ---- */
+.rf-warmup-btn {
+  color: #fbbf24 !important;
+  border-color: rgba(251, 191, 36, 0.35) !important;
+}
+.rf-warmup-btn:hover {
+  background: rgba(251, 191, 36, 0.12) !important;
+}
+.rf-exercise-warmup {
+  border: 1px solid rgba(251, 191, 36, 0.45) !important;
+  background: rgba(251, 191, 36, 0.08) !important;
+  border-radius: 12px;
+  padding: 10px;
+  margin-bottom: 10px;
+}
+.rf-exercise-warmup .rf-label {
+  color: #fbbf24 !important;
+}
+.exercise-block-warmup {
+  border-color: rgba(251, 191, 36, 0.5) !important;
+  background: linear-gradient(180deg, rgba(251, 191, 36, 0.12), rgba(251, 191, 36, 0.03)) !important;
+  box-shadow: 0 0 0 1px rgba(251, 191, 36, 0.15);
+}
+.warmup-badge {
+  display: inline-block;
+  margin-left: 8px;
+  font-size: 0.65rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #111;
+  background: #fbbf24;
+  padding: 2px 8px;
+  border-radius: 999px;
+  vertical-align: middle;
+}

@@ -1177,11 +1177,11 @@ document.addEventListener('DOMContentLoaded', () => {
       </h3>
 
       ${dia.ejercicios.map(ej => `
-        <div class="exercise-block">
-          <div style="font-size:1.15rem; font-weight:900; color:#fff; margin-bottom:8px">${ej.nombre}</div>
+        <div class="exercise-block${ej.esEntradaEnCalor ? ' exercise-block-warmup' : ''}">
+          <div style="font-size:1.15rem; font-weight:900; color:#fff; margin-bottom:8px">${ej.esEntradaEnCalor ? '🔥 ' : ''}${ej.nombre}${ej.esEntradaEnCalor ? ' <span class="warmup-badge">Entrada en calor</span>' : ''}</div>
 
           <div class="target-box">
-            <div class="target-title">🎯 Objetivo Indicado por el Profesor:</div>
+            <div class="target-title">${ej.esEntradaEnCalor ? '🔥 Activación / Entrada en calor' : '🎯 Objetivo Indicado por el Profesor:'}</div>
             <div class="target-stats">
               ${ej.seriesTarget} series × ${ej.repeticionesTarget} reps · ${ej.pesoSugerido}
             </div>
@@ -1303,11 +1303,11 @@ document.addEventListener('DOMContentLoaded', () => {
         ${dia.ejercicios.map(ej => {
           const draftEj = appState.workoutDraftSets[ej.id];
           return `
-            <div class="exercise-block">
-              <div class="exercise-title" style="font-size:1.15rem; font-weight:900; color:#fff">${ej.nombre}</div>
+            <div class="exercise-block${ej.esEntradaEnCalor ? ' exercise-block-warmup' : ''}">
+              <div class="exercise-title" style="font-size:1.15rem; font-weight:900; color:#fff">${ej.esEntradaEnCalor ? '🔥 ' : ''}${ej.nombre}${ej.esEntradaEnCalor ? ' <span class="warmup-badge">Entrada en calor</span>' : ''}</div>
 
               <div class="target-box">
-                <div class="target-title">🎯 OBJETIVO DEL PROFESOR</div>
+                <div class="target-title">${ej.esEntradaEnCalor ? '🔥 ACTIVACIÓN / ENTRADA EN CALOR' : '🎯 OBJETIVO DEL PROFESOR'}</div>
                 <div class="target-stats">${ej.seriesTarget} series · ${ej.repeticionesTarget} reps · ${ej.pesoSugerido}</div>
                 ${ej.notaProfesor ? `<div style="font-size:0.85rem; color:#fca5a5; margin-top:4px">👨‍🏫 ${ej.notaProfesor}</div>` : ''}
               </div>
@@ -3345,11 +3345,11 @@ document.addEventListener('DOMContentLoaded', () => {
       </h3>
 
       ${dia.ejercicios.map(ej => `
-        <div class="exercise-block">
-          <div style="font-size:1.15rem; font-weight:900; color:#fff; margin-bottom:8px">${ej.nombre}</div>
+        <div class="exercise-block${ej.esEntradaEnCalor ? ' exercise-block-warmup' : ''}">
+          <div style="font-size:1.15rem; font-weight:900; color:#fff; margin-bottom:8px">${ej.esEntradaEnCalor ? '🔥 ' : ''}${ej.nombre}${ej.esEntradaEnCalor ? ' <span class="warmup-badge">Entrada en calor</span>' : ''}</div>
 
           <div class="target-box">
-            <div class="target-title">🎯 Objetivo Indicado por el Profesor:</div>
+            <div class="target-title">${ej.esEntradaEnCalor ? '🔥 Activación / Entrada en calor' : '🎯 Objetivo Indicado por el Profesor:'}</div>
             <div class="target-stats">
               ${ej.seriesTarget} series × ${ej.repeticionesTarget} reps · ${ej.pesoSugerido}
             </div>
@@ -3471,11 +3471,11 @@ document.addEventListener('DOMContentLoaded', () => {
         ${dia.ejercicios.map(ej => {
           const draftEj = appState.workoutDraftSets[ej.id];
           return `
-            <div class="exercise-block">
-              <div class="exercise-title" style="font-size:1.15rem; font-weight:900; color:#fff">${ej.nombre}</div>
+            <div class="exercise-block${ej.esEntradaEnCalor ? ' exercise-block-warmup' : ''}">
+              <div class="exercise-title" style="font-size:1.15rem; font-weight:900; color:#fff">${ej.esEntradaEnCalor ? '🔥 ' : ''}${ej.nombre}${ej.esEntradaEnCalor ? ' <span class="warmup-badge">Entrada en calor</span>' : ''}</div>
 
               <div class="target-box">
-                <div class="target-title">🎯 OBJETIVO DEL PROFESOR</div>
+                <div class="target-title">${ej.esEntradaEnCalor ? '🔥 ACTIVACIÓN / ENTRADA EN CALOR' : '🎯 OBJETIVO DEL PROFESOR'}</div>
                 <div class="target-stats">${ej.seriesTarget} series · ${ej.repeticionesTarget} reps · ${ej.pesoSugerido}</div>
                 ${ej.notaProfesor ? `<div style="font-size:0.85rem; color:#fca5a5; margin-top:4px">👨‍🏫 ${ej.notaProfesor}</div>` : ''}
               </div>
@@ -4653,6 +4653,18 @@ appState.modalActivo = 'crear_rutina';
     { nombre: "Vuelos frontales con polea", videoUrl: "https://www.youtube.com/shorts/AJ147wzeIfQ", alias: ["Vuelos frontales con polea", "vuelos frontales con polea"] },
     { nombre: "Vuelos laterales con mancuernas", videoUrl: "https://www.youtube.com/shorts/dd9xo-_ahCg", alias: ["Vuelos laterales con mancuerna", "Vuelos laterales con mancuernas", "vuelos laterales con mancuerna", "vuelos laterales con mancuernas"] },
     { nombre: "Vuelos laterales en polea", videoUrl: "https://www.youtube.com/shorts/V98wql8IfVA", alias: ["Vuelos laterales en polea", "vuelos laterales en polea"] },
+
+    { nombre: "Remo con mancuernas", videoUrl: "https://www.youtube.com/shorts/5QYQqPw_WgA", alias: ["Remo con mancuernas", "remo con mancuernas", "remo mancuernas", "remo con mancuerna", "dumbbell row"] },
+    { nombre: "Press arnold", videoUrl: "https://www.youtube.com/shorts/Kg8JD8l6ezw", alias: ["Press arnold", "press arnold", "arnold press", "press de arnold"] },
+    { nombre: "Wall ball", videoUrl: "https://www.youtube.com/shorts/SDT1KrcO8ac", alias: ["Wall ball", "wall ball", "wallball", "wall balls"] },
+    { nombre: "Desplazamiento lateral con banda elastica", videoUrl: "https://www.youtube.com/shorts/N28Hpdezg7Q", alias: ["Desplazamiento lateral con banda elastica", "Desplazamiento lateral con banda elástica", "desplazamiento lateral con banda elastica", "desplazamiento lateral con banda elástica", "desplazamiento lateral banda", "lateral band walk"] },
+    { nombre: "Sit up", videoUrl: "https://www.youtube.com/shorts/V3MFEeDYYaE", alias: ["Sit up", "sit up", "sit-up", "situps", "sit ups"] },
+    { nombre: "Burpee", videoUrl: "https://www.youtube.com/shorts/EkK3oVBA__Q", alias: ["Burpee", "burpee", "burpi", "burpees"] },
+    { nombre: "Medio burpee", videoUrl: "https://www.youtube.com/shorts/FH0hjFVDhu8", alias: ["Medio burpee", "medio burpee", "medio burpi", "half burpee"] },
+    { nombre: "Burpee con press", videoUrl: "https://www.youtube.com/shorts/2_UZ-E5qHUA", alias: ["Burpee con press", "burpee con press", "burpi con press", "burpee press"] },
+    { nombre: "Press pallof", videoUrl: "https://www.youtube.com/shorts/iNn_sNA6TbU", alias: ["Press pallof", "press pallof", "pallof press", "press de pallof"] },
+    { nombre: "Rotacion de hombro con banda", videoUrl: "https://www.youtube.com/watch?v=fljC5LoRqxY", alias: ["Rotacion de hombro con banda", "Rotación de hombro con banda", "rotacion de hombro con banda", "rotación de hombro con banda", "rotacion hombro banda", "rotaciones de hombro con banda"] },
+    { nombre: "Rotacion externa de hombro 90", videoUrl: "https://www.youtube.com/shorts/iNn_sNA6TbU", alias: ["Rotacion externa de hombro 90", "Rotación externa de hombro 90°", "Rotacion externa de hombro 90°", "rotacion externa de hombro 90", "rotacion externa hombro 90", "rotacion externa 90", "external rotation 90"] },
   ];
 
   function normalizarNombreEjercicio(str) {
@@ -4803,7 +4815,8 @@ appState.modalActivo = 'crear_rutina';
           repeticiones: e.repeticionesTarget || "12",
           peso: e.pesoSugerido || "S/D",
           notaProfesor: e.notaProfesor || "",
-          videoUrl: e.videoUrl || ""
+          videoUrl: e.videoUrl || "",
+          esEntradaEnCalor: !!e.esEntradaEnCalor
         }))
       }));
     } else {
@@ -4816,7 +4829,7 @@ appState.modalActivo = 'crear_rutina';
     document.getElementById('btnAddDay')?.addEventListener('click', () => {
       currentFormDays.push({
         nombre: `Día ${currentFormDays.length + 1}: General`,
-        ejercicios: [{ nombre: "Nuevo Ejercicio", series: 3, repeticiones: "12", peso: "10 kg", notaProfesor: "", videoUrl: "" }]
+        ejercicios: [{ nombre: "Nuevo Ejercicio", series: 3, repeticiones: "12", peso: "10 kg", notaProfesor: "", videoUrl: "", esEntradaEnCalor: false }]
       });
       renderFormDays();
     });
@@ -4834,16 +4847,17 @@ appState.modalActivo = 'crear_rutina';
             <button type="button" class="rf-icon-btn" onclick="window.moveFormDayUp(${diaIdx})" title="Subir día">↑</button>
             <button type="button" class="rf-icon-btn" onclick="window.moveFormDayDown(${diaIdx})" title="Bajar día">↓</button>
             <button type="button" class="rf-text-btn" onclick="window.addFormExercise(${diaIdx})">+ Ejercicio</button>
+            <button type="button" class="rf-text-btn rf-warmup-btn" onclick="window.addFormWarmupExercise(${diaIdx})">+ Entrada en calor</button>
             ${currentFormDays.length > 1 ? `<button type="button" class="rf-icon-btn rf-danger" onclick="window.removeFormDay(${diaIdx})" title="Eliminar día">×</button>` : ''}
           </div>
         </div>
 
         <div class="rf-exercises">
         ${dia.ejercicios.map((ej, ejIdx) => `
-          <div class="rf-exercise">
+          <div class="rf-exercise${ej.esEntradaEnCalor ? ' rf-exercise-warmup' : ''}">
             <div class="rf-exercise-top">
               <div class="rf-field rf-field-grow">
-                <label class="rf-label">Ejercicio</label>
+                <label class="rf-label">${ej.esEntradaEnCalor ? '🔥 Entrada en calor' : 'Ejercicio'}</label>
                 <div class="ej-suggest-wrap">
                   <input type="text" class="form-input ej-nombre-input" value="${ej.nombre}"
                     oninput="window.onEjercicioNombreInput(${diaIdx}, ${ejIdx}, this.value)"
@@ -4899,7 +4913,22 @@ appState.modalActivo = 'crear_rutina';
     if (active && active.classList && active.classList.contains('ej-nombre-input')) {
       active.blur();
     }
-    currentFormDays[diaIdx].ejercicios.push({ nombre: "Nuevo Ejercicio", series: 3, repeticiones: "12", peso: "10 kg", notaProfesor: "", videoUrl: "" });
+    currentFormDays[diaIdx].ejercicios.push({ nombre: "Nuevo Ejercicio", series: 3, repeticiones: "12", peso: "10 kg", notaProfesor: "", videoUrl: "", esEntradaEnCalor: false });
+    renderFormDays();
+  };
+
+  window.addFormWarmupExercise = (diaIdx) => {
+    const ejs = currentFormDays[diaIdx].ejercicios;
+    // Entrada en calor siempre al inicio del día
+    ejs.unshift({
+      nombre: "Entrada en calor",
+      series: 2,
+      repeticiones: "12",
+      peso: "S/D",
+      notaProfesor: "",
+      videoUrl: "",
+      esEntradaEnCalor: true
+    });
     renderFormDays();
   };
   window.removeFormExercise = (diaIdx, ejIdx) => {
@@ -4990,7 +5019,7 @@ appState.modalActivo = 'crear_rutina';
       id: crypto.randomUUID(),
       diaNumero: dIdx + 1,
       nombre: d.nombre,
-      ejercicios: d.ejercicios.map((e, idx) => ({
+      ejercicios: [...d.ejercicios].sort((a, b) => (b.esEntradaEnCalor ? 1 : 0) - (a.esEntradaEnCalor ? 1 : 0)).map((e, idx) => ({
         id: crypto.randomUUID(),
         nombre: e.nombre,
         seriesTarget: Number(e.series) || 3,
@@ -4998,7 +5027,8 @@ appState.modalActivo = 'crear_rutina';
         pesoSugerido: e.peso || "S/D",
         notaProfesor: e.notaProfesor || "",
         profesorNotaAutor: esModoAlumnoPropio ? `${usuarioActualData.nombre} (vos)` : usuarioActualData.nombre,
-        videoUrl: e.videoUrl || ""
+        videoUrl: e.videoUrl || "",
+        esEntradaEnCalor: !!e.esEntradaEnCalor
       }))
     }));
 
@@ -5837,6 +5867,18 @@ appState.modalActivo = 'crear_rutina';
     { nombre: "Vuelos frontales con polea", videoUrl: "https://www.youtube.com/shorts/AJ147wzeIfQ", alias: ["Vuelos frontales con polea", "vuelos frontales con polea"] },
     { nombre: "Vuelos laterales con mancuernas", videoUrl: "https://www.youtube.com/shorts/dd9xo-_ahCg", alias: ["Vuelos laterales con mancuerna", "Vuelos laterales con mancuernas", "vuelos laterales con mancuerna", "vuelos laterales con mancuernas"] },
     { nombre: "Vuelos laterales en polea", videoUrl: "https://www.youtube.com/shorts/V98wql8IfVA", alias: ["Vuelos laterales en polea", "vuelos laterales en polea"] },
+
+    { nombre: "Remo con mancuernas", videoUrl: "https://www.youtube.com/shorts/5QYQqPw_WgA", alias: ["Remo con mancuernas", "remo con mancuernas", "remo mancuernas", "remo con mancuerna", "dumbbell row"] },
+    { nombre: "Press arnold", videoUrl: "https://www.youtube.com/shorts/Kg8JD8l6ezw", alias: ["Press arnold", "press arnold", "arnold press", "press de arnold"] },
+    { nombre: "Wall ball", videoUrl: "https://www.youtube.com/shorts/SDT1KrcO8ac", alias: ["Wall ball", "wall ball", "wallball", "wall balls"] },
+    { nombre: "Desplazamiento lateral con banda elastica", videoUrl: "https://www.youtube.com/shorts/N28Hpdezg7Q", alias: ["Desplazamiento lateral con banda elastica", "Desplazamiento lateral con banda elástica", "desplazamiento lateral con banda elastica", "desplazamiento lateral con banda elástica", "desplazamiento lateral banda", "lateral band walk"] },
+    { nombre: "Sit up", videoUrl: "https://www.youtube.com/shorts/V3MFEeDYYaE", alias: ["Sit up", "sit up", "sit-up", "situps", "sit ups"] },
+    { nombre: "Burpee", videoUrl: "https://www.youtube.com/shorts/EkK3oVBA__Q", alias: ["Burpee", "burpee", "burpi", "burpees"] },
+    { nombre: "Medio burpee", videoUrl: "https://www.youtube.com/shorts/FH0hjFVDhu8", alias: ["Medio burpee", "medio burpee", "medio burpi", "half burpee"] },
+    { nombre: "Burpee con press", videoUrl: "https://www.youtube.com/shorts/2_UZ-E5qHUA", alias: ["Burpee con press", "burpee con press", "burpi con press", "burpee press"] },
+    { nombre: "Press pallof", videoUrl: "https://www.youtube.com/shorts/iNn_sNA6TbU", alias: ["Press pallof", "press pallof", "pallof press", "press de pallof"] },
+    { nombre: "Rotacion de hombro con banda", videoUrl: "https://www.youtube.com/watch?v=fljC5LoRqxY", alias: ["Rotacion de hombro con banda", "Rotación de hombro con banda", "rotacion de hombro con banda", "rotación de hombro con banda", "rotacion hombro banda", "rotaciones de hombro con banda"] },
+    { nombre: "Rotacion externa de hombro 90", videoUrl: "https://www.youtube.com/shorts/iNn_sNA6TbU", alias: ["Rotacion externa de hombro 90", "Rotación externa de hombro 90°", "Rotacion externa de hombro 90°", "rotacion externa de hombro 90", "rotacion externa hombro 90", "rotacion externa 90", "external rotation 90"] },
   ];
 
   function normalizarNombreEjercicio(str) {
@@ -5987,7 +6029,8 @@ appState.modalActivo = 'crear_rutina';
           repeticiones: e.repeticionesTarget || "12",
           peso: e.pesoSugerido || "S/D",
           notaProfesor: e.notaProfesor || "",
-          videoUrl: e.videoUrl || ""
+          videoUrl: e.videoUrl || "",
+          esEntradaEnCalor: !!e.esEntradaEnCalor
         }))
       }));
     } else {
@@ -6000,7 +6043,7 @@ appState.modalActivo = 'crear_rutina';
     document.getElementById('btnAddDay')?.addEventListener('click', () => {
       currentFormDays.push({
         nombre: `Día ${currentFormDays.length + 1}: General`,
-        ejercicios: [{ nombre: "Nuevo Ejercicio", series: 3, repeticiones: "12", peso: "10 kg", notaProfesor: "", videoUrl: "" }]
+        ejercicios: [{ nombre: "Nuevo Ejercicio", series: 3, repeticiones: "12", peso: "10 kg", notaProfesor: "", videoUrl: "", esEntradaEnCalor: false }]
       });
       renderFormDays();
     });
@@ -6018,16 +6061,17 @@ appState.modalActivo = 'crear_rutina';
             <button type="button" class="rf-icon-btn" onclick="window.moveFormDayUp(${diaIdx})" title="Subir día">↑</button>
             <button type="button" class="rf-icon-btn" onclick="window.moveFormDayDown(${diaIdx})" title="Bajar día">↓</button>
             <button type="button" class="rf-text-btn" onclick="window.addFormExercise(${diaIdx})">+ Ejercicio</button>
+            <button type="button" class="rf-text-btn rf-warmup-btn" onclick="window.addFormWarmupExercise(${diaIdx})">+ Entrada en calor</button>
             ${currentFormDays.length > 1 ? `<button type="button" class="rf-icon-btn rf-danger" onclick="window.removeFormDay(${diaIdx})" title="Eliminar día">×</button>` : ''}
           </div>
         </div>
 
         <div class="rf-exercises">
         ${dia.ejercicios.map((ej, ejIdx) => `
-          <div class="rf-exercise">
+          <div class="rf-exercise${ej.esEntradaEnCalor ? ' rf-exercise-warmup' : ''}">
             <div class="rf-exercise-top">
               <div class="rf-field rf-field-grow">
-                <label class="rf-label">Ejercicio</label>
+                <label class="rf-label">${ej.esEntradaEnCalor ? '🔥 Entrada en calor' : 'Ejercicio'}</label>
                 <div class="ej-suggest-wrap">
                   <input type="text" class="form-input ej-nombre-input" value="${ej.nombre}"
                     oninput="window.onEjercicioNombreInput(${diaIdx}, ${ejIdx}, this.value)"
@@ -6083,7 +6127,22 @@ appState.modalActivo = 'crear_rutina';
     if (active && active.classList && active.classList.contains('ej-nombre-input')) {
       active.blur();
     }
-    currentFormDays[diaIdx].ejercicios.push({ nombre: "Nuevo Ejercicio", series: 3, repeticiones: "12", peso: "10 kg", notaProfesor: "", videoUrl: "" });
+    currentFormDays[diaIdx].ejercicios.push({ nombre: "Nuevo Ejercicio", series: 3, repeticiones: "12", peso: "10 kg", notaProfesor: "", videoUrl: "", esEntradaEnCalor: false });
+    renderFormDays();
+  };
+
+  window.addFormWarmupExercise = (diaIdx) => {
+    const ejs = currentFormDays[diaIdx].ejercicios;
+    // Entrada en calor siempre al inicio del día
+    ejs.unshift({
+      nombre: "Entrada en calor",
+      series: 2,
+      repeticiones: "12",
+      peso: "S/D",
+      notaProfesor: "",
+      videoUrl: "",
+      esEntradaEnCalor: true
+    });
     renderFormDays();
   };
   window.removeFormExercise = (diaIdx, ejIdx) => {
@@ -6174,7 +6233,7 @@ appState.modalActivo = 'crear_rutina';
       id: crypto.randomUUID(),
       diaNumero: dIdx + 1,
       nombre: d.nombre,
-      ejercicios: d.ejercicios.map((e, idx) => ({
+      ejercicios: [...d.ejercicios].sort((a, b) => (b.esEntradaEnCalor ? 1 : 0) - (a.esEntradaEnCalor ? 1 : 0)).map((e, idx) => ({
         id: crypto.randomUUID(),
         nombre: e.nombre,
         seriesTarget: Number(e.series) || 3,
@@ -6182,7 +6241,8 @@ appState.modalActivo = 'crear_rutina';
         pesoSugerido: e.peso || "S/D",
         notaProfesor: e.notaProfesor || "",
         profesorNotaAutor: esModoAlumnoPropio ? `${usuarioActualData.nombre} (vos)` : usuarioActualData.nombre,
-        videoUrl: e.videoUrl || ""
+        videoUrl: e.videoUrl || "",
+        esEntradaEnCalor: !!e.esEntradaEnCalor
       }))
     }));
 
