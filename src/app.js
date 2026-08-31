@@ -1680,20 +1680,32 @@ document.addEventListener('DOMContentLoaded', () => {
       .sort((a, b) => new Date(a.fecha) - new Date(b.fecha)) // viejo → nuevo
       .slice(-8);
 
-    const chain = [...prevSessions, selected]; // para el badge
+    // Solo sesiones CON series reales (las viejas sin detalle no entran al gráfico)
+    const hasVol = (log) => {
+      const sets = log.sets || [];
+      if (!sets.length) return false;
+      return sets.some(s => {
+        const reps = Number(s.repsRealizadas != null ? s.repsRealizadas : (s.reps != null ? s.reps : s.reps_realizadas)) || 0;
+        const peso = _statsParsePesoKg(s.pesoUtilizado != null ? s.pesoUtilizado : (s.peso != null ? s.peso : s.peso_utilizado));
+        return reps > 0 && peso >= 0;
+      });
+    };
+    const prevConDatos = prevSessions.filter(hasVol);
+    const chain = hasVol(selected) ? [...prevConDatos, selected] : prevConDatos.slice();
+    if (!chain.length && selected) chain.push(selected);
+
     const curVol = volMap(selected);
-    // Eje X: unión de ejercicios de TODAS las sesiones comparables (no solo la actual)
+    // Eje X: ejercicios de sesiones que SÍ tienen datos
     const labels = [];
     const pushName = (raw) => {
       const name = String(raw || '').trim() || 'Ejercicio';
-      if (name && !labels.includes(name)) labels.push(name);
+      if (name && name !== 'Sin series' && !labels.includes(name)) labels.push(name);
     };
     chain.forEach(log => {
       (log.sets || []).forEach(s => {
         pushName(s.ejercicioNombre || s.ejercicio || s.nombre || s.exercise_nombre || s.exercise_name);
       });
     });
-    // Fallback: ejercicios del día en la rutina actual
     if (!labels.length && ejerciciosRutinaDia && ejerciciosRutinaDia.length) {
       ejerciciosRutinaDia.forEach(ej => {
         if (!ej.esEntradaEnCalor) pushName(ej.nombre);
@@ -2110,7 +2122,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             const setsArr = log.sets || [];
                             if (!setsArr.length) {
                               return `<div style="font-size:0.82rem; color:var(--text-gray); padding:8px 0">
-                                Sin detalle de series guardado para este entrenamiento.
+                                Sin detalle de series (entrenamientos viejos pueden no tenerlo; los nuevos sí se guardan).
                                 (Los nuevos entrenamientos sí guardan series, reps y pesos.)
                               </div>`;
                             }
@@ -4003,20 +4015,32 @@ document.addEventListener('DOMContentLoaded', () => {
       .sort((a, b) => new Date(a.fecha) - new Date(b.fecha)) // viejo → nuevo
       .slice(-8);
 
-    const chain = [...prevSessions, selected]; // para el badge
+    // Solo sesiones CON series reales (las viejas sin detalle no entran al gráfico)
+    const hasVol = (log) => {
+      const sets = log.sets || [];
+      if (!sets.length) return false;
+      return sets.some(s => {
+        const reps = Number(s.repsRealizadas != null ? s.repsRealizadas : (s.reps != null ? s.reps : s.reps_realizadas)) || 0;
+        const peso = _statsParsePesoKg(s.pesoUtilizado != null ? s.pesoUtilizado : (s.peso != null ? s.peso : s.peso_utilizado));
+        return reps > 0 && peso >= 0;
+      });
+    };
+    const prevConDatos = prevSessions.filter(hasVol);
+    const chain = hasVol(selected) ? [...prevConDatos, selected] : prevConDatos.slice();
+    if (!chain.length && selected) chain.push(selected);
+
     const curVol = volMap(selected);
-    // Eje X: unión de ejercicios de TODAS las sesiones comparables (no solo la actual)
+    // Eje X: ejercicios de sesiones que SÍ tienen datos
     const labels = [];
     const pushName = (raw) => {
       const name = String(raw || '').trim() || 'Ejercicio';
-      if (name && !labels.includes(name)) labels.push(name);
+      if (name && name !== 'Sin series' && !labels.includes(name)) labels.push(name);
     };
     chain.forEach(log => {
       (log.sets || []).forEach(s => {
         pushName(s.ejercicioNombre || s.ejercicio || s.nombre || s.exercise_nombre || s.exercise_name);
       });
     });
-    // Fallback: ejercicios del día en la rutina actual
     if (!labels.length && ejerciciosRutinaDia && ejerciciosRutinaDia.length) {
       ejerciciosRutinaDia.forEach(ej => {
         if (!ej.esEntradaEnCalor) pushName(ej.nombre);
@@ -4433,7 +4457,7 @@ document.addEventListener('DOMContentLoaded', () => {
                             const setsArr = log.sets || [];
                             if (!setsArr.length) {
                               return `<div style="font-size:0.82rem; color:var(--text-gray); padding:8px 0">
-                                Sin detalle de series guardado para este entrenamiento.
+                                Sin detalle de series (entrenamientos viejos pueden no tenerlo; los nuevos sí se guardan).
                                 (Los nuevos entrenamientos sí guardan series, reps y pesos.)
                               </div>`;
                             }
