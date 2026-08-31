@@ -1641,9 +1641,18 @@ document.addEventListener('DOMContentLoaded', () => {
     const volMap = (log) => {
       const map = {};
       (log.sets || []).forEach(s => {
-        const name = String(s.ejercicioNombre || s.ejercicio || s.nombre || 'Ejercicio').trim() || 'Ejercicio';
-        const reps = Number(s.repsRealizadas != null ? s.repsRealizadas : (s.reps != null ? s.reps : 0)) || 0;
-        const peso = _statsParsePesoKg(s.pesoUtilizado != null ? s.pesoUtilizado : s.peso);
+        const name = String(
+          s.ejercicioNombre || s.ejercicio || s.nombre || s.exercise_nombre || s.exercise_name || 'Ejercicio'
+        ).trim() || 'Ejercicio';
+        const reps = Number(
+          s.repsRealizadas != null ? s.repsRealizadas
+            : (s.reps != null ? s.reps
+              : (s.reps_realizadas != null ? s.reps_realizadas : 0))
+        ) || 0;
+        const peso = _statsParsePesoKg(
+          s.pesoUtilizado != null ? s.pesoUtilizado
+            : (s.peso != null ? s.peso : s.peso_utilizado)
+        );
         map[name] = (map[name] || 0) + reps * peso;
       });
       return map;
@@ -1838,15 +1847,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const allVals = [];
     seriesList.forEach(s => (s.values || []).forEach(v => allVals.push(Number(v) || 0)));
     const maxRaw = allVals.length ? Math.max(...allVals) : 0;
-    if (maxRaw <= 0) {
-      ctx.fillStyle = '#9ca3af';
-      ctx.font = '13px system-ui, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('Sin series cargadas en este dispositivo', W / 2, H / 2 - 8);
-      ctx.font = '11px system-ui, sans-serif';
-      ctx.fillText('Entrá de nuevo a Stats o completá un entrenamiento', W / 2, H / 2 + 12);
-      return;
-    }
     const maxY = Math.max(10, maxRaw) * 1.2;
 
     // Grid
@@ -3950,9 +3950,18 @@ document.addEventListener('DOMContentLoaded', () => {
     const volMap = (log) => {
       const map = {};
       (log.sets || []).forEach(s => {
-        const name = String(s.ejercicioNombre || s.ejercicio || s.nombre || 'Ejercicio').trim() || 'Ejercicio';
-        const reps = Number(s.repsRealizadas != null ? s.repsRealizadas : (s.reps != null ? s.reps : 0)) || 0;
-        const peso = _statsParsePesoKg(s.pesoUtilizado != null ? s.pesoUtilizado : s.peso);
+        const name = String(
+          s.ejercicioNombre || s.ejercicio || s.nombre || s.exercise_nombre || s.exercise_name || 'Ejercicio'
+        ).trim() || 'Ejercicio';
+        const reps = Number(
+          s.repsRealizadas != null ? s.repsRealizadas
+            : (s.reps != null ? s.reps
+              : (s.reps_realizadas != null ? s.reps_realizadas : 0))
+        ) || 0;
+        const peso = _statsParsePesoKg(
+          s.pesoUtilizado != null ? s.pesoUtilizado
+            : (s.peso != null ? s.peso : s.peso_utilizado)
+        );
         map[name] = (map[name] || 0) + reps * peso;
       });
       return map;
@@ -4147,15 +4156,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const allVals = [];
     seriesList.forEach(s => (s.values || []).forEach(v => allVals.push(Number(v) || 0)));
     const maxRaw = allVals.length ? Math.max(...allVals) : 0;
-    if (maxRaw <= 0) {
-      ctx.fillStyle = '#9ca3af';
-      ctx.font = '13px system-ui, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('Sin series cargadas en este dispositivo', W / 2, H / 2 - 8);
-      ctx.font = '11px system-ui, sans-serif';
-      ctx.fillText('Entrá de nuevo a Stats o completá un entrenamiento', W / 2, H / 2 + 12);
-      return;
-    }
     const maxY = Math.max(10, maxRaw) * 1.2;
 
     // Grid
@@ -5492,7 +5492,6 @@ appState.modalActivo = 'crear_rutina';
         try {
           const alumnoId = appState.usuarioActual.data.id;
           await window.gymStore.syncWithSupabase(alumnoId);
-          // Reforzar series (en celu a veces el sync queda sin sets)
           if (window.supabaseEngine && window.supabaseEngine.obtenerHistorialDesdeSupabase) {
             const sbLogs = await window.supabaseEngine.obtenerHistorialDesdeSupabase(alumnoId);
             if (sbLogs && sbLogs.length) {
@@ -5502,12 +5501,17 @@ appState.modalActivo = 'crear_rutina';
                 if (idx >= 0) {
                   const local = window.gymStore.data.workoutLogs[idx];
                   const localSets = Array.isArray(local.sets) ? local.sets : [];
+                  // Solo enriquecer: NUNCA borrar series locales si el server viene vacío
+                  const sets = remoteSets.length > localSets.length ? remoteSets
+                    : (remoteSets.length > 0 && localSets.length === 0 ? remoteSets : localSets);
                   window.gymStore.data.workoutLogs[idx] = {
                     ...local,
-                    ...sbLog,
-                    sets: remoteSets.length >= localSets.length ? remoteSets : localSets
+                    diaNombre: sbLog.diaNombre || local.diaNombre,
+                    fecha: sbLog.fecha || local.fecha,
+                    rutinaId: sbLog.rutinaId || local.rutinaId,
+                    sets
                   };
-                } else {
+                } else if (remoteSets.length > 0 || sbLog.fecha) {
                   window.gymStore.data.workoutLogs.unshift(sbLog);
                 }
               });
@@ -5515,7 +5519,9 @@ appState.modalActivo = 'crear_rutina';
             }
           }
           renderApp();
-        } catch (_) {}
+        } catch (err) {
+          console.warn('Stats refresh:', err);
+        }
       }
     });
     document.getElementById('navAvisosProf')?.addEventListener('click', toggleNotifDrawer);
@@ -6765,7 +6771,6 @@ alert("🚀 ¡Rutina propia creada! Ya podés empezar a entrenarla desde \"Mías
         try {
           const alumnoId = appState.usuarioActual.data.id;
           await window.gymStore.syncWithSupabase(alumnoId);
-          // Reforzar series (en celu a veces el sync queda sin sets)
           if (window.supabaseEngine && window.supabaseEngine.obtenerHistorialDesdeSupabase) {
             const sbLogs = await window.supabaseEngine.obtenerHistorialDesdeSupabase(alumnoId);
             if (sbLogs && sbLogs.length) {
@@ -6775,12 +6780,17 @@ alert("🚀 ¡Rutina propia creada! Ya podés empezar a entrenarla desde \"Mías
                 if (idx >= 0) {
                   const local = window.gymStore.data.workoutLogs[idx];
                   const localSets = Array.isArray(local.sets) ? local.sets : [];
+                  // Solo enriquecer: NUNCA borrar series locales si el server viene vacío
+                  const sets = remoteSets.length > localSets.length ? remoteSets
+                    : (remoteSets.length > 0 && localSets.length === 0 ? remoteSets : localSets);
                   window.gymStore.data.workoutLogs[idx] = {
                     ...local,
-                    ...sbLog,
-                    sets: remoteSets.length >= localSets.length ? remoteSets : localSets
+                    diaNombre: sbLog.diaNombre || local.diaNombre,
+                    fecha: sbLog.fecha || local.fecha,
+                    rutinaId: sbLog.rutinaId || local.rutinaId,
+                    sets
                   };
-                } else {
+                } else if (remoteSets.length > 0 || sbLog.fecha) {
                   window.gymStore.data.workoutLogs.unshift(sbLog);
                 }
               });
@@ -6788,7 +6798,9 @@ alert("🚀 ¡Rutina propia creada! Ya podés empezar a entrenarla desde \"Mías
             }
           }
           renderApp();
-        } catch (_) {}
+        } catch (err) {
+          console.warn('Stats refresh:', err);
+        }
       }
     });
     document.getElementById('navAvisosProf')?.addEventListener('click', toggleNotifDrawer);
