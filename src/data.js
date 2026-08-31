@@ -391,11 +391,7 @@ class GymStore {
               const local = this.data.workoutLogs[idx];
               const remoteSets = Array.isArray(sbLog.sets) ? sbLog.sets : [];
               const localSets = Array.isArray(local.sets) ? local.sets : [];
-              // Si el server trae series, ganan; si trae vacío, no inventamos datos
-              // que el server ya no tiene (p.ej. log fantasma post-borrado).
-              const sets = remoteSets.length > 0 ? remoteSets : (localSets.length > 0 && remoteSets.length === 0 && remoteIds.has(String(local.id)) ? remoteSets : localSets);
-              // Simplificado: remote manda. Solo conservar local sets si remote
-              // tiene el log PERO sets vacíos y local tenía (compat carga parcial).
+              // NUNCA borrar series locales si el remote viene vacío
               const setsFinal = remoteSets.length > 0 ? remoteSets : localSets;
               this.data.workoutLogs[idx] = {
                 ...local,

@@ -850,93 +850,98 @@ const { data: rpcData, error: rpcErr } = await this.client.rpc(
   }
 
   // --- HISTORIAL: alumno obtiene sus propios registros vía RPC segura ---
-  async obtenerHistorialDesdeSupabase(alumnoId) {
+  /**
+   * Adjunta series a logs existentes SIN reemplazar el log entero.
+   * Si el server no trae series para un log, deja las locales intactas.
+   */
+  async enriquecerSeriesDeLogs(logs) {
+    if (!this.client || !Array.isArray(logs) || !logs.length) return logs;
+    try {
+      const ids = logs.map(l => l && l.id).filter(Boolean);
+      const mapSetRow = (s) => ({
+        ejercicioId: s.exercise_goal_id || s.ejercicio_id || null,
+        ejercicioNombre: s.exercise_nombre || s.ejercicio_nombre || s.nombre || s.exercise_name || '',
+        setNumero: s.set_numero != null ? s.set_numero : (s.setNumero || 0),
+        repsRealizadas: s.reps_realizadas != null ? s.reps_realizadas : (s.reps || 0),
+        pesoUtilizado: s.peso_utilizado != null ? s.peso_utilizado : (s.peso || '0'),
+        comentarioAlumno: s.comentario_alumno || s.comentario || ''
+      });
+      const setsByLog = {};
+      for (let i = 0; i < ids.length; i += 50) {
+        const chunk = ids.slice(i, i + 50);
+        const { data, error } = await this.client
+          .from('workout_log_sets')
+          .select('*')
+          .in('workout_log_id', chunk);
+        if (error) {
+          console.warn('⚠️ enriquecerSeriesDeLogs:', error.message);
+          continue;
+        }
+        (data || []).forEach(s => {
+          const key = String(s.workout_log_id);
+          if (!setsByLog[key]) setsByLog[key] = [];
+          setsByLog[key].push(mapSetRow(s));
+        });
+      }
+      let enriched = 0;
+      logs.forEach(log => {
+        if (!log || log.id == null) return;
+        const remote = setsByLog[String(log.id)] || [];
+        const local = Array.isArray(log.sets) ? log.sets : [];
+        if (remote.length > local.length) {
+          log.sets = remote;
+          enriched++;
+        } else if (remote.length > 0 && local.length === 0) {
+          log.sets = remote;
+          enriched++;
+        }
+        // si remote vacío → no tocar local
+      });
+      console.log(`✅ Series enriquecidas en ${enriched} log(s). Keys con series: ${Object.keys(setsByLog).length}`);
+      return logs;
+    } catch (e) {
+      console.warn('⚠️ enriquecerSeriesDeLogs excepción:', e && e.message);
+      return logs;
+    }
+  }
+
+    async obtenerHistorialDesdeSupabase(alumnoId) {
     if (!this.client) return [];
     try {
       const alumnoUuid = this.ensureValidUUID(alumnoId);
-      let logs = [];
-
-      // A) RPC si existe
-      try {
-        const { data, error } = await this.client.rpc(
-          'obtener_historial_alumno',
-          { p_alumno_id: alumnoUuid }
-        );
-        if (!error && data) {
-          logs = Array.isArray(data) ? data : [];
-        } else if (error) {
-          console.warn('⚠️ RPC obtener_historial_alumno:', error.message);
-        }
-      } catch (e) {
-        console.warn('⚠️ RPC historial:', e && e.message);
+      // Misma fuente que el sync general
+      const { data: rows, error } = await this.client
+        .from('workout_logs')
+        .select('*')
+        .eq('alumno_id', alumnoUuid)
+        .order('fecha_entrenamiento', { ascending: false });
+      if (error) {
+        console.warn('⚠️ obtenerHistorial SELECT:', error.message);
+        // fallback RPC
+        try {
+          const { data, error: rpcErr } = await this.client.rpc('obtener_historial_alumno', { p_alumno_id: alumnoUuid });
+          if (!rpcErr && data) return Array.isArray(data) ? data : [];
+        } catch (_) {}
+        return [];
       }
-
-      // B) SELECT directo con series (solo ENRIQUECE sets, no borra logs)
-      try {
-        const { data: rows, error: qErr } = await this.client
-          .from('workout_logs')
-          .select('*, workout_log_sets(*)')
-          .eq('alumno_id', alumnoUuid)
-          .order('fecha_entrenamiento', { ascending: false });
-
-        if (!qErr && Array.isArray(rows)) {
-          const mapSet = (s) => ({
-            id: s.id,
-            ejercicioNombre: s.exercise_nombre || s.ejercicio_nombre || s.ejercicioNombre || '',
-            ejercicio: s.exercise_nombre || s.ejercicio_nombre || '',
-            nombre: s.exercise_nombre || s.ejercicio_nombre || '',
-            setNumero: s.set_numero != null ? s.set_numero : (s.setNumero || 0),
-            repsRealizadas: Number(s.reps_realizadas != null ? s.reps_realizadas : (s.reps || 0)) || 0,
-            reps: Number(s.reps_realizadas != null ? s.reps_realizadas : (s.reps || 0)) || 0,
-            pesoUtilizado: s.peso_utilizado != null ? String(s.peso_utilizado) : String(s.peso || '0'),
-            peso: s.peso_utilizado != null ? String(s.peso_utilizado) : String(s.peso || '0')
-          });
-
-          const byId = new Map();
-          (logs || []).forEach(l => {
-            if (l && l.id != null) byId.set(String(l.id), { ...l });
-          });
-
-          rows.forEach(l => {
-            const id = String(l.id);
-            const nested = Array.isArray(l.workout_log_sets) ? l.workout_log_sets.map(mapSet) : [];
-            const mapped = {
-              id: l.id,
-              alumnoId: l.alumno_id || l.alumnoId,
-              rutinaId: l.rutina_id || l.rutinaId,
-              diaId: l.dia_id || l.diaId,
-              diaNombre: l.dia_nombre || l.diaNombre || '',
-              fecha: l.fecha_entrenamiento || l.fecha || l.created_at,
-              puntos: l.puntos,
-              sets: nested
-            };
-            const prev = byId.get(id);
-            if (!prev) {
-              byId.set(id, mapped);
-              return;
-            }
-            const prevSets = Array.isArray(prev.sets) ? prev.sets : [];
-            const sets = nested.length >= prevSets.length ? nested : prevSets;
-            byId.set(id, {
-              ...prev,
-              diaNombre: mapped.diaNombre || prev.diaNombre,
-              fecha: mapped.fecha || prev.fecha,
-              rutinaId: mapped.rutinaId || prev.rutinaId,
-              sets
-            });
-          });
-          logs = Array.from(byId.values());
-        } else if (qErr) {
-          console.warn('⚠️ SELECT workout_logs:', qErr.message);
-        }
-      } catch (e) {
-        console.warn('⚠️ enrich sets:', e && e.message);
-      }
-
-      console.log(`✅ Historial: ${logs.length} logs, con series: ${logs.filter(l => (l.sets || []).length > 0).length}`);
+      const logs = (rows || []).map(l => ({
+        id: l.id,
+        alumnoId: l.alumno_id,
+        rutinaId: l.routine_id || l.rutina_id,
+        diaId: l.dia_id || 'dia-1',
+        diaNombre: l.dia_nombre,
+        diaNumero: l.dia_numero || 1,
+        fecha: l.fecha_entrenamiento,
+        estado: l.estado,
+        comentarioGeneral: l.comentario_general || '',
+        puntos: l.puntos != null ? l.puntos : undefined,
+        sets: []
+      }));
+      await this.enriquecerSeriesDeLogs(logs);
+      console.log(`✅ Historial: ${logs.length} logs, con series: ${logs.filter(l => (l.sets || []).length).length}`);
       return logs;
     } catch (err) {
-      console.error('❌ Excepción en obtenerHistorialDesdeSupabase:', err);
+      console.error('❌ obtenerHistorialDesdeSupabase:', err);
       return [];
     }
   }

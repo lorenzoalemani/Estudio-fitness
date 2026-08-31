@@ -379,9 +379,13 @@ document.addEventListener('DOMContentLoaded', () => {
               const sbLogs = await window.supabaseEngine.obtenerHistorialDesdeSupabase(res.data.id);
               if (sbLogs && sbLogs.length > 0) {
                 sbLogs.forEach(sbLog => {
-                  const idx = gymStore.data.workoutLogs.findIndex(w => w.id === sbLog.id);
+                  const idx = gymStore.data.workoutLogs.findIndex(w => String(w.id) === String(sbLog.id));
+                  const remoteSets = Array.isArray(sbLog.sets) ? sbLog.sets : [];
                   if (idx >= 0) {
-                    gymStore.data.workoutLogs[idx] = sbLog;
+                    const local = gymStore.data.workoutLogs[idx];
+                    const localSets = Array.isArray(local.sets) ? local.sets : [];
+                    const sets = remoteSets.length > 0 ? remoteSets : localSets;
+                    gymStore.data.workoutLogs[idx] = { ...local, ...sbLog, sets };
                   } else {
                     gymStore.data.workoutLogs.push(sbLog);
                   }
@@ -1678,13 +1682,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const chain = [...prevSessions, selected]; // para el badge
     const curVol = volMap(selected);
-    // Eje X: ejercicios del actual (orden de aparición en series)
+    // Eje X: unión de ejercicios de TODAS las sesiones comparables (no solo la actual)
     const labels = [];
-    (selected.sets || []).forEach(s => {
-      const name = String(s.ejercicioNombre || s.ejercicio || s.nombre || 'Ejercicio').trim() || 'Ejercicio';
-      if (!labels.includes(name)) labels.push(name);
+    const pushName = (raw) => {
+      const name = String(raw || '').trim() || 'Ejercicio';
+      if (name && !labels.includes(name)) labels.push(name);
+    };
+    chain.forEach(log => {
+      (log.sets || []).forEach(s => {
+        pushName(s.ejercicioNombre || s.ejercicio || s.nombre || s.exercise_nombre || s.exercise_name);
+      });
     });
-    // Si no hay series, al menos un punto
+    // Fallback: ejercicios del día en la rutina actual
+    if (!labels.length && ejerciciosRutinaDia && ejerciciosRutinaDia.length) {
+      ejerciciosRutinaDia.forEach(ej => {
+        if (!ej.esEntradaEnCalor) pushName(ej.nombre);
+      });
+    }
     if (!labels.length) labels.push('Sin series');
 
     // seriesList: cada sesión es una línea
@@ -2688,9 +2702,13 @@ document.addEventListener('DOMContentLoaded', () => {
               const sbLogs = await window.supabaseEngine.obtenerHistorialDesdeSupabase(res.data.id);
               if (sbLogs && sbLogs.length > 0) {
                 sbLogs.forEach(sbLog => {
-                  const idx = gymStore.data.workoutLogs.findIndex(w => w.id === sbLog.id);
+                  const idx = gymStore.data.workoutLogs.findIndex(w => String(w.id) === String(sbLog.id));
+                  const remoteSets = Array.isArray(sbLog.sets) ? sbLog.sets : [];
                   if (idx >= 0) {
-                    gymStore.data.workoutLogs[idx] = sbLog;
+                    const local = gymStore.data.workoutLogs[idx];
+                    const localSets = Array.isArray(local.sets) ? local.sets : [];
+                    const sets = remoteSets.length > 0 ? remoteSets : localSets;
+                    gymStore.data.workoutLogs[idx] = { ...local, ...sbLog, sets };
                   } else {
                     gymStore.data.workoutLogs.push(sbLog);
                   }
@@ -3987,13 +4005,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const chain = [...prevSessions, selected]; // para el badge
     const curVol = volMap(selected);
-    // Eje X: ejercicios del actual (orden de aparición en series)
+    // Eje X: unión de ejercicios de TODAS las sesiones comparables (no solo la actual)
     const labels = [];
-    (selected.sets || []).forEach(s => {
-      const name = String(s.ejercicioNombre || s.ejercicio || s.nombre || 'Ejercicio').trim() || 'Ejercicio';
-      if (!labels.includes(name)) labels.push(name);
+    const pushName = (raw) => {
+      const name = String(raw || '').trim() || 'Ejercicio';
+      if (name && !labels.includes(name)) labels.push(name);
+    };
+    chain.forEach(log => {
+      (log.sets || []).forEach(s => {
+        pushName(s.ejercicioNombre || s.ejercicio || s.nombre || s.exercise_nombre || s.exercise_name);
+      });
     });
-    // Si no hay series, al menos un punto
+    // Fallback: ejercicios del día en la rutina actual
+    if (!labels.length && ejerciciosRutinaDia && ejerciciosRutinaDia.length) {
+      ejerciciosRutinaDia.forEach(ej => {
+        if (!ej.esEntradaEnCalor) pushName(ej.nombre);
+      });
+    }
     if (!labels.length) labels.push('Sin series');
 
     // seriesList: cada sesión es una línea
@@ -5488,35 +5516,14 @@ appState.modalActivo = 'crear_rutina';
       appState.mostrarDrawerNotifs = false;
       if (appState.statsMonthOffset == null) appState.statsMonthOffset = 0;
       renderApp();
-      if (appState.usuarioActual?.rol === 'alumno' && window.gymStore) {
+      if (appState.usuarioActual?.rol === 'alumno' && window.gymStore && window.supabaseEngine) {
         try {
           const alumnoId = appState.usuarioActual.data.id;
           await window.gymStore.syncWithSupabase(alumnoId);
-          if (window.supabaseEngine && window.supabaseEngine.obtenerHistorialDesdeSupabase) {
-            const sbLogs = await window.supabaseEngine.obtenerHistorialDesdeSupabase(alumnoId);
-            if (sbLogs && sbLogs.length) {
-              sbLogs.forEach(sbLog => {
-                const idx = window.gymStore.data.workoutLogs.findIndex(w => String(w.id) === String(sbLog.id));
-                const remoteSets = Array.isArray(sbLog.sets) ? sbLog.sets : [];
-                if (idx >= 0) {
-                  const local = window.gymStore.data.workoutLogs[idx];
-                  const localSets = Array.isArray(local.sets) ? local.sets : [];
-                  // Solo enriquecer: NUNCA borrar series locales si el server viene vacío
-                  const sets = remoteSets.length > localSets.length ? remoteSets
-                    : (remoteSets.length > 0 && localSets.length === 0 ? remoteSets : localSets);
-                  window.gymStore.data.workoutLogs[idx] = {
-                    ...local,
-                    diaNombre: sbLog.diaNombre || local.diaNombre,
-                    fecha: sbLog.fecha || local.fecha,
-                    rutinaId: sbLog.rutinaId || local.rutinaId,
-                    sets
-                  };
-                } else if (remoteSets.length > 0 || sbLog.fecha) {
-                  window.gymStore.data.workoutLogs.unshift(sbLog);
-                }
-              });
-              window.gymStore.saveData();
-            }
+          // Recargar SOLO series por id (no pisar el resto del log)
+          if (typeof window.supabaseEngine.enriquecerSeriesDeLogs === 'function') {
+            await window.supabaseEngine.enriquecerSeriesDeLogs(window.gymStore.data.workoutLogs);
+            window.gymStore.saveData();
           }
           renderApp();
         } catch (err) {
@@ -5870,9 +5877,16 @@ appState.modalActivo = 'crear_rutina';
                 const sbLogs = await window.supabaseEngine.obtenerHistorialDesdeSupabase(perfilAlumno.id);
                 if (sbLogs && sbLogs.length > 0) {
                   sbLogs.forEach(sbLog => {
-                    const idx = gymStore.data.workoutLogs.findIndex(w => w.id === sbLog.id);
-                    if (idx >= 0) gymStore.data.workoutLogs[idx] = sbLog;
-                    else gymStore.data.workoutLogs.push(sbLog);
+                    const idx = gymStore.data.workoutLogs.findIndex(w => String(w.id) === String(sbLog.id));
+                    const remoteSets = Array.isArray(sbLog.sets) ? sbLog.sets : [];
+                    if (idx >= 0) {
+                      const local = gymStore.data.workoutLogs[idx];
+                      const localSets = Array.isArray(local.sets) ? local.sets : [];
+                      const sets = remoteSets.length > 0 ? remoteSets : localSets;
+                      gymStore.data.workoutLogs[idx] = { ...local, ...sbLog, sets };
+                    } else {
+                      gymStore.data.workoutLogs.push(sbLog);
+                    }
                   });
                   gymStore.saveData();
                   window.dispatchEvent(new CustomEvent('gym_store_updated'));
@@ -6767,35 +6781,14 @@ alert("🚀 ¡Rutina propia creada! Ya podés empezar a entrenarla desde \"Mías
       appState.mostrarDrawerNotifs = false;
       if (appState.statsMonthOffset == null) appState.statsMonthOffset = 0;
       renderApp();
-      if (appState.usuarioActual?.rol === 'alumno' && window.gymStore) {
+      if (appState.usuarioActual?.rol === 'alumno' && window.gymStore && window.supabaseEngine) {
         try {
           const alumnoId = appState.usuarioActual.data.id;
           await window.gymStore.syncWithSupabase(alumnoId);
-          if (window.supabaseEngine && window.supabaseEngine.obtenerHistorialDesdeSupabase) {
-            const sbLogs = await window.supabaseEngine.obtenerHistorialDesdeSupabase(alumnoId);
-            if (sbLogs && sbLogs.length) {
-              sbLogs.forEach(sbLog => {
-                const idx = window.gymStore.data.workoutLogs.findIndex(w => String(w.id) === String(sbLog.id));
-                const remoteSets = Array.isArray(sbLog.sets) ? sbLog.sets : [];
-                if (idx >= 0) {
-                  const local = window.gymStore.data.workoutLogs[idx];
-                  const localSets = Array.isArray(local.sets) ? local.sets : [];
-                  // Solo enriquecer: NUNCA borrar series locales si el server viene vacío
-                  const sets = remoteSets.length > localSets.length ? remoteSets
-                    : (remoteSets.length > 0 && localSets.length === 0 ? remoteSets : localSets);
-                  window.gymStore.data.workoutLogs[idx] = {
-                    ...local,
-                    diaNombre: sbLog.diaNombre || local.diaNombre,
-                    fecha: sbLog.fecha || local.fecha,
-                    rutinaId: sbLog.rutinaId || local.rutinaId,
-                    sets
-                  };
-                } else if (remoteSets.length > 0 || sbLog.fecha) {
-                  window.gymStore.data.workoutLogs.unshift(sbLog);
-                }
-              });
-              window.gymStore.saveData();
-            }
+          // Recargar SOLO series por id (no pisar el resto del log)
+          if (typeof window.supabaseEngine.enriquecerSeriesDeLogs === 'function') {
+            await window.supabaseEngine.enriquecerSeriesDeLogs(window.gymStore.data.workoutLogs);
+            window.gymStore.saveData();
           }
           renderApp();
         } catch (err) {
@@ -7149,9 +7142,16 @@ alert("🚀 ¡Rutina propia creada! Ya podés empezar a entrenarla desde \"Mías
                 const sbLogs = await window.supabaseEngine.obtenerHistorialDesdeSupabase(perfilAlumno.id);
                 if (sbLogs && sbLogs.length > 0) {
                   sbLogs.forEach(sbLog => {
-                    const idx = gymStore.data.workoutLogs.findIndex(w => w.id === sbLog.id);
-                    if (idx >= 0) gymStore.data.workoutLogs[idx] = sbLog;
-                    else gymStore.data.workoutLogs.push(sbLog);
+                    const idx = gymStore.data.workoutLogs.findIndex(w => String(w.id) === String(sbLog.id));
+                    const remoteSets = Array.isArray(sbLog.sets) ? sbLog.sets : [];
+                    if (idx >= 0) {
+                      const local = gymStore.data.workoutLogs[idx];
+                      const localSets = Array.isArray(local.sets) ? local.sets : [];
+                      const sets = remoteSets.length > 0 ? remoteSets : localSets;
+                      gymStore.data.workoutLogs[idx] = { ...local, ...sbLog, sets };
+                    } else {
+                      gymStore.data.workoutLogs.push(sbLog);
+                    }
                   });
                   gymStore.saveData();
                   window.dispatchEvent(new CustomEvent('gym_store_updated'));
