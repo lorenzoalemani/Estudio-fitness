@@ -617,7 +617,8 @@ const { data: rpcData, error: rpcErr } = await this.client.rpc(
       try { routineUuid = this.ensureValidUUID(log.rutinaId); } catch (_) { routineUuid = log.rutinaId || null; }
       log.id = logUuid;
 
-      const payloadLog = {
+      // 1) Log del entrenamiento
+      const { error: lErr } = await this.client.from('workout_logs').insert({
         id:                  logUuid,
         alumno_id:           alumnoUuid,
         routine_id:          routineUuid,
@@ -626,83 +627,108 @@ const { data: rpcData, error: rpcErr } = await this.client.rpc(
         comentario_general:  log.comentarioGeneral || null,
         estado:              log.estado || 'completado',
         fecha_entrenamiento: log.fecha
-      };
-
-      const { error: lErr } = await this.client.from('workout_logs').insert(payloadLog);
+      });
       if (lErr) {
-        // Si ya existe el log, seguimos igual e intentamos las series
-        console.warn('⚠️ INSERT workout_logs:', lErr.message || lErr);
-        // si falla el log, igual intentamos series (puede existir ya el log)
+        const msg = String(lErr.message || lErr);
+        console.warn('⚠️ INSERT workout_logs:', msg);
+        // Si no es duplicado, igual seguimos a series (el log puede existir)
       }
 
       const sets = Array.isArray(log.sets) ? log.sets : [];
-      console.log('📝 Guardando series:', sets.length, 'para log', logUuid);
+      console.log('📝 Persistiendo series:', sets.length, 'log', logUuid);
 
-      const rows = sets.map((s, i) => {
+      if (!sets.length) {
+        return { ok: true, setsOk: 0, warning: 'sin_series_en_payload' };
+      }
+
+      // Payload compatible con la RPC de edición (SECURITY DEFINER, saltea RLS)
+      const setsPayload = sets.map((s, i) => {
         const repsRaw = s.repsRealizadas != null ? s.repsRealizadas : s.reps;
         let reps = parseInt(String(repsRaw == null ? '0' : repsRaw).replace(/[^\d-]/g, ''), 10);
         if (!Number.isFinite(reps) || reps < 0) reps = 0;
-
-        let pesoRaw = s.pesoUtilizado != null ? s.pesoUtilizado : s.peso;
-        if (pesoRaw == null || String(pesoRaw).trim() === '') pesoRaw = '0';
-        // Dejar string legible ("60 kg") o número; la columna suele ser text
-        const peso = String(pesoRaw);
-
+        let peso = s.pesoUtilizado != null ? s.pesoUtilizado : s.peso;
+        if (peso == null || String(peso).trim() === '') peso = '0';
+        peso = String(peso);
         const nombre = (s.ejercicioNombre || s.ejercicio || s.nombre || 'Ejercicio').toString().trim() || 'Ejercicio';
         let setNum = parseInt(s.setNumero, 10);
         if (!Number.isFinite(setNum) || setNum < 1) setNum = i + 1;
-
-        // SOLO columnas seguras — sin exercise_goal_id
         return {
-          workout_log_id:  logUuid,
-          exercise_nombre: nombre,
-          set_numero:      setNum,
-          reps_realizadas: reps,
-          peso_utilizado:  peso
+          exercise_goal_id:  null,
+          exercise_nombre:   nombre,
+          set_numero:        setNum,
+          reps_realizadas:   reps,
+          peso_utilizado:    peso,
+          comentario_alumno: s.comentarioAlumno || null
         };
       });
 
       let setsOk = 0;
-      let setsFail = 0;
       let lastErr = null;
 
-      if (rows.length) {
-        // 1) lote
+      // 2) Preferir RPC (misma que editar dentro de 2hs) — evita RLS en workout_log_sets
+      try {
+        const { data: rpcData, error: rpcErr } = await this.client.rpc('editar_workout_log_sets_alumno', {
+          p_workout_log_id: logUuid,
+          p_alumno_id: alumnoUuid,
+          p_sets: setsPayload,
+          p_comentario_general: log.comentarioGeneral ?? null
+        });
+        if (!rpcErr && !(rpcData && rpcData.ok === false)) {
+          setsOk = setsPayload.length;
+          console.log('✅ Series guardadas via RPC editar_workout_log_sets_alumno', rpcData);
+        } else {
+          lastErr = rpcErr || (rpcData && rpcData.error) || 'rpc_fallo';
+          console.warn('⚠️ RPC series falló, pruebo INSERT directo:', lastErr);
+        }
+      } catch (e) {
+        lastErr = e && e.message;
+        console.warn('⚠️ RPC series excepción, INSERT directo:', lastErr);
+      }
+
+      // 3) Fallback: INSERT directo
+      if (setsOk === 0) {
+        const rows = setsPayload.map(s => ({
+          workout_log_id:  logUuid,
+          exercise_nombre: s.exercise_nombre,
+          set_numero:      s.set_numero,
+          reps_realizadas: s.reps_realizadas,
+          peso_utilizado:  s.peso_utilizado,
+          comentario_alumno: s.comentario_alumno
+        }));
         const { error: batchErr } = await this.client.from('workout_log_sets').insert(rows);
         if (!batchErr) {
           setsOk = rows.length;
+          console.log('✅ Series guardadas via INSERT directo', setsOk);
         } else {
           lastErr = batchErr;
-          console.warn('⚠️ Insert lote series falló:', batchErr.message || batchErr, batchErr);
-          // 2) una por una
+          console.warn('⚠️ INSERT lote series:', batchErr.message || batchErr);
           for (const row of rows) {
             const { error: sErr } = await this.client.from('workout_log_sets').insert(row);
-            if (sErr) {
-              setsFail++;
+            if (!sErr) setsOk++;
+            else {
               lastErr = sErr;
-              console.error('❌ INSERT set:', sErr.message || sErr, sErr, row);
-            } else {
-              setsOk++;
+              console.error('❌ INSERT set:', sErr.message || sErr, row);
             }
           }
         }
       }
 
-      // Verificar en DB
+      // Verificación
+      let countInDb = null;
       try {
         const { count } = await this.client
           .from('workout_log_sets')
           .select('id', { count: 'exact', head: true })
           .eq('workout_log_id', logUuid);
-        console.log('✅ Entrenamiento persistido.', { logUuid, setsOk, setsFail, total: rows.length, countInDb: count });
-      } catch (_) {
-        console.log('✅ Entrenamiento persistido.', { logUuid, setsOk, setsFail, total: rows.length });
-      }
+        countInDb = count;
+      } catch (_) {}
 
-      if (rows.length > 0 && setsOk === 0) {
-        return { ok: false, error: (lastErr && lastErr.message) || 'series_no_guardadas', setsOk: 0 };
+      console.log('✅ Entrenamiento persistido.', { logUuid, setsOk, total: sets.length, countInDb });
+
+      if (setsOk === 0) {
+        return { ok: false, error: (lastErr && (lastErr.message || lastErr)) || 'series_no_guardadas', setsOk: 0 };
       }
-      return { ok: true, setsOk, setsFail };
+      return { ok: true, setsOk, countInDb };
     } catch (err) {
       console.error('❌ Excepción guardando entrenamiento real en Supabase DB:', err);
       return { ok: false, error: err.message };

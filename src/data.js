@@ -1723,7 +1723,19 @@ class GymStore {
     // --- CONFIRMACIÓN AUTORITATIVA DEL SERVIDOR ---
     let resultadoPuntos = null;
     if (window.supabaseEngine) {
-      await window.supabaseEngine.guardarWorkoutLogEnSupabase(nuevoLog);
+      const resSets = await window.supabaseEngine.guardarWorkoutLogEnSupabase(nuevoLog);
+      if (resSets && resSets.ok === false) {
+        console.error('❌ Series NO guardadas en Supabase:', resSets.error);
+        // No borramos el log local; el alumno sigue viendo el detalle.
+        // Se reintenta una vez con la RPC de edición.
+        try {
+          await window.supabaseEngine.editarWorkoutLogSetsEnSupabase(
+            logId, alumnoId, setsLog, comentarioGeneral || ''
+          );
+        } catch (e2) {
+          console.error('❌ Reintento editar series falló:', e2);
+        }
+      }
       resultadoPuntos = await window.supabaseEngine.registrarPuntosEntrenamientoEnSupabase(logId, alumnoId);
 
       if (resultadoPuntos && resultadoPuntos.ok && alumno) {
