@@ -1813,7 +1813,6 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!payload || !payload.labels) return;
     const labels = payload.labels;
     let seriesList = Array.isArray(payload.seriesList) ? payload.seriesList : [];
-    // Compat: seriesA sola
     if (!seriesList.length && payload.seriesA) {
       seriesList = [{ values: payload.seriesA, isCurrent: true, color: '#3b82f6' }];
       if (payload.seriesB) seriesList.unshift({ values: payload.seriesB, isCurrent: false, color: 'rgba(148,163,184,0.55)' });
@@ -1821,8 +1820,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const ctx = canvas.getContext('2d');
     const dpr = window.devicePixelRatio || 1;
-    const cssW = canvas.clientWidth || 320;
+    // En celu a veces clientWidth es 0 en el primer paint
+    const parentW = canvas.parentElement ? canvas.parentElement.clientWidth : 0;
+    const cssW = Math.max(canvas.clientWidth || parentW || 320, 260);
     const cssH = 220;
+    canvas.style.width = '100%';
     canvas.width = Math.floor(cssW * dpr);
     canvas.height = Math.floor(cssH * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -1835,7 +1837,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const allVals = [];
     seriesList.forEach(s => (s.values || []).forEach(v => allVals.push(Number(v) || 0)));
-    const maxY = Math.max(10, ...allVals) * 1.2;
+    const maxRaw = allVals.length ? Math.max(...allVals) : 0;
+    if (maxRaw <= 0) {
+      ctx.fillStyle = '#9ca3af';
+      ctx.font = '13px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Sin series cargadas en este dispositivo', W / 2, H / 2 - 8);
+      ctx.font = '11px system-ui, sans-serif';
+      ctx.fillText('Entrá de nuevo a Stats o completá un entrenamiento', W / 2, H / 2 + 12);
+      return;
+    }
+    const maxY = Math.max(10, maxRaw) * 1.2;
 
     // Grid
     ctx.strokeStyle = 'rgba(255,255,255,0.06)';
@@ -1941,7 +1953,15 @@ document.addEventListener('DOMContentLoaded', () => {
       appState.statsMonthOffset = (Number(appState.statsMonthOffset) || 0) + 1;
       renderApp();
     });
-    requestAnimationFrame(() => _drawStatsLineChart(document.getElementById('statsLineChart')));
+    const draw = () => _drawStatsLineChart(document.getElementById('statsLineChart'));
+    requestAnimationFrame(() => requestAnimationFrame(draw));
+    // Redibujar al rotar / cambiar tamaño (celu)
+    if (!window._statsChartResizeBound) {
+      window._statsChartResizeBound = true;
+      window.addEventListener('resize', () => {
+        if (appState.tabCliente === 'stats') draw();
+      });
+    }
   }
 
   // permitirEdicion: SOLO true cuando el alumno ve su PROPIO historial
@@ -4102,7 +4122,6 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!payload || !payload.labels) return;
     const labels = payload.labels;
     let seriesList = Array.isArray(payload.seriesList) ? payload.seriesList : [];
-    // Compat: seriesA sola
     if (!seriesList.length && payload.seriesA) {
       seriesList = [{ values: payload.seriesA, isCurrent: true, color: '#3b82f6' }];
       if (payload.seriesB) seriesList.unshift({ values: payload.seriesB, isCurrent: false, color: 'rgba(148,163,184,0.55)' });
@@ -4110,8 +4129,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const ctx = canvas.getContext('2d');
     const dpr = window.devicePixelRatio || 1;
-    const cssW = canvas.clientWidth || 320;
+    // En celu a veces clientWidth es 0 en el primer paint
+    const parentW = canvas.parentElement ? canvas.parentElement.clientWidth : 0;
+    const cssW = Math.max(canvas.clientWidth || parentW || 320, 260);
     const cssH = 220;
+    canvas.style.width = '100%';
     canvas.width = Math.floor(cssW * dpr);
     canvas.height = Math.floor(cssH * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -4124,7 +4146,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const allVals = [];
     seriesList.forEach(s => (s.values || []).forEach(v => allVals.push(Number(v) || 0)));
-    const maxY = Math.max(10, ...allVals) * 1.2;
+    const maxRaw = allVals.length ? Math.max(...allVals) : 0;
+    if (maxRaw <= 0) {
+      ctx.fillStyle = '#9ca3af';
+      ctx.font = '13px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Sin series cargadas en este dispositivo', W / 2, H / 2 - 8);
+      ctx.font = '11px system-ui, sans-serif';
+      ctx.fillText('Entrá de nuevo a Stats o completá un entrenamiento', W / 2, H / 2 + 12);
+      return;
+    }
+    const maxY = Math.max(10, maxRaw) * 1.2;
 
     // Grid
     ctx.strokeStyle = 'rgba(255,255,255,0.06)';
@@ -4230,7 +4262,15 @@ document.addEventListener('DOMContentLoaded', () => {
       appState.statsMonthOffset = (Number(appState.statsMonthOffset) || 0) + 1;
       renderApp();
     });
-    requestAnimationFrame(() => _drawStatsLineChart(document.getElementById('statsLineChart')));
+    const draw = () => _drawStatsLineChart(document.getElementById('statsLineChart'));
+    requestAnimationFrame(() => requestAnimationFrame(draw));
+    // Redibujar al rotar / cambiar tamaño (celu)
+    if (!window._statsChartResizeBound) {
+      window._statsChartResizeBound = true;
+      window.addEventListener('resize', () => {
+        if (appState.tabCliente === 'stats') draw();
+      });
+    }
   }
 
   // permitirEdicion: SOLO true cuando el alumno ve su PROPIO historial
@@ -5450,7 +5490,30 @@ appState.modalActivo = 'crear_rutina';
       renderApp();
       if (appState.usuarioActual?.rol === 'alumno' && window.gymStore) {
         try {
-          await window.gymStore.syncWithSupabase(appState.usuarioActual.data.id);
+          const alumnoId = appState.usuarioActual.data.id;
+          await window.gymStore.syncWithSupabase(alumnoId);
+          // Reforzar series (en celu a veces el sync queda sin sets)
+          if (window.supabaseEngine && window.supabaseEngine.obtenerHistorialDesdeSupabase) {
+            const sbLogs = await window.supabaseEngine.obtenerHistorialDesdeSupabase(alumnoId);
+            if (sbLogs && sbLogs.length) {
+              sbLogs.forEach(sbLog => {
+                const idx = window.gymStore.data.workoutLogs.findIndex(w => String(w.id) === String(sbLog.id));
+                const remoteSets = Array.isArray(sbLog.sets) ? sbLog.sets : [];
+                if (idx >= 0) {
+                  const local = window.gymStore.data.workoutLogs[idx];
+                  const localSets = Array.isArray(local.sets) ? local.sets : [];
+                  window.gymStore.data.workoutLogs[idx] = {
+                    ...local,
+                    ...sbLog,
+                    sets: remoteSets.length >= localSets.length ? remoteSets : localSets
+                  };
+                } else {
+                  window.gymStore.data.workoutLogs.unshift(sbLog);
+                }
+              });
+              window.gymStore.saveData();
+            }
+          }
           renderApp();
         } catch (_) {}
       }
@@ -6700,7 +6763,30 @@ alert("🚀 ¡Rutina propia creada! Ya podés empezar a entrenarla desde \"Mías
       renderApp();
       if (appState.usuarioActual?.rol === 'alumno' && window.gymStore) {
         try {
-          await window.gymStore.syncWithSupabase(appState.usuarioActual.data.id);
+          const alumnoId = appState.usuarioActual.data.id;
+          await window.gymStore.syncWithSupabase(alumnoId);
+          // Reforzar series (en celu a veces el sync queda sin sets)
+          if (window.supabaseEngine && window.supabaseEngine.obtenerHistorialDesdeSupabase) {
+            const sbLogs = await window.supabaseEngine.obtenerHistorialDesdeSupabase(alumnoId);
+            if (sbLogs && sbLogs.length) {
+              sbLogs.forEach(sbLog => {
+                const idx = window.gymStore.data.workoutLogs.findIndex(w => String(w.id) === String(sbLog.id));
+                const remoteSets = Array.isArray(sbLog.sets) ? sbLog.sets : [];
+                if (idx >= 0) {
+                  const local = window.gymStore.data.workoutLogs[idx];
+                  const localSets = Array.isArray(local.sets) ? local.sets : [];
+                  window.gymStore.data.workoutLogs[idx] = {
+                    ...local,
+                    ...sbLog,
+                    sets: remoteSets.length >= localSets.length ? remoteSets : localSets
+                  };
+                } else {
+                  window.gymStore.data.workoutLogs.unshift(sbLog);
+                }
+              });
+              window.gymStore.saveData();
+            }
+          }
           renderApp();
         } catch (_) {}
       }

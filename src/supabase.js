@@ -854,16 +854,63 @@ const { data: rpcData, error: rpcErr } = await this.client.rpc(
     if (!this.client) return [];
     try {
       const alumnoUuid = this.ensureValidUUID(alumnoId);
-      const { data, error } = await this.client.rpc(
-        'obtener_historial_alumno',
-        { p_alumno_id: alumnoUuid }
-      );
-      if (error) {
-        console.error('❌ RPC obtener_historial_alumno falló:', error.message);
-        return [];
+      // 1) RPC (si existe)
+      let logs = [];
+      try {
+        const { data, error } = await this.client.rpc(
+          'obtener_historial_alumno',
+          { p_alumno_id: alumnoUuid }
+        );
+        if (!error) logs = Array.isArray(data) ? data : (data || []);
+        else console.warn('⚠️ RPC obtener_historial_alumno:', error.message);
+      } catch (e) {
+        console.warn('⚠️ RPC historial no disponible:', e && e.message);
       }
-      const logs = Array.isArray(data) ? data : (data || []);
-      console.log(`✅ Historial obtenido desde Supabase: ${logs.length} registros.`);
+
+      // 2) Siempre reforzar con SELECT directo + series (el celu a veces no trae sets por la RPC)
+      const { data: rows, error: qErr } = await this.client
+        .from('workout_logs')
+        .select('*, workout_log_sets(*)')
+        .eq('alumno_id', alumnoUuid)
+        .order('fecha_entrenamiento', { ascending: false });
+      if (qErr) {
+        console.warn('⚠️ SELECT workout_logs+sets:', qErr.message);
+      } else if (rows && rows.length) {
+        const mapSet = (s) => ({
+          id: s.id,
+          ejercicioNombre: s.exercise_nombre || s.ejercicio_nombre || '',
+          setNumero: s.set_numero != null ? s.set_numero : s.setNumero,
+          repsRealizadas: s.reps_realizadas != null ? s.reps_realizadas : (s.reps || 0),
+          pesoUtilizado: s.peso_utilizado != null ? s.peso_utilizado : (s.peso || '0')
+        });
+        const fromSelect = rows.map(l => ({
+          id: l.id,
+          alumnoId: l.alumno_id,
+          rutinaId: l.rutina_id,
+          diaId: l.dia_id,
+          diaNombre: l.dia_nombre,
+          fecha: l.fecha_entrenamiento || l.fecha,
+          puntos: l.puntos,
+          sets: Array.isArray(l.workout_log_sets) ? l.workout_log_sets.map(mapSet) : []
+        }));
+        // Merge: preferir el lado que tenga MÁS series
+        const byId = new Map();
+        logs.forEach(l => byId.set(String(l.id), l));
+        fromSelect.forEach(l => {
+          const prev = byId.get(String(l.id));
+          if (!prev) { byId.set(String(l.id), l); return; }
+          const prevSets = Array.isArray(prev.sets) ? prev.sets : [];
+          const newSets = Array.isArray(l.sets) ? l.sets : [];
+          byId.set(String(l.id), {
+            ...prev,
+            ...l,
+            sets: newSets.length >= prevSets.length ? newSets : prevSets
+          });
+        });
+        logs = Array.from(byId.values());
+      }
+
+      console.log(`✅ Historial alumno: ${logs.length} logs, con series: ${logs.filter(l => (l.sets||[]).length).length}`);
       return logs;
     } catch (err) {
       console.error('❌ Excepción en obtenerHistorialDesdeSupabase:', err);
