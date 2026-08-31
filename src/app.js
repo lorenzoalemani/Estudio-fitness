@@ -1505,14 +1505,55 @@ document.addEventListener('DOMContentLoaded', () => {
       </div>`;
     }
 
-    if (!appState.statsSelectedLogId || !list.find(l => l.id === appState.statsSelectedLogId)) {
-      appState.statsSelectedLogId = list[0].id;
-    }
     if (appState.statsMonthOffset == null) appState.statsMonthOffset = 0;
 
-    const selected = list.find(l => l.id === appState.statsSelectedLogId) || list[0];
-    const options = list.map(l =>
-      `<option value="${l.id}" ${l.id === selected.id ? 'selected' : ''}>${_statsFormatFecha(l.fecha)} · ${l.diaNombre || 'Entrenamiento'}</option>`
+    // --- Selector por RUTINA → DÍA (no por sesión suelta) ---
+    const rutinasStore = (store.data && store.data.rutinas) ? store.data.rutinas : [];
+    const rutinaIdsEnLogs = [];
+    list.forEach(l => {
+      const rid = l.rutinaId || 'sin-rutina';
+      if (!rutinaIdsEnLogs.includes(rid)) rutinaIdsEnLogs.push(rid);
+    });
+    const rutinaOpciones = rutinaIdsEnLogs.map(rid => {
+      const r = rutinasStore.find(x => x.id === rid);
+      const titulo = r ? r.titulo : (rid === 'sin-rutina' ? 'Sin rutina' : 'Rutina');
+      return { id: rid, titulo };
+    });
+
+    if (!appState.statsSelectedRutinaId || !rutinaOpciones.find(r => r.id === appState.statsSelectedRutinaId)) {
+      appState.statsSelectedRutinaId = rutinaOpciones[0].id;
+    }
+    const rutinaIdActiva = appState.statsSelectedRutinaId;
+
+    const logsDeRutina = list.filter(l => (l.rutinaId || 'sin-rutina') === rutinaIdActiva);
+    // Días únicos por nombre (pecho / espalda / pierna…), sin importar cuántas veces se repitieron
+    const diasMap = new Map();
+    logsDeRutina.forEach(l => {
+      const key = _statsDiaKey(l);
+      if (!key) return;
+      if (!diasMap.has(key)) {
+        diasMap.set(key, { key, label: l.diaNombre || key });
+      }
+    });
+    const diasOpciones = Array.from(diasMap.values());
+
+    if (!appState.statsSelectedDiaKey || !diasOpciones.find(d => d.key === appState.statsSelectedDiaKey)) {
+      appState.statsSelectedDiaKey = diasOpciones.length ? diasOpciones[0].key : null;
+    }
+    const diaKeyActiva = appState.statsSelectedDiaKey;
+
+    // Sesión de referencia = la más reciente de esa rutina + ese día
+    const logsDelDia = logsDeRutina
+      .filter(l => _statsDiaKey(l) === diaKeyActiva)
+      .sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+    const selected = logsDelDia[0] || logsDeRutina[0] || list[0];
+    appState.statsSelectedLogId = selected.id;
+
+    const optionsRutina = rutinaOpciones.map(r =>
+      `<option value="${r.id}" ${r.id === rutinaIdActiva ? 'selected' : ''}>${r.titulo}</option>`
+    ).join('');
+    const optionsDia = diasOpciones.map(d =>
+      `<option value="${d.key}" ${d.key === diaKeyActiva ? 'selected' : ''}>${d.label}</option>`
     ).join('');
 
     // Distribución muscular por series
@@ -1559,6 +1600,9 @@ document.addEventListener('DOMContentLoaded', () => {
       .filter(l => {
         if (l.id === selected.id) return false;
         if (new Date(l.fecha).getTime() >= selDate) return false;
+        // Preferir misma rutina; si no hay, permitir otras
+        const sameRutina = (l.rutinaId || 'sin-rutina') === (selected.rutinaId || 'sin-rutina');
+        if (_statsDiaKey(l) === selKey && sameRutina) return true;
         if (_statsDiaKey(l) === selKey) return true;
         if (selSig && _statsExerciseSignature(l) === selSig) return true;
         return false;
@@ -1649,8 +1693,11 @@ document.addEventListener('DOMContentLoaded', () => {
         <p class="stats-sub">Elegí un entrenamiento y mirá distribución, progreso y constancia.</p>
 
         <section class="stats-card">
-          <label class="stats-label" for="statsSelectWorkout">Entrenamiento</label>
-          <select id="statsSelectWorkout" class="stats-select">${options}</select>
+          <label class="stats-label" for="statsSelectRutina">Rutina</label>
+          <select id="statsSelectRutina" class="stats-select">${optionsRutina}</select>
+          <label class="stats-label" for="statsSelectDia" style="margin-top:12px">Día de la rutina</label>
+          <select id="statsSelectDia" class="stats-select">${optionsDia}</select>
+          <p class="stats-hint" style="margin-top:10px">Última sesión de este día: <strong style="color:#fff">${_statsFormatFecha(selected.fecha)}</strong> · ${selected.diaNombre || ''}</p>
           <p class="stats-hint">${compareHint}</p>
         </section>
 
@@ -1752,28 +1799,37 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function drawLine(values, color, thick, isCurrent) {
       if (!values || !values.length) return;
-      // Si hay un solo ejercicio, dibujar segmento horizontal para que se vea "línea"
       const pts = values.map((v, i) => ({ x: xAt(i), y: yAt(v), v }));
+      const baseY = pad.t + plotH;
+      ctx.beginPath();
       if (pts.length === 1) {
+        // Sube desde abajo hasta el valor (no una raya horizontal aislada)
         const p = pts[0];
-        const x0 = Math.max(pad.l, p.x - plotW * 0.2);
-        const x1 = Math.min(W - pad.r, p.x + plotW * 0.2);
-        ctx.beginPath();
-        ctx.moveTo(x0, p.y);
-        ctx.lineTo(x1, p.y);
-        ctx.strokeStyle = color;
-        ctx.lineWidth = thick;
-        ctx.lineCap = 'round';
-        ctx.stroke();
+        const xL = Math.max(pad.l, p.x - plotW * 0.22);
+        const xR = Math.min(W - pad.r, p.x + plotW * 0.22);
+        ctx.moveTo(xL, baseY);
+        ctx.quadraticCurveTo(xL, p.y, p.x, p.y);
+        ctx.quadraticCurveTo(xR, p.y, xR, baseY);
+      } else if (pts.length === 2) {
+        ctx.moveTo(pts[0].x, baseY);
+        ctx.quadraticCurveTo(pts[0].x, pts[0].y, pts[0].x, pts[0].y);
+        ctx.quadraticCurveTo((pts[0].x + pts[1].x) / 2, (pts[0].y + pts[1].y) / 2, pts[1].x, pts[1].y);
       } else {
-        ctx.beginPath();
-        pts.forEach((p, i) => { if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); });
-        ctx.strokeStyle = color;
-        ctx.lineWidth = thick;
-        ctx.lineJoin = 'round';
-        ctx.lineCap = 'round';
-        ctx.stroke();
+        // Curva suave entre ejercicios
+        ctx.moveTo(pts[0].x, pts[0].y);
+        for (let i = 0; i < pts.length - 1; i++) {
+          const p0 = pts[i];
+          const p1 = pts[i + 1];
+          const cx = (p0.x + p1.x) / 2;
+          ctx.quadraticCurveTo(p0.x, p0.y, cx, (p0.y + p1.y) / 2);
+          ctx.quadraticCurveTo(p1.x, p1.y, p1.x, p1.y);
+        }
       }
+      ctx.strokeStyle = color;
+      ctx.lineWidth = thick;
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      ctx.stroke();
       pts.forEach(p => {
         ctx.beginPath();
         ctx.arc(p.x, p.y, isCurrent ? 5 : 3.5, 0, Math.PI * 2);
@@ -1808,8 +1864,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function bindStatsEvents(logs) {
     const list = logs || [];
-    document.getElementById('statsSelectWorkout')?.addEventListener('change', (e) => {
-      appState.statsSelectedLogId = e.target.value;
+    document.getElementById('statsSelectRutina')?.addEventListener('change', (e) => {
+      appState.statsSelectedRutinaId = e.target.value;
+      appState.statsSelectedDiaKey = null; // reset día al cambiar rutina
+      renderApp();
+    });
+    document.getElementById('statsSelectDia')?.addEventListener('change', (e) => {
+      appState.statsSelectedDiaKey = e.target.value;
       renderApp();
     });
     document.getElementById('statsPrevMonth')?.addEventListener('click', () => {
@@ -3673,14 +3734,55 @@ document.addEventListener('DOMContentLoaded', () => {
       </div>`;
     }
 
-    if (!appState.statsSelectedLogId || !list.find(l => l.id === appState.statsSelectedLogId)) {
-      appState.statsSelectedLogId = list[0].id;
-    }
     if (appState.statsMonthOffset == null) appState.statsMonthOffset = 0;
 
-    const selected = list.find(l => l.id === appState.statsSelectedLogId) || list[0];
-    const options = list.map(l =>
-      `<option value="${l.id}" ${l.id === selected.id ? 'selected' : ''}>${_statsFormatFecha(l.fecha)} · ${l.diaNombre || 'Entrenamiento'}</option>`
+    // --- Selector por RUTINA → DÍA (no por sesión suelta) ---
+    const rutinasStore = (store.data && store.data.rutinas) ? store.data.rutinas : [];
+    const rutinaIdsEnLogs = [];
+    list.forEach(l => {
+      const rid = l.rutinaId || 'sin-rutina';
+      if (!rutinaIdsEnLogs.includes(rid)) rutinaIdsEnLogs.push(rid);
+    });
+    const rutinaOpciones = rutinaIdsEnLogs.map(rid => {
+      const r = rutinasStore.find(x => x.id === rid);
+      const titulo = r ? r.titulo : (rid === 'sin-rutina' ? 'Sin rutina' : 'Rutina');
+      return { id: rid, titulo };
+    });
+
+    if (!appState.statsSelectedRutinaId || !rutinaOpciones.find(r => r.id === appState.statsSelectedRutinaId)) {
+      appState.statsSelectedRutinaId = rutinaOpciones[0].id;
+    }
+    const rutinaIdActiva = appState.statsSelectedRutinaId;
+
+    const logsDeRutina = list.filter(l => (l.rutinaId || 'sin-rutina') === rutinaIdActiva);
+    // Días únicos por nombre (pecho / espalda / pierna…), sin importar cuántas veces se repitieron
+    const diasMap = new Map();
+    logsDeRutina.forEach(l => {
+      const key = _statsDiaKey(l);
+      if (!key) return;
+      if (!diasMap.has(key)) {
+        diasMap.set(key, { key, label: l.diaNombre || key });
+      }
+    });
+    const diasOpciones = Array.from(diasMap.values());
+
+    if (!appState.statsSelectedDiaKey || !diasOpciones.find(d => d.key === appState.statsSelectedDiaKey)) {
+      appState.statsSelectedDiaKey = diasOpciones.length ? diasOpciones[0].key : null;
+    }
+    const diaKeyActiva = appState.statsSelectedDiaKey;
+
+    // Sesión de referencia = la más reciente de esa rutina + ese día
+    const logsDelDia = logsDeRutina
+      .filter(l => _statsDiaKey(l) === diaKeyActiva)
+      .sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+    const selected = logsDelDia[0] || logsDeRutina[0] || list[0];
+    appState.statsSelectedLogId = selected.id;
+
+    const optionsRutina = rutinaOpciones.map(r =>
+      `<option value="${r.id}" ${r.id === rutinaIdActiva ? 'selected' : ''}>${r.titulo}</option>`
+    ).join('');
+    const optionsDia = diasOpciones.map(d =>
+      `<option value="${d.key}" ${d.key === diaKeyActiva ? 'selected' : ''}>${d.label}</option>`
     ).join('');
 
     // Distribución muscular por series
@@ -3727,6 +3829,9 @@ document.addEventListener('DOMContentLoaded', () => {
       .filter(l => {
         if (l.id === selected.id) return false;
         if (new Date(l.fecha).getTime() >= selDate) return false;
+        // Preferir misma rutina; si no hay, permitir otras
+        const sameRutina = (l.rutinaId || 'sin-rutina') === (selected.rutinaId || 'sin-rutina');
+        if (_statsDiaKey(l) === selKey && sameRutina) return true;
         if (_statsDiaKey(l) === selKey) return true;
         if (selSig && _statsExerciseSignature(l) === selSig) return true;
         return false;
@@ -3817,8 +3922,11 @@ document.addEventListener('DOMContentLoaded', () => {
         <p class="stats-sub">Elegí un entrenamiento y mirá distribución, progreso y constancia.</p>
 
         <section class="stats-card">
-          <label class="stats-label" for="statsSelectWorkout">Entrenamiento</label>
-          <select id="statsSelectWorkout" class="stats-select">${options}</select>
+          <label class="stats-label" for="statsSelectRutina">Rutina</label>
+          <select id="statsSelectRutina" class="stats-select">${optionsRutina}</select>
+          <label class="stats-label" for="statsSelectDia" style="margin-top:12px">Día de la rutina</label>
+          <select id="statsSelectDia" class="stats-select">${optionsDia}</select>
+          <p class="stats-hint" style="margin-top:10px">Última sesión de este día: <strong style="color:#fff">${_statsFormatFecha(selected.fecha)}</strong> · ${selected.diaNombre || ''}</p>
           <p class="stats-hint">${compareHint}</p>
         </section>
 
@@ -3920,28 +4028,37 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function drawLine(values, color, thick, isCurrent) {
       if (!values || !values.length) return;
-      // Si hay un solo ejercicio, dibujar segmento horizontal para que se vea "línea"
       const pts = values.map((v, i) => ({ x: xAt(i), y: yAt(v), v }));
+      const baseY = pad.t + plotH;
+      ctx.beginPath();
       if (pts.length === 1) {
+        // Sube desde abajo hasta el valor (no una raya horizontal aislada)
         const p = pts[0];
-        const x0 = Math.max(pad.l, p.x - plotW * 0.2);
-        const x1 = Math.min(W - pad.r, p.x + plotW * 0.2);
-        ctx.beginPath();
-        ctx.moveTo(x0, p.y);
-        ctx.lineTo(x1, p.y);
-        ctx.strokeStyle = color;
-        ctx.lineWidth = thick;
-        ctx.lineCap = 'round';
-        ctx.stroke();
+        const xL = Math.max(pad.l, p.x - plotW * 0.22);
+        const xR = Math.min(W - pad.r, p.x + plotW * 0.22);
+        ctx.moveTo(xL, baseY);
+        ctx.quadraticCurveTo(xL, p.y, p.x, p.y);
+        ctx.quadraticCurveTo(xR, p.y, xR, baseY);
+      } else if (pts.length === 2) {
+        ctx.moveTo(pts[0].x, baseY);
+        ctx.quadraticCurveTo(pts[0].x, pts[0].y, pts[0].x, pts[0].y);
+        ctx.quadraticCurveTo((pts[0].x + pts[1].x) / 2, (pts[0].y + pts[1].y) / 2, pts[1].x, pts[1].y);
       } else {
-        ctx.beginPath();
-        pts.forEach((p, i) => { if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); });
-        ctx.strokeStyle = color;
-        ctx.lineWidth = thick;
-        ctx.lineJoin = 'round';
-        ctx.lineCap = 'round';
-        ctx.stroke();
+        // Curva suave entre ejercicios
+        ctx.moveTo(pts[0].x, pts[0].y);
+        for (let i = 0; i < pts.length - 1; i++) {
+          const p0 = pts[i];
+          const p1 = pts[i + 1];
+          const cx = (p0.x + p1.x) / 2;
+          ctx.quadraticCurveTo(p0.x, p0.y, cx, (p0.y + p1.y) / 2);
+          ctx.quadraticCurveTo(p1.x, p1.y, p1.x, p1.y);
+        }
       }
+      ctx.strokeStyle = color;
+      ctx.lineWidth = thick;
+      ctx.lineJoin = 'round';
+      ctx.lineCap = 'round';
+      ctx.stroke();
       pts.forEach(p => {
         ctx.beginPath();
         ctx.arc(p.x, p.y, isCurrent ? 5 : 3.5, 0, Math.PI * 2);
@@ -3976,8 +4093,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function bindStatsEvents(logs) {
     const list = logs || [];
-    document.getElementById('statsSelectWorkout')?.addEventListener('change', (e) => {
-      appState.statsSelectedLogId = e.target.value;
+    document.getElementById('statsSelectRutina')?.addEventListener('change', (e) => {
+      appState.statsSelectedRutinaId = e.target.value;
+      appState.statsSelectedDiaKey = null; // reset día al cambiar rutina
+      renderApp();
+    });
+    document.getElementById('statsSelectDia')?.addEventListener('change', (e) => {
+      appState.statsSelectedDiaKey = e.target.value;
       renderApp();
     });
     document.getElementById('statsPrevMonth')?.addEventListener('click', () => {
