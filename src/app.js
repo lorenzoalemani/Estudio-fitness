@@ -4843,8 +4843,10 @@ appState.modalActivo = 'crear_rutina';
 
   window.onEjercicioNombreInput = (diaIdx, ejIdx, val) => {
     const ej = currentFormDays[diaIdx].ejercicios[ejIdx];
-    ej._catalogPick = false; // el profe está tipeando a mano
-    ej.nombre = val;
+    // No escribir ej.nombre en cada tecla: solo al elegir del catálogo o al blur.
+    // Si no, al tocar "+ Ejercicio" un change/blur con "press" pisa "Press banca…".
+    ej._typingDraft = val;
+    ej._catalogPick = false;
     if (!ej.videoUrl || ej.videoUrlAuto === true) {
       const videoAuto = buscarVideoPorNombreEjercicio(val);
       if (videoAuto) {
@@ -4878,13 +4880,17 @@ appState.modalActivo = 'crear_rutina';
     ej.nombre = nombre;
     ej.videoUrl = videoUrl;
     ej.videoUrlAuto = true;
-    ej._catalogPick = true; // evita que un blur/change con texto parcial pise el nombre
+    ej._catalogPick = true;
+    ej._typingDraft = nombre;
     const box = document.getElementById(`ej-suggest-${diaIdx}-${ejIdx}`);
     if (box) { box.hidden = true; box.innerHTML = ''; }
-    // Si el input sigue en el DOM, forzar el valor completo antes del re-render
-    const inp = document.querySelector(`#ej-suggest-${diaIdx}-${ejIdx}`)?.previousElementSibling
-      || document.querySelectorAll('.ej-nombre-input')[0];
+    const wrap = box && box.parentElement;
+    const inp = wrap && wrap.querySelector('.ej-nombre-input');
+    if (inp) inp.value = nombre;
+    // Ignorar el blur/change que puede dispararse al re-render
+    window._ignoreNombreCommit = true;
     renderFormDays();
+    setTimeout(() => { window._ignoreNombreCommit = false; }, 100);
   };
 
   window.ocultarSugerenciasEjercicio = (diaIdx, ejIdx) => {
@@ -4981,7 +4987,8 @@ appState.modalActivo = 'crear_rutina';
               <div class="rf-field rf-field-grow">
                 <label class="rf-label">${ej.esEntradaEnCalor ? '🔥 Entrada en calor' : 'Ejercicio'}</label>
                 <div class="ej-suggest-wrap">
-                  <input type="text" class="form-input ej-nombre-input" value="${ej.nombre}"
+                  <input type="text" class="form-input ej-nombre-input" value="${String(ej.nombre || '').replace(/"/g, '&quot;')}"
+                    data-dia-idx="${diaIdx}" data-ej-idx="${ejIdx}"
                     oninput="window.onEjercicioNombreInput(${diaIdx}, ${ejIdx}, this.value)"
                     onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'nombre', this.value)"
                     onblur="window.ocultarSugerenciasEjercicio(${diaIdx}, ${ejIdx})"
@@ -5030,18 +5037,43 @@ appState.modalActivo = 'crear_rutina';
 
   window.updateFormDayName = (diaIdx, val) => { currentFormDays[diaIdx].nombre = val; };
   window.addFormExercise = (diaIdx) => {
-    // Evitar que el blur del input de nombre pise un nombre elegido del catálogo
-    const active = document.activeElement;
-    if (active && active.classList && active.classList.contains('ej-nombre-input')) {
-      active.blur();
-    }
+    // Si estaba tipeando a mano (sin elegir del catálogo), guardar el borrador del input activo
+    try {
+      const active = document.activeElement;
+      if (active && active.classList && active.classList.contains('ej-nombre-input')) {
+        const d = parseInt(active.getAttribute('data-dia-idx'), 10);
+        const e = parseInt(active.getAttribute('data-ej-idx'), 10);
+        if (!isNaN(d) && !isNaN(e) && currentFormDays[d] && currentFormDays[d].ejercicios[e]) {
+          const ej = currentFormDays[d].ejercicios[e];
+          if (!ej._catalogPick && active.value) {
+            ej.nombre = active.value;
+            ej._typingDraft = active.value;
+          }
+        }
+      }
+    } catch (_) {}
+    // Bloquear commits de nombre mientras se hace blur (evita que "press" pise el nombre completo)
+    window._ignoreNombreCommit = true;
+    try {
+      const active = document.activeElement;
+      if (active && active.classList && active.classList.contains('ej-nombre-input')) {
+        active.blur();
+      }
+    } catch (_) {}
     currentFormDays[diaIdx].ejercicios.push({ nombre: "Nuevo Ejercicio", series: 3, repeticiones: "12", peso: "10 kg", notaProfesor: "", videoUrl: "", esEntradaEnCalor: false });
     renderFormDays();
+    setTimeout(() => { window._ignoreNombreCommit = false; }, 100);
   };
 
   window.addFormWarmupExercise = (diaIdx) => {
+    window._ignoreNombreCommit = true;
+    try {
+      const active = document.activeElement;
+      if (active && active.classList && active.classList.contains('ej-nombre-input')) {
+        active.blur();
+      }
+    } catch (_) {}
     const ejs = currentFormDays[diaIdx].ejercicios;
-    // Entrada en calor siempre al inicio del día
     ejs.unshift({
       nombre: "Entrada en calor",
       series: 2,
@@ -5052,6 +5084,7 @@ appState.modalActivo = 'crear_rutina';
       esEntradaEnCalor: true
     });
     renderFormDays();
+    setTimeout(() => { window._ignoreNombreCommit = false; }, 100);
   };
   window.removeFormExercise = (diaIdx, ejIdx) => {
     currentFormDays[diaIdx].ejercicios.splice(ejIdx, 1);
@@ -5096,28 +5129,31 @@ appState.modalActivo = 'crear_rutina';
     }
   };
   window.updateFormExercise = (diaIdx, ejIdx, field, val) => {
+    if (!currentFormDays[diaIdx] || !currentFormDays[diaIdx].ejercicios[ejIdx]) return;
     const ej = currentFormDays[diaIdx].ejercicios[ejIdx];
 
     if (field === 'nombre') {
-      // Si el nombre vino del catálogo y el change/blur trae solo un prefijo (ej. "vuel"),
-      // no pisar el nombre completo elegido.
+      if (window._ignoreNombreCommit) return;
+      const incoming = String(val == null ? '' : val);
+      const actual = String(ej.nombre || '');
+      // Prefijo de un nombre ya elegido del catálogo → no pisar
       if (
-        ej._catalogPick &&
-        ej.nombre &&
-        val &&
-        ej.nombre.length > val.length &&
-        ej.nombre.toLowerCase().startsWith(String(val).toLowerCase())
+        actual &&
+        incoming.length < actual.length &&
+        actual.toLowerCase().startsWith(incoming.toLowerCase()) &&
+        (ej._catalogPick || ej.videoUrlAuto)
       ) {
         return;
       }
+      if (incoming === actual) return;
       ej._catalogPick = false;
-      ej.nombre = val;
+      ej._typingDraft = incoming;
+      ej.nombre = incoming;
       if (!ej.videoUrl || ej.videoUrlAuto === true) {
-        const videoAuto = buscarVideoPorNombreEjercicio(val);
+        const videoAuto = buscarVideoPorNombreEjercicio(incoming);
         if (videoAuto) {
           ej.videoUrl = videoAuto;
           ej.videoUrlAuto = true;
-          renderFormDays();
         }
       }
       return;
@@ -5126,7 +5162,6 @@ appState.modalActivo = 'crear_rutina';
     ej[field] = val;
 
     if (field === 'videoUrl') {
-      // El profesor tocó el campo de video a mano: a partir de ahora no se autocompleta más.
       ej.videoUrlAuto = false;
     }
   };
@@ -6057,8 +6092,10 @@ appState.modalActivo = 'crear_rutina';
 
   window.onEjercicioNombreInput = (diaIdx, ejIdx, val) => {
     const ej = currentFormDays[diaIdx].ejercicios[ejIdx];
-    ej._catalogPick = false; // el profe está tipeando a mano
-    ej.nombre = val;
+    // No escribir ej.nombre en cada tecla: solo al elegir del catálogo o al blur.
+    // Si no, al tocar "+ Ejercicio" un change/blur con "press" pisa "Press banca…".
+    ej._typingDraft = val;
+    ej._catalogPick = false;
     if (!ej.videoUrl || ej.videoUrlAuto === true) {
       const videoAuto = buscarVideoPorNombreEjercicio(val);
       if (videoAuto) {
@@ -6092,13 +6129,17 @@ appState.modalActivo = 'crear_rutina';
     ej.nombre = nombre;
     ej.videoUrl = videoUrl;
     ej.videoUrlAuto = true;
-    ej._catalogPick = true; // evita que un blur/change con texto parcial pise el nombre
+    ej._catalogPick = true;
+    ej._typingDraft = nombre;
     const box = document.getElementById(`ej-suggest-${diaIdx}-${ejIdx}`);
     if (box) { box.hidden = true; box.innerHTML = ''; }
-    // Si el input sigue en el DOM, forzar el valor completo antes del re-render
-    const inp = document.querySelector(`#ej-suggest-${diaIdx}-${ejIdx}`)?.previousElementSibling
-      || document.querySelectorAll('.ej-nombre-input')[0];
+    const wrap = box && box.parentElement;
+    const inp = wrap && wrap.querySelector('.ej-nombre-input');
+    if (inp) inp.value = nombre;
+    // Ignorar el blur/change que puede dispararse al re-render
+    window._ignoreNombreCommit = true;
     renderFormDays();
+    setTimeout(() => { window._ignoreNombreCommit = false; }, 100);
   };
 
   window.ocultarSugerenciasEjercicio = (diaIdx, ejIdx) => {
@@ -6195,7 +6236,8 @@ appState.modalActivo = 'crear_rutina';
               <div class="rf-field rf-field-grow">
                 <label class="rf-label">${ej.esEntradaEnCalor ? '🔥 Entrada en calor' : 'Ejercicio'}</label>
                 <div class="ej-suggest-wrap">
-                  <input type="text" class="form-input ej-nombre-input" value="${ej.nombre}"
+                  <input type="text" class="form-input ej-nombre-input" value="${String(ej.nombre || '').replace(/"/g, '&quot;')}"
+                    data-dia-idx="${diaIdx}" data-ej-idx="${ejIdx}"
                     oninput="window.onEjercicioNombreInput(${diaIdx}, ${ejIdx}, this.value)"
                     onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'nombre', this.value)"
                     onblur="window.ocultarSugerenciasEjercicio(${diaIdx}, ${ejIdx})"
@@ -6244,18 +6286,43 @@ appState.modalActivo = 'crear_rutina';
 
   window.updateFormDayName = (diaIdx, val) => { currentFormDays[diaIdx].nombre = val; };
   window.addFormExercise = (diaIdx) => {
-    // Evitar que el blur del input de nombre pise un nombre elegido del catálogo
-    const active = document.activeElement;
-    if (active && active.classList && active.classList.contains('ej-nombre-input')) {
-      active.blur();
-    }
+    // Si estaba tipeando a mano (sin elegir del catálogo), guardar el borrador del input activo
+    try {
+      const active = document.activeElement;
+      if (active && active.classList && active.classList.contains('ej-nombre-input')) {
+        const d = parseInt(active.getAttribute('data-dia-idx'), 10);
+        const e = parseInt(active.getAttribute('data-ej-idx'), 10);
+        if (!isNaN(d) && !isNaN(e) && currentFormDays[d] && currentFormDays[d].ejercicios[e]) {
+          const ej = currentFormDays[d].ejercicios[e];
+          if (!ej._catalogPick && active.value) {
+            ej.nombre = active.value;
+            ej._typingDraft = active.value;
+          }
+        }
+      }
+    } catch (_) {}
+    // Bloquear commits de nombre mientras se hace blur (evita que "press" pise el nombre completo)
+    window._ignoreNombreCommit = true;
+    try {
+      const active = document.activeElement;
+      if (active && active.classList && active.classList.contains('ej-nombre-input')) {
+        active.blur();
+      }
+    } catch (_) {}
     currentFormDays[diaIdx].ejercicios.push({ nombre: "Nuevo Ejercicio", series: 3, repeticiones: "12", peso: "10 kg", notaProfesor: "", videoUrl: "", esEntradaEnCalor: false });
     renderFormDays();
+    setTimeout(() => { window._ignoreNombreCommit = false; }, 100);
   };
 
   window.addFormWarmupExercise = (diaIdx) => {
+    window._ignoreNombreCommit = true;
+    try {
+      const active = document.activeElement;
+      if (active && active.classList && active.classList.contains('ej-nombre-input')) {
+        active.blur();
+      }
+    } catch (_) {}
     const ejs = currentFormDays[diaIdx].ejercicios;
-    // Entrada en calor siempre al inicio del día
     ejs.unshift({
       nombre: "Entrada en calor",
       series: 2,
@@ -6266,6 +6333,7 @@ appState.modalActivo = 'crear_rutina';
       esEntradaEnCalor: true
     });
     renderFormDays();
+    setTimeout(() => { window._ignoreNombreCommit = false; }, 100);
   };
   window.removeFormExercise = (diaIdx, ejIdx) => {
     currentFormDays[diaIdx].ejercicios.splice(ejIdx, 1);
@@ -6310,28 +6378,31 @@ appState.modalActivo = 'crear_rutina';
     }
   };
   window.updateFormExercise = (diaIdx, ejIdx, field, val) => {
+    if (!currentFormDays[diaIdx] || !currentFormDays[diaIdx].ejercicios[ejIdx]) return;
     const ej = currentFormDays[diaIdx].ejercicios[ejIdx];
 
     if (field === 'nombre') {
-      // Si el nombre vino del catálogo y el change/blur trae solo un prefijo (ej. "vuel"),
-      // no pisar el nombre completo elegido.
+      if (window._ignoreNombreCommit) return;
+      const incoming = String(val == null ? '' : val);
+      const actual = String(ej.nombre || '');
+      // Prefijo de un nombre ya elegido del catálogo → no pisar
       if (
-        ej._catalogPick &&
-        ej.nombre &&
-        val &&
-        ej.nombre.length > val.length &&
-        ej.nombre.toLowerCase().startsWith(String(val).toLowerCase())
+        actual &&
+        incoming.length < actual.length &&
+        actual.toLowerCase().startsWith(incoming.toLowerCase()) &&
+        (ej._catalogPick || ej.videoUrlAuto)
       ) {
         return;
       }
+      if (incoming === actual) return;
       ej._catalogPick = false;
-      ej.nombre = val;
+      ej._typingDraft = incoming;
+      ej.nombre = incoming;
       if (!ej.videoUrl || ej.videoUrlAuto === true) {
-        const videoAuto = buscarVideoPorNombreEjercicio(val);
+        const videoAuto = buscarVideoPorNombreEjercicio(incoming);
         if (videoAuto) {
           ej.videoUrl = videoAuto;
           ej.videoUrlAuto = true;
-          renderFormDays();
         }
       }
       return;
@@ -6340,7 +6411,6 @@ appState.modalActivo = 'crear_rutina';
     ej[field] = val;
 
     if (field === 'videoUrl') {
-      // El profesor tocó el campo de video a mano: a partir de ahora no se autocompleta más.
       ej.videoUrlAuto = false;
     }
   };
