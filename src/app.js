@@ -2330,69 +2330,77 @@ document.addEventListener('DOMContentLoaded', () => {
       renderApp();
     });
 
+    // Botones de acción del alumno: listener DIRECTO (no depender del click de la card ni del sync)
+    document.querySelectorAll('.btn-crear-rutina-click').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const alumnoId = btn.dataset.alumnoId || btn.closest('[data-alumno-id]')?.dataset?.alumnoId;
+        if (!alumnoId) return;
+        appState.alumnoSeleccionadoId = alumnoId;
+        appState.rutinaEnEdicionId = null;
+        appState.plantillaRutinaSeleccionadaId = null;
+        appState.modalActivo = 'elegir_origen_rutina';
+        renderApp();
+      });
+    });
+    document.querySelectorAll('.btn-historial-click').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const alumnoId = btn.dataset.alumnoId || btn.closest('[data-alumno-id]')?.dataset?.alumnoId;
+        if (!alumnoId) return;
+        appState.historialProfesorLogs = null;
+        appState.alumnoSeleccionadoId = alumnoId;
+        appState.modalActivo = 'historial_alumno';
+        renderApp();
+      });
+    });
+
     document.querySelectorAll('.alumno-card-clickable').forEach(card => {
       card.addEventListener('click', async (e) => {
         const alumnoId = card.dataset.alumnoId;
+        const t = e.target.closest ? e.target.closest('button, a, .btn-editar-rutina-click, .btn-toggle-estado-rutina-click, .btn-borrar-rutina-click, .btn-edit-nombre, .btn-crear-rutina-click, .btn-historial-click') : e.target;
 
-console.log("========== DEBUG SELECCIÓN ==========");
-console.log("CARD TEXT:", card.innerText);
-console.log("DATASET ID:", card.dataset.alumnoId);
+        // Si el click fue en crear/historial, ya lo manejan los listeners de arriba
+        if (t && (t.classList.contains('btn-crear-rutina-click') || t.classList.contains('btn-historial-click'))) {
+          return;
+        }
 
-const alumnoDebug = store.getAlumnoPorId(card.dataset.alumnoId);
-
-console.log("ALUMNO RESUELTO:", {
-    id: alumnoDebug?.id,
-    dni: alumnoDebug?.dni,
-    nombre: alumnoDebug?.nombre,
-    apodo: alumnoDebug?.nombreApodoProfesor
-});
-
-console.log("====================================");
-        // Antes de mostrar/editar el detalle o la rutina de este alumno,
-        // refrescamos su estado desde Supabase (fuente de verdad) para no
-        // confiar en la copia local del profesor, que puede estar desactualizada.
-        await store.syncWithSupabase(alumnoId);
-        if (e.target.classList.contains('btn-historial-click')) {
-          e.stopPropagation();
-          appState.historialProfesorLogs = null;
-          appState.alumnoSeleccionadoId = alumnoId;
-          appState.modalActivo = 'historial_alumno';
-          renderApp();
-        } else if (e.target.classList.contains('btn-crear-rutina-click')) {
+        if (t && t.classList.contains('btn-editar-rutina-click')) {
           e.stopPropagation();
           appState.alumnoSeleccionadoId = alumnoId;
-          appState.rutinaEnEdicionId = null;
-          appState.plantillaRutinaSeleccionadaId = null;
-          appState.modalActivo = 'elegir_origen_rutina';
-          renderApp();
-        } else if (e.target.classList.contains('btn-editar-rutina-click')) {
-          e.stopPropagation();
-          appState.alumnoSeleccionadoId = alumnoId;
-          appState.rutinaEnEdicionId = e.target.dataset.rutinaId;
+          appState.rutinaEnEdicionId = t.dataset.rutinaId;
           appState.modalActivo = 'editar_rutina';
           initFormBuilderForRoutine(appState.rutinaEnEdicionId);
           renderApp();
-        } else if (e.target.classList.contains('btn-toggle-estado-rutina-click')) {
+          return;
+        }
+
+        // Sync en background solo si hace falta (no bloquea botones)
+        try { await store.syncWithSupabase(alumnoId); } catch (_) {}
+
+        if (t && t.classList.contains('btn-toggle-estado-rutina-click')) {
           e.stopPropagation();
-          const rId = e.target.dataset.rutinaId;
-          const estadoActual = e.target.dataset.estadoActual;
+          const rId = t.dataset.rutinaId;
+          const estadoActual = t.dataset.estadoActual;
           const nuevoEstado = estadoActual === 'desactivada' ? 'activa' : 'desactivada';
           const profesorId = window._sessionProfesorId || appState.usuarioActual.data.id;
-          e.target.disabled = true;
+          t.disabled = true;
           store.cambiarEstadoRutina(rId, profesorId, nuevoEstado).then(resultado => {
             if (!resultado || resultado.ok !== true) {
               alert("❌ No se pudo cambiar el estado de la rutina: " + ((resultado && resultado.error) || "error desconocido"));
             }
             renderApp();
           });
-        } else if (e.target.classList.contains('btn-borrar-rutina-click')) {
+        } else if (t && t.classList.contains('btn-borrar-rutina-click')) {
           e.stopPropagation();
-          appState.rutinaAEliminarId = e.target.dataset.rutinaId;
+          appState.rutinaAEliminarId = t.dataset.rutinaId;
           appState.modalActivo = 'confirmar_borrado_rutina';
           renderApp();
-        } else if (e.target.classList.contains('btn-edit-nombre')) {
+        } else if (t && t.classList.contains('btn-edit-nombre')) {
           e.stopPropagation();
-          const dniAlumno = e.target.dataset.dni;
+          const dniAlumno = t.dataset.dni;
           const alumnoActual = store.getAlumnoPorId(alumnoId);
           const nombreActual = (alumnoActual && (alumnoActual.nombreProfesor || alumnoActual.nombre)) || '';
           const nuevoNombre = prompt("Apodo para identificar a este alumno en tu panel:", nombreActual);
@@ -2401,13 +2409,13 @@ console.log("====================================");
             alert("El apodo no puede estar vacío.");
             return;
           }
-          e.target.disabled = true;
+          t.disabled = true;
           store.editarNombreProfesor({ dni: dniAlumno, nuevoNombre: nuevoNombre.trim() }).then(() => renderApp()).catch(err => {
             alert("❌ No se pudo actualizar el apodo: " + err.message);
             renderApp();
           });
         } else {
-          // Click en la tarjeta: solo seleccionar, no abrir rutina propia del alumno
+          // Click en la tarjeta: solo seleccionar
           appState.alumnoSeleccionadoId = alumnoId;
           renderApp();
         }
@@ -4752,77 +4760,85 @@ document.addEventListener('DOMContentLoaded', () => {
       renderApp();
     });
 
+    // Botones de acción del alumno: listener DIRECTO (no depender del click de la card ni del sync)
+    document.querySelectorAll('.btn-crear-rutina-click').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const alumnoId = btn.dataset.alumnoId || btn.closest('[data-alumno-id]')?.dataset?.alumnoId;
+        if (!alumnoId) return;
+        appState.alumnoSeleccionadoId = alumnoId;
+        appState.rutinaEnEdicionId = null;
+        appState.plantillaRutinaSeleccionadaId = null;
+        appState.modalActivo = 'elegir_origen_rutina';
+        renderApp();
+      });
+    });
+    document.querySelectorAll('.btn-historial-click').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const alumnoId = btn.dataset.alumnoId || btn.closest('[data-alumno-id]')?.dataset?.alumnoId;
+        if (!alumnoId) return;
+        appState.historialProfesorLogs = null;
+        appState.alumnoSeleccionadoId = alumnoId;
+        appState.modalActivo = 'historial_alumno';
+        renderApp();
+      });
+    });
+
     document.querySelectorAll('.alumno-card-clickable').forEach(card => {
       card.addEventListener('click', async (e) => {
         const alumnoId = card.dataset.alumnoId;
+        const t = e.target.closest ? e.target.closest('button, a, .btn-editar-rutina-click, .btn-toggle-estado-rutina-click, .btn-borrar-rutina-click, .btn-edit-nombre, .btn-crear-rutina-click, .btn-historial-click') : e.target;
 
-console.log("========== DEBUG SELECCIÓN ==========");
-console.log("CARD TEXT:", card.innerText);
-console.log("DATASET ID:", card.dataset.alumnoId);
+        // Si el click fue en crear/historial, ya lo manejan los listeners de arriba
+        if (t && (t.classList.contains('btn-crear-rutina-click') || t.classList.contains('btn-historial-click'))) {
+          return;
+        }
 
-const alumnoDebug = store.getAlumnoPorId(card.dataset.alumnoId);
-
-console.log("ALUMNO RESUELTO:", {
-    id: alumnoDebug?.id,
-    dni: alumnoDebug?.dni,
-    nombre: alumnoDebug?.nombre,
-    apodo: alumnoDebug?.nombreApodoProfesor
-});
-
-console.log("====================================");
-        // Antes de mostrar/editar el detalle o la rutina de este alumno,
-        // refrescamos su estado desde Supabase (fuente de verdad) para no
-        // confiar en la copia local del profesor, que puede estar desactualizada.
-        await store.syncWithSupabase(alumnoId);
-        if (e.target.classList.contains('btn-historial-click')) {
-          e.stopPropagation();
-          appState.historialProfesorLogs = null;
-          appState.alumnoSeleccionadoId = alumnoId;
-          appState.modalActivo = 'historial_alumno';
-          renderApp();
-        } else if (e.target.classList.contains('btn-crear-rutina-click')) {
+        if (t && t.classList.contains('btn-editar-rutina-click')) {
           e.stopPropagation();
           appState.alumnoSeleccionadoId = alumnoId;
-          appState.rutinaEnEdicionId = null;
-          appState.plantillaRutinaSeleccionadaId = null;
-          appState.modalActivo = 'elegir_origen_rutina';
-          renderApp();
-        } else if (e.target.classList.contains('btn-editar-rutina-click')) {
-          e.stopPropagation();
-          appState.alumnoSeleccionadoId = alumnoId;
-          appState.rutinaEnEdicionId = e.target.dataset.rutinaId;
+          appState.rutinaEnEdicionId = t.dataset.rutinaId;
           appState.modalActivo = 'editar_rutina';
           initFormBuilderForRoutine(appState.rutinaEnEdicionId);
           renderApp();
-        } else if (e.target.classList.contains('btn-toggle-estado-rutina-click')) {
+          return;
+        }
+
+        // Sync en background solo si hace falta (no bloquea botones)
+        try { await store.syncWithSupabase(alumnoId); } catch (_) {}
+
+        if (t && t.classList.contains('btn-toggle-estado-rutina-click')) {
           e.stopPropagation();
-          const rId = e.target.dataset.rutinaId;
-          const estadoActual = e.target.dataset.estadoActual;
+          const rId = t.dataset.rutinaId;
+          const estadoActual = t.dataset.estadoActual;
           const nuevoEstado = estadoActual === 'desactivada' ? 'activa' : 'desactivada';
           const profesorId = window._sessionProfesorId || appState.usuarioActual.data.id;
-          e.target.disabled = true;
+          t.disabled = true;
           const resultado = await store.cambiarEstadoRutina(rId, profesorId, nuevoEstado);
           if (!resultado || resultado.ok !== true) {
             alert("❌ No se pudo cambiar el estado de la rutina: " + ((resultado && resultado.error) || "error desconocido"));
           }
           renderApp();
-        } else if (e.target.classList.contains('btn-borrar-rutina-click')) {
+        } else if (t && t.classList.contains('btn-borrar-rutina-click')) {
           e.stopPropagation();
-          appState.rutinaAEliminarId = e.target.dataset.rutinaId;
+          appState.rutinaAEliminarId = t.dataset.rutinaId;
           appState.modalActivo = 'confirmar_borrado_rutina';
           renderApp();
-        } else if (e.target.classList.contains('btn-edit-nombre')) {
+        } else if (t && t.classList.contains('btn-edit-nombre')) {
           e.stopPropagation();
-          const dniAlumno = e.target.dataset.dni;
+          const dniAlumno = t.dataset.dni;
           const alumnoActual = store.getAlumnoPorId(alumnoId);
           const nombreActual = (alumnoActual && (alumnoActual.nombreProfesor || alumnoActual.nombre)) || '';
           const nuevoNombre = prompt("Apodo para identificar a este alumno en tu panel:", nombreActual);
-          if (nuevoNombre === null) return; // cancelado
+          if (nuevoNombre === null) return;
           if (!nuevoNombre.trim()) {
             alert("El apodo no puede estar vacío.");
             return;
           }
-          e.target.disabled = true;
+          t.disabled = true;
           try {
             await store.editarNombreProfesor({ dni: dniAlumno, nuevoNombre: nuevoNombre.trim() });
           } catch (err) {
@@ -4830,7 +4846,7 @@ console.log("====================================");
           }
           renderApp();
         } else {
-          // Solo seleccionar alumno (no abrir "Mis rutinas" ni crear sin querer)
+          // Click en la tarjeta: solo seleccionar
           appState.alumnoSeleccionadoId = alumnoId;
           renderApp();
         }
