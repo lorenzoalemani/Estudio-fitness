@@ -106,6 +106,7 @@ document.addEventListener('DOMContentLoaded', () => {
     logEnEdicionId: null,    // entrenamiento que el alumno está editando (ventana 2hs)
     logABorrarId: null,       // entrenamiento pendiente de confirmar borrado
     finalizandoEntrenamiento: false, // candado anti doble-toque al finalizar
+    entrenamientoPendienteId: null, // id de un entrenamiento guardado localmente que aun no se pudo confirmar en Supabase (para no duplicarlo en un reintento manual)
     statsSelectedLogId: null,
     statsMonthOffset: 0,
     mostrarDrawerNotifs: false,
@@ -2441,6 +2442,7 @@ document.addEventListener('DOMContentLoaded', () => {
     logEnEdicionId: null,    // entrenamiento que el alumno está editando (ventana 2hs)
     logABorrarId: null,       // entrenamiento pendiente de confirmar borrado
     finalizandoEntrenamiento: false, // candado anti doble-toque al finalizar
+    entrenamientoPendienteId: null, // id de un entrenamiento guardado localmente que aun no se pudo confirmar en Supabase (para no duplicarlo en un reintento manual)
     statsSelectedLogId: null,
     statsMonthOffset: 0,
     mostrarDrawerNotifs: false,
@@ -5707,6 +5709,37 @@ appState.modalActivo = 'crear_rutina';
       }
 
       try {
+        // Si un intento anterior de este mismo entrenamiento quedó pendiente
+        // de confirmarse en Supabase, NO creamos un segundo registro: eso
+        // duplicaría el entrenamiento en el historial. Solo forzamos un
+        // reintento de sincronización sobre el que ya existe.
+        if (appState.entrenamientoPendienteId) {
+          await store.syncWithSupabase(alumno.id);
+          const logPendiente = store.data.workoutLogs.find(w => w.id === appState.entrenamientoPendienteId);
+
+          if (logPendiente && logPendiente.confirmadoEnServidor) {
+            appState.entrenamientoPendienteId = null;
+            const puntosConfirmadosPorServidor = logPendiente.puntosConfirmadosPorServidor === true;
+            if (!puntosConfirmadosPorServidor) {
+              alert('⚠️ Entrenamiento guardado en tu historial, pero no se pudieron confirmar los puntos en el servidor.\n\nSi el problema persiste, contactá al profesor.');
+            } else {
+              const puntosGanados = Math.round((logPendiente.puntos || 0));
+              const bonusTexto = logPendiente.bonusRacha ? ` (incluye +${logPendiente.bonusRacha} 🔥 bonus por racha)` : '';
+              alert(`🏆 ¡Entrenamiento completado y guardado en tu historial!\n+${puntosGanados} puntos ganados${bonusTexto}`);
+            }
+            clearWorkoutDraft();
+            appState.diaActivoEntrenamiento = null;
+            appState.tabCliente = 'historial';
+          } else {
+            alert('⚠️ Todavía no se pudo confirmar tu entrenamiento en el servidor.\n\nTus datos NO se perdieron: siguen guardados en este dispositivo y la app va a seguir reintentando automáticamente. Podés volver a intentarlo en unos segundos.');
+            if (btn) {
+              btn.disabled = false;
+              btn.textContent = '✅ Finalizar Entrenamiento';
+            }
+          }
+          return;
+        }
+
         const logGuardado = await store.guardarEntrenamientoReal({
           alumnoId:         alumno.id,
           rutinaId:         rutinaActiva.id,
@@ -5717,21 +5750,37 @@ appState.modalActivo = 'crear_rutina';
           comentarioGeneral: appState.workoutGeneralComment || ''
         });
 
+        const guardadoEnServidor = logGuardado?.guardadoEnServidor === true;
         const puntosConfirmadosPorServidor = logGuardado?.puntosConfirmadosPorServidor === true;
 
-        if (!puntosConfirmadosPorServidor) {
-          alert('⚠️ Entrenamiento guardado en tu historial, pero no se pudieron confirmar los puntos en el servidor.\n\nSi el problema persiste, contactá al profesor.');
-        } else if (logGuardado?.yaHuboEntrenamientoHoy) {
-          alert('🏆 ¡Entrenamiento completado y guardado en tu historial!\nYa sumaste puntos hoy con otro entrenamiento — este quedó en el historial, pero no otorga puntos adicionales (solo una vez por día).');
+        if (!guardadoEnServidor) {
+          // El entrenamiento quedó guardado LOCALMENTE (no se pierde ningún
+          // dato) pero todavía no se pudo confirmar en Supabase tras los
+          // reintentos. NO mostramos "guardado", NO limpiamos el borrador y
+          // NO otorgamos puntos: la app va a reintentar sola en el próximo
+          // sync (al reabrir, cambiar de pestaña, etc.).
+          appState.entrenamientoPendienteId = logGuardado?.id || null;
+          alert('⚠️ No se pudo confirmar el entrenamiento en el servidor todavía.\n\nTus datos NO se perdieron: quedaron guardados en este dispositivo y la app va a reintentar guardarlos automáticamente en cuanto haya conexión.\n\nPodés volver a tocar "Finalizar Entrenamiento" en unos segundos para reintentar ahora mismo.');
+          if (btn) {
+            btn.disabled = false;
+            btn.textContent = '✅ Finalizar Entrenamiento';
+          }
         } else {
-          const puntosGanados = Math.round((logGuardado?.puntos || 0));
-          const bonusTexto = logGuardado?.bonusRacha ? ` (incluye +${logGuardado.bonusRacha} 🔥 bonus por racha)` : '';
-          alert(`🏆 ¡Entrenamiento completado y guardado en tu historial!\n+${puntosGanados} puntos ganados${bonusTexto}`);
-        }
+          if (!puntosConfirmadosPorServidor) {
+            alert('⚠️ Entrenamiento guardado en tu historial, pero no se pudieron confirmar los puntos en el servidor.\n\nSi el problema persiste, contactá al profesor.');
+          } else if (logGuardado?.yaHuboEntrenamientoHoy) {
+            alert('🏆 ¡Entrenamiento completado y guardado en tu historial!\nYa sumaste puntos hoy con otro entrenamiento — este quedó en el historial, pero no otorga puntos adicionales (solo una vez por día).');
+          } else {
+            const puntosGanados = Math.round((logGuardado?.puntos || 0));
+            const bonusTexto = logGuardado?.bonusRacha ? ` (incluye +${logGuardado.bonusRacha} 🔥 bonus por racha)` : '';
+            alert(`🏆 ¡Entrenamiento completado y guardado en tu historial!\n+${puntosGanados} puntos ganados${bonusTexto}`);
+          }
 
-        clearWorkoutDraft();
-        appState.diaActivoEntrenamiento = null;
-        appState.tabCliente = 'historial';
+          appState.entrenamientoPendienteId = null;
+          clearWorkoutDraft();
+          appState.diaActivoEntrenamiento = null;
+          appState.tabCliente = 'historial';
+        }
       } catch (err) {
         console.error('Error al finalizar entrenamiento:', err);
         alert('❌ No se pudo guardar el entrenamiento: ' + ((err && err.message) || 'error desconocido'));
@@ -6975,6 +7024,37 @@ alert("🚀 ¡Rutina propia creada! Ya podés empezar a entrenarla desde \"Mías
       }
 
       try {
+        // Si un intento anterior de este mismo entrenamiento quedó pendiente
+        // de confirmarse en Supabase, NO creamos un segundo registro: eso
+        // duplicaría el entrenamiento en el historial. Solo forzamos un
+        // reintento de sincronización sobre el que ya existe.
+        if (appState.entrenamientoPendienteId) {
+          await store.syncWithSupabase(alumno.id);
+          const logPendiente = store.data.workoutLogs.find(w => w.id === appState.entrenamientoPendienteId);
+
+          if (logPendiente && logPendiente.confirmadoEnServidor) {
+            appState.entrenamientoPendienteId = null;
+            const puntosConfirmadosPorServidor = logPendiente.puntosConfirmadosPorServidor === true;
+            if (!puntosConfirmadosPorServidor) {
+              alert('⚠️ Entrenamiento guardado en tu historial, pero no se pudieron confirmar los puntos en el servidor.\n\nSi el problema persiste, contactá al profesor.');
+            } else {
+              const puntosGanados = Math.round((logPendiente.puntos || 0));
+              const bonusTexto = logPendiente.bonusRacha ? ` (incluye +${logPendiente.bonusRacha} 🔥 bonus por racha)` : '';
+              alert(`🏆 ¡Entrenamiento completado y guardado en tu historial!\n+${puntosGanados} puntos ganados${bonusTexto}`);
+            }
+            clearWorkoutDraft();
+            appState.diaActivoEntrenamiento = null;
+            appState.tabCliente = 'historial';
+          } else {
+            alert('⚠️ Todavía no se pudo confirmar tu entrenamiento en el servidor.\n\nTus datos NO se perdieron: siguen guardados en este dispositivo y la app va a seguir reintentando automáticamente. Podés volver a intentarlo en unos segundos.');
+            if (btn) {
+              btn.disabled = false;
+              btn.textContent = '✅ Finalizar Entrenamiento';
+            }
+          }
+          return;
+        }
+
         const logGuardado = await store.guardarEntrenamientoReal({
           alumnoId:         alumno.id,
           rutinaId:         rutinaActiva.id,
@@ -6985,21 +7065,37 @@ alert("🚀 ¡Rutina propia creada! Ya podés empezar a entrenarla desde \"Mías
           comentarioGeneral: appState.workoutGeneralComment || ''
         });
 
+        const guardadoEnServidor = logGuardado?.guardadoEnServidor === true;
         const puntosConfirmadosPorServidor = logGuardado?.puntosConfirmadosPorServidor === true;
 
-        if (!puntosConfirmadosPorServidor) {
-          alert('⚠️ Entrenamiento guardado en tu historial, pero no se pudieron confirmar los puntos en el servidor.\n\nSi el problema persiste, contactá al profesor.');
-        } else if (logGuardado?.yaHuboEntrenamientoHoy) {
-          alert('🏆 ¡Entrenamiento completado y guardado en tu historial!\nYa sumaste puntos hoy con otro entrenamiento — este quedó en el historial, pero no otorga puntos adicionales (solo una vez por día).');
+        if (!guardadoEnServidor) {
+          // El entrenamiento quedó guardado LOCALMENTE (no se pierde ningún
+          // dato) pero todavía no se pudo confirmar en Supabase tras los
+          // reintentos. NO mostramos "guardado", NO limpiamos el borrador y
+          // NO otorgamos puntos: la app va a reintentar sola en el próximo
+          // sync (al reabrir, cambiar de pestaña, etc.).
+          appState.entrenamientoPendienteId = logGuardado?.id || null;
+          alert('⚠️ No se pudo confirmar el entrenamiento en el servidor todavía.\n\nTus datos NO se perdieron: quedaron guardados en este dispositivo y la app va a reintentar guardarlos automáticamente en cuanto haya conexión.\n\nPodés volver a tocar "Finalizar Entrenamiento" en unos segundos para reintentar ahora mismo.');
+          if (btn) {
+            btn.disabled = false;
+            btn.textContent = '✅ Finalizar Entrenamiento';
+          }
         } else {
-          const puntosGanados = Math.round((logGuardado?.puntos || 0));
-          const bonusTexto = logGuardado?.bonusRacha ? ` (incluye +${logGuardado.bonusRacha} 🔥 bonus por racha)` : '';
-          alert(`🏆 ¡Entrenamiento completado y guardado en tu historial!\n+${puntosGanados} puntos ganados${bonusTexto}`);
-        }
+          if (!puntosConfirmadosPorServidor) {
+            alert('⚠️ Entrenamiento guardado en tu historial, pero no se pudieron confirmar los puntos en el servidor.\n\nSi el problema persiste, contactá al profesor.');
+          } else if (logGuardado?.yaHuboEntrenamientoHoy) {
+            alert('🏆 ¡Entrenamiento completado y guardado en tu historial!\nYa sumaste puntos hoy con otro entrenamiento — este quedó en el historial, pero no otorga puntos adicionales (solo una vez por día).');
+          } else {
+            const puntosGanados = Math.round((logGuardado?.puntos || 0));
+            const bonusTexto = logGuardado?.bonusRacha ? ` (incluye +${logGuardado.bonusRacha} 🔥 bonus por racha)` : '';
+            alert(`🏆 ¡Entrenamiento completado y guardado en tu historial!\n+${puntosGanados} puntos ganados${bonusTexto}`);
+          }
 
-        clearWorkoutDraft();
-        appState.diaActivoEntrenamiento = null;
-        appState.tabCliente = 'historial';
+          appState.entrenamientoPendienteId = null;
+          clearWorkoutDraft();
+          appState.diaActivoEntrenamiento = null;
+          appState.tabCliente = 'historial';
+        }
       } catch (err) {
         console.error('Error al finalizar entrenamiento:', err);
         alert('❌ No se pudo guardar el entrenamiento: ' + ((err && err.message) || 'error desconocido'));

@@ -407,6 +407,13 @@ class GymStore {
           // Borrar locales que el server ya no tiene (ej. borrados desde el celu)
           const antes = this.data.workoutLogs.length;
           this.data.workoutLogs = this.data.workoutLogs.filter(w => {
+            // Un entrenamiento pendiente de confirmar en Supabase NUNCA se
+            // poda por no aparecer todavía en el snapshot remoto — si lo
+            // hiciéramos, se perdería para siempre aunque el alumno sí lo
+            // haya completado en este dispositivo. Solo deja de ser
+            // "pendiente" cuando reintentarEntrenamientosPendientes() logra
+            // confirmarlo (o el propio alumno lo borra explícitamente).
+            if (w.pendienteDeSincronizacion === true) return true;
             const aid = w.alumnoId != null ? String(w.alumnoId) : null;
             // Solo tocamos logs de alumnos incluidos en este snapshot
             if (aid && alumnosEnRemote.has(aid)) {
@@ -438,6 +445,19 @@ class GymStore {
             this.saveData();
           } catch (e) {
             console.warn('⚠️ enrich series post-sync:', e && e.message);
+          }
+        }
+
+        // Reintentar entrenamientos que quedaron pendientes de confirmarse
+        // en Supabase (por ejemplo, por un corte de red al finalizar). Se
+        // hace DESPUÉS de la reconciliación de arriba (que ya protege a los
+        // pendientes de ser podados) y ANTES del refresh de ranking, para
+        // que puntos recién confirmados entren en el mismo ciclo de sync.
+        if (alumnoId) {
+          try {
+            await this.reintentarEntrenamientosPendientes(alumnoId);
+          } catch (e) {
+            console.warn('⚠️ reintentarEntrenamientosPendientes:', e && e.message);
           }
         }
 
@@ -1704,9 +1724,21 @@ class GymStore {
       sets: setsLog,
       puntos: puntosSesion,
       bonusRacha,
-      puntosConfirmadosPorServidor: false
+      puntosConfirmadosPorServidor: false,
+      // confirmadoEnServidor/pendienteDeSincronizacion: distinguen "guardado
+      // localmente" (siempre cierto desde acá) de "confirmado en Supabase"
+      // (recién se pone en true si guardarWorkoutLogEnSupabase() devuelve
+      // ok:true, DESPUÉS de verificar que TODAS las series están en la DB).
+      // Nunca deben tratarse como equivalentes.
+      confirmadoEnServidor: false,
+      pendienteDeSincronizacion: true,
+      errorSincronizacion: null
     };
 
+    // Guardado LOCAL optimista: el entrenamiento nunca se pierde a partir de
+    // acá, pase lo que pase con Supabase — queda en this.data.workoutLogs y
+    // se persiste en localStorage como caché. Lo que SÍ puede fallar es la
+    // confirmación remota, manejada más abajo.
     this.data.workoutLogs.unshift(nuevoLog);
 
     if (alumno) {
@@ -1721,21 +1753,33 @@ class GymStore {
     this.saveData();
 
     // --- CONFIRMACIÓN AUTORITATIVA DEL SERVIDOR ---
+    // Regla: ok:false de guardarWorkoutLogEnSupabase() NUNCA puede terminar
+    // pareciendo un éxito. Solo si el servidor confirma workout_log +
+    // TODAS sus series persistidas se marca confirmadoEnServidor=true y se
+    // registran puntos.
     let resultadoPuntos = null;
+    let resultadoGuardado = { ok: false, error: 'sin_conexion_supabase' };
+
     if (window.supabaseEngine) {
-      const resSets = await window.supabaseEngine.guardarWorkoutLogEnSupabase(nuevoLog);
-      if (resSets && resSets.ok === false) {
-        console.error('❌ Series NO guardadas en Supabase:', resSets.error);
-        // No borramos el log local; el alumno sigue viendo el detalle.
-        // Se reintenta una vez con la RPC de edición.
-        try {
-          await window.supabaseEngine.editarWorkoutLogSetsEnSupabase(
-            logId, alumnoId, setsLog, comentarioGeneral || ''
-          );
-        } catch (e2) {
-          console.error('❌ Reintento editar series falló:', e2);
-        }
-      }
+      resultadoGuardado = await this._guardarLogConReintento(nuevoLog);
+    }
+
+    const guardadoConfirmado = !!(resultadoGuardado && resultadoGuardado.ok === true);
+    nuevoLog.confirmadoEnServidor = guardadoConfirmado;
+    nuevoLog.pendienteDeSincronizacion = !guardadoConfirmado;
+    nuevoLog.errorSincronizacion = guardadoConfirmado
+      ? null
+      : ((resultadoGuardado && resultadoGuardado.error) || 'error_desconocido');
+
+    if (!guardadoConfirmado) {
+      console.error(
+        '❌ Entrenamiento NO confirmado en Supabase tras los reintentos (queda pendiente, no se pierde):',
+        nuevoLog.errorSincronizacion
+      );
+    } else if (window.supabaseEngine) {
+      // Orden exigido: 1) workout_log creado, 2) todas las sets guardadas,
+      // 3) verificado — recién ACÁ, paso 4/5, confirmamos el entrenamiento
+      // y registramos puntos. Si algo de lo anterior falló, no llegamos hasta acá.
       resultadoPuntos = await window.supabaseEngine.registrarPuntosEntrenamientoEnSupabase(logId, alumnoId);
 
       if (resultadoPuntos && resultadoPuntos.ok && alumno) {
@@ -1745,7 +1789,6 @@ class GymStore {
         nuevoLog.bonusRacha = Number(resultadoPuntos.bonusRacha) || 0;
         nuevoLog.puntosConfirmadosPorServidor = true;
         alumno.puntosTotal = Number(resultadoPuntos.puntosTotal) || 0;
-        this.saveData();
         // Refresca el ranking en memoria para que el puntaje recién ganado
         // se vea de inmediato, sin esperar al próximo visibilitychange/sync.
         await this.forceRefreshRanking();
@@ -1755,11 +1798,86 @@ class GymStore {
       }
     }
 
+    this.saveData();
+
     const yaHuboEntrenamientoHoy = (resultadoPuntos && resultadoPuntos.ok)
       ? !!resultadoPuntos.yaHuboEntrenamientoHoy
       : !esPrimerEntrenamientoDelDiaLocal;
 
-    return { ...nuevoLog, yaHuboEntrenamientoHoy };
+    return { ...nuevoLog, yaHuboEntrenamientoHoy, guardadoEnServidor: guardadoConfirmado };
+  }
+
+  // --- REINTENTO ACOTADO DE guardarWorkoutLogEnSupabase() ---
+  // Cubre fallos TRANSITORIOS (red, timeout, error momentáneo de Supabase):
+  // hasta `maxIntentos` intentos con una pequeña espera entre medio. No es
+  // una cola offline: es un reintento simple y acotado en el momento del
+  // guardado. Los pendientes que sobrevivan a esto se resuelven después vía
+  // reintentarEntrenamientosPendientes() en cada sync.
+  async _guardarLogConReintento(log, maxIntentos = 2) {
+    let ultimoResultado = null;
+    for (let intento = 1; intento <= maxIntentos; intento++) {
+      try {
+        ultimoResultado = await window.supabaseEngine.guardarWorkoutLogEnSupabase(log);
+      } catch (e) {
+        ultimoResultado = { ok: false, error: (e && e.message) || 'excepcion_guardando_entrenamiento', stage: 'excepcion' };
+      }
+      if (ultimoResultado && ultimoResultado.ok === true) return ultimoResultado;
+      if (intento < maxIntentos) {
+        console.warn(`⚠️ Intento ${intento}/${maxIntentos} de confirmar entrenamiento en Supabase falló, reintentando...`, ultimoResultado && ultimoResultado.error);
+        await new Promise(resolve => setTimeout(resolve, 900));
+      }
+    }
+    return ultimoResultado;
+  }
+
+  // --- REINTENTO DE ENTRENAMIENTOS PENDIENTES DE SINCRONIZAR ---
+  // Se invoca en cada syncWithSupabase() con alumnoId. Si el alumno tiene
+  // entrenamientos guardados localmente que todavía no fueron confirmados
+  // en Supabase (por ejemplo, un corte de red al finalizar), se reintenta
+  // guardarlos ahora. Nunca se descartan por su cuenta: solo pasan a
+  // confirmadoEnServidor=true cuando Supabase realmente los acepta y
+  // verifica todas sus series.
+  async reintentarEntrenamientosPendientes(alumnoId) {
+    if (!window.supabaseEngine || !alumnoId) return;
+    const pendientes = this.data.workoutLogs.filter(w =>
+      w.alumnoId === alumnoId && w.pendienteDeSincronizacion === true
+    );
+    if (!pendientes.length) return;
+
+    console.log(`🔁 Reintentando ${pendientes.length} entrenamiento(s) pendiente(s) de confirmar en Supabase (alumno ${alumnoId})...`);
+
+    for (const log of pendientes) {
+      const resultado = await this._guardarLogConReintento(log, 1);
+      if (resultado && resultado.ok === true) {
+        log.confirmadoEnServidor = true;
+        log.pendienteDeSincronizacion = false;
+        log.errorSincronizacion = null;
+        console.log(`✅ Entrenamiento pendiente ${log.id} confirmado en Supabase.`);
+
+        if (!log.puntosConfirmadosPorServidor) {
+          try {
+            const resultadoPuntos = await window.supabaseEngine.registrarPuntosEntrenamientoEnSupabase(log.id, alumnoId);
+            if (resultadoPuntos && resultadoPuntos.ok) {
+              const alumnoDelLog = this.getAlumnoPorId(alumnoId);
+              log.puntos = Number(resultadoPuntos.puntosGanados) || 0;
+              log.bonusRacha = Number(resultadoPuntos.bonusRacha) || 0;
+              log.puntosConfirmadosPorServidor = true;
+              if (alumnoDelLog) alumnoDelLog.puntosTotal = Number(resultadoPuntos.puntosTotal) || 0;
+            }
+          } catch (e) {
+            console.warn('⚠️ No se pudieron confirmar puntos de un entrenamiento pendiente recién sincronizado:', e && e.message);
+          }
+        }
+      } else {
+        log.errorSincronizacion = (resultado && resultado.error) || 'error_desconocido';
+        console.warn(`⚠️ Entrenamiento pendiente ${log.id} sigue sin poder confirmarse:`, log.errorSincronizacion);
+      }
+    }
+
+    this.saveData();
+    if (typeof this.forceRefreshRanking === 'function') {
+      try { await this.forceRefreshRanking(); } catch (_) {}
+    }
   }
 
   // --- EDITAR ENTRENAMIENTO YA GUARDADO (solo dentro de la ventana de 2hs) ---
