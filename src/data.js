@@ -1795,19 +1795,43 @@ class GymStore {
       resultadoPuntos = await window.supabaseEngine.registrarPuntosEntrenamientoEnSupabase(logId, alumnoId);
 
       if (resultadoPuntos && resultadoPuntos.ok && alumno) {
-        // El servidor manda: se pisa la estimación local (incluyendo el caso
-        // "ya había otro entrenamiento hoy" → puntosGanados/bonusRacha en 0).
-        nuevoLog.puntos = Number(resultadoPuntos.puntosGanados) || 0;
-        nuevoLog.bonusRacha = Number(resultadoPuntos.bonusRacha) || 0;
+        // Servidor OK: usar valores del server si vienen; si vienen null, mantener estimación local
+        if (resultadoPuntos.puntosGanados != null && resultadoPuntos.puntosGanados !== '') {
+          nuevoLog.puntos = Number(resultadoPuntos.puntosGanados) || 0;
+        }
+        if (resultadoPuntos.bonusRacha != null && resultadoPuntos.bonusRacha !== '') {
+          nuevoLog.bonusRacha = Number(resultadoPuntos.bonusRacha) || 0;
+        }
+        if (resultadoPuntos.puntosTotal != null && resultadoPuntos.puntosTotal !== '') {
+          alumno.puntosTotal = Number(resultadoPuntos.puntosTotal) || 0;
+        }
         nuevoLog.puntosConfirmadosPorServidor = true;
-        alumno.puntosTotal = Number(resultadoPuntos.puntosTotal) || 0;
         this.saveData();
-        // Refresca el ranking en memoria para que el puntaje recién ganado
-        // se vea de inmediato, sin esperar al próximo visibilitychange/sync.
-        await this.forceRefreshRanking();
-        // NO llamar renderApp acá: el handler de "Finalizar" ya re-renderiza
-        // al terminar. Un render intermedio recreaba el botón habilitado y
-        // permitía un segundo toque → doble entrenamiento + mensajes cruzados.
+        try { await this.forceRefreshRanking(); } catch (_) {}
+      } else if (resultadoPuntos && !resultadoPuntos.ok) {
+        console.warn('⚠️ Puntos no confirmados por servidor:', resultadoPuntos.error);
+        // Reintento final tras 700ms (log puede haber tardado en indexarse)
+        try {
+          await new Promise(r => setTimeout(r, 700));
+          const retry = await window.supabaseEngine.registrarPuntosEntrenamientoEnSupabase(logId, alumnoId);
+          resultadoPuntos = retry;
+          if (retry && retry.ok && alumno) {
+            if (retry.puntosGanados != null && retry.puntosGanados !== '') {
+              nuevoLog.puntos = Number(retry.puntosGanados) || 0;
+            }
+            if (retry.bonusRacha != null && retry.bonusRacha !== '') {
+              nuevoLog.bonusRacha = Number(retry.bonusRacha) || 0;
+            }
+            if (retry.puntosTotal != null && retry.puntosTotal !== '') {
+              alumno.puntosTotal = Number(retry.puntosTotal) || 0;
+            }
+            nuevoLog.puntosConfirmadosPorServidor = true;
+            this.saveData();
+            try { await this.forceRefreshRanking(); } catch (_) {}
+          }
+        } catch (eRetry) {
+          console.warn('⚠️ Reintento puntos falló:', eRetry);
+        }
       }
     }
 

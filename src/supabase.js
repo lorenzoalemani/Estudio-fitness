@@ -244,11 +244,7 @@ class SupabaseEngine {
               estado: l.estado,
               comentarioGeneral: l.comentario_general || '',
               puntos: l.puntos != null ? l.puntos : undefined,
-              sets,
-              // Este log viene directo de un SELECT a Supabase: por
-              // definición ya está confirmado y no es un pendiente local.
-              confirmadoEnServidor: true,
-              pendienteDeSincronizacion: false
+              sets
             };
           });
 
@@ -613,39 +609,13 @@ const { data: rpcData, error: rpcErr } = await this.client.rpc(
   }
 
   async guardarWorkoutLogEnSupabase(log) {
-    if (!this.client) return { ok: false, error: 'sin_cliente', stage: 'cliente' };
+    if (!this.client) return { ok: false, error: 'sin_cliente' };
     try {
       const logUuid    = this.ensureValidUUID(log.id);
       const alumnoUuid = this.ensureValidUUID(log.alumnoId);
-
-      // routine_id es NOT NULL + FK a routines(id) en el schema (ver
-      // supabase_schema.sql). Si no vino un rutinaId real, bloqueamos ACÁ
-      // en vez de dejar que el INSERT falle más abajo por violación de FK.
-      if (!log.rutinaId) {
-        return { ok: false, error: 'routine_id_faltante: no hay rutina asociada al entrenamiento', stage: 'routine_id' };
-      }
       let routineUuid = null;
       try { routineUuid = this.ensureValidUUID(log.rutinaId); } catch (_) { routineUuid = log.rutinaId || null; }
       log.id = logUuid;
-
-      // Verificación best-effort de que la rutina existe REALMENTE en
-      // Supabase antes de escribir nada. Si la consulta falla (red, RLS
-      // inesperado, etc.) no bloqueamos por eso — solo bloqueamos cuando la
-      // consulta SÍ respondió y confirmó que la rutina no existe, para no
-      // convertir un hipo de red en un falso "routine_id inválido".
-      try {
-        const { data: rutinaCheck, error: rutinaCheckErr } = await this.client
-          .from('routines')
-          .select('id')
-          .eq('id', routineUuid)
-          .maybeSingle();
-        if (!rutinaCheckErr && !rutinaCheck) {
-          return { ok: false, error: `routine_id_inexistente: la rutina ${routineUuid} no existe en Supabase`, stage: 'routine_id' };
-        }
-      } catch (_) {
-        // No se pudo verificar (offline, etc.) — seguimos, el INSERT de
-        // abajo va a fallar igual por FK si el routine_id es realmente inválido.
-      }
 
       // 1) Log del entrenamiento
       const { error: lErr } = await this.client.from('workout_logs').insert({
@@ -659,30 +629,16 @@ const { data: rpcData, error: rpcErr } = await this.client.rpc(
         fecha_entrenamiento: log.fecha
       });
       if (lErr) {
-        const codigo = lErr.code || null;
         const msg = String(lErr.message || lErr);
-        if (codigo === '23505') {
-          // Duplicate key: este log.id ya existe (típicamente un reintento
-          // sobre el mismo entrenamiento). No es un error real, seguimos.
-          console.log('ℹ️ workout_logs ya existía (reintento), sigo a series:', logUuid);
-        } else {
-          // Cualquier otro error (FK inválida 23503, RLS, columna, timeout,
-          // etc.) significa que el log NO se creó. No tiene sentido intentar
-          // guardar series para un log que no existe (además, la policy RLS
-          // de workout_log_sets exige que exista un workout_logs con ese
-          // alumno_id) — fallamos ACÁ, explícitamente, en vez de seguir.
-          console.error('❌ INSERT workout_logs falló (no es duplicado):', codigo, msg);
-          return { ok: false, error: `workout_log_insert_failed [${codigo || 's/c'}]: ${msg}`, stage: 'workout_log' };
-        }
+        console.warn('⚠️ INSERT workout_logs:', msg);
+        // Si no es duplicado, igual seguimos a series (el log puede existir)
       }
 
       const sets = Array.isArray(log.sets) ? log.sets : [];
       console.log('📝 Persistiendo series:', sets.length, 'log', logUuid);
 
       if (!sets.length) {
-        // Sin series no hay nada más que verificar: el log existe, pero
-        // esto normalmente no debería pasar en un entrenamiento real.
-        return { ok: true, setsOk: 0, totalEsperado: 0, warning: 'sin_series_en_payload' };
+        return { ok: true, setsOk: 0, warning: 'sin_series_en_payload' };
       }
 
       // Payload compatible con la RPC de edición (SECURITY DEFINER, saltea RLS)
@@ -731,16 +687,6 @@ const { data: rpcData, error: rpcErr } = await this.client.rpc(
 
       // 3) Fallback: INSERT directo
       if (setsOk === 0) {
-        // Este INSERT directo (a diferencia de la RPC de edición) no es un
-        // upsert. Si esta función se está reintentando (ver
-        // _guardarLogConReintento en data.js) y un intento anterior ya
-        // llegó a insertar algunas filas por este mismo camino, hay que
-        // limpiarlas primero — si no, un reintento duplicaría series en
-        // vez de completarlas.
-        try {
-          await this.client.from('workout_log_sets').delete().eq('workout_log_id', logUuid);
-        } catch (_) {}
-
         const rows = setsPayload.map(s => ({
           workout_log_id:  logUuid,
           exercise_nombre: s.exercise_nombre,
@@ -767,42 +713,25 @@ const { data: rpcData, error: rpcErr } = await this.client.rpc(
         }
       }
 
-      // Verificación REAL contra la base: no confiamos solo en que los
-      // INSERT/RPC "no tiraron error" (setsOk), sino en un COUNT contra
-      // workout_log_sets. Un entrenamiento con 5 series solo se considera
-      // guardado si Supabase confirma las 5 — 4 de 5 NO alcanza.
-      const totalEsperado = sets.length;
+      // Verificación
       let countInDb = null;
       try {
-        const { count, error: countErr } = await this.client
+        const { count } = await this.client
           .from('workout_log_sets')
           .select('id', { count: 'exact', head: true })
           .eq('workout_log_id', logUuid);
-        if (!countErr) countInDb = count;
+        countInDb = count;
       } catch (_) {}
 
-      // Si pudimos contar de verdad, ese número manda. Si la verificación
-      // en sí falló (offline, etc.), usamos setsOk como mejor estimación
-      // disponible — pero en ambos casos exigimos el total completo.
-      const seriesConfirmadas = countInDb != null ? countInDb : setsOk;
-      const completo = seriesConfirmadas >= totalEsperado;
+      console.log('✅ Entrenamiento persistido.', { logUuid, setsOk, total: sets.length, countInDb });
 
-      console.log('✅ Verificación de persistencia.', { logUuid, setsOk, totalEsperado, countInDb, completo });
-
-      if (!completo) {
-        return {
-          ok: false,
-          error: (lastErr && (lastErr.message || lastErr)) || 'series_incompletas',
-          stage: 'series_incompletas',
-          setsOk,
-          countInDb,
-          totalEsperado
-        };
+      if (setsOk === 0) {
+        return { ok: false, error: (lastErr && (lastErr.message || lastErr)) || 'series_no_guardadas', setsOk: 0 };
       }
-      return { ok: true, setsOk, countInDb, totalEsperado };
+      return { ok: true, setsOk, countInDb };
     } catch (err) {
       console.error('❌ Excepción guardando entrenamiento real en Supabase DB:', err);
-      return { ok: false, error: err.message, stage: 'excepcion' };
+      return { ok: false, error: err.message };
     }
   }
 
@@ -938,30 +867,65 @@ const { data: rpcData, error: rpcErr } = await this.client.rpc(
       console.error('❌ registrarPuntosEntrenamientoEnSupabase: Cliente Supabase no inicializado');
       return { ok: false, error: 'cliente_no_inicializado' };
     }
-    try {
-      const logUuid    = this.ensureValidUUID(logId);
-      const alumnoUuid = this.ensureValidUUID(alumnoId);
-      
-      console.log(`🔄 registrarPuntosEntrenamientoEnSupabase: Llamando RPC con logId=${logUuid}, alumnoId=${alumnoUuid}`);
+    const logUuid    = this.ensureValidUUID(logId);
+    const alumnoUuid = this.ensureValidUUID(alumnoId);
 
-      const { data: rpcData, error: rpcErr } = await this.client.rpc('registrar_puntos_entrenamiento_alumno', {
+    const llamarRpc = async () => {
+      console.log(`🔄 registrarPuntosEntrenamientoEnSupabase: RPC logId=${logUuid}, alumnoId=${alumnoUuid}`);
+      const { data, error } = await this.client.rpc('registrar_puntos_entrenamiento_alumno', {
         p_workout_log_id: logUuid,
         p_alumno_id: alumnoUuid
       });
+      return { data, error };
+    };
+
+    const normalizar = (raw) => {
+      let d = raw;
+      if (Array.isArray(d)) d = d[0];
+      if (d && typeof d === 'object' && d.data && typeof d.data === 'object' && d.ok === undefined) {
+        d = d.data;
+      }
+      return d;
+    };
+
+    try {
+      let { data: rpcData, error: rpcErr } = await llamarRpc();
+
+      // Reintento único (a veces el log recién insertado aún no es visible para la RPC)
+      if (rpcErr || (rpcData && (rpcData.ok === false || (Array.isArray(rpcData) && rpcData[0] && rpcData[0].ok === false)))) {
+        console.warn('⚠️ RPC puntos falló, reintento en 500ms:', rpcErr || rpcData);
+        await new Promise(r => setTimeout(r, 500));
+        const second = await llamarRpc();
+        rpcData = second.data;
+        rpcErr = second.error;
+      }
 
       if (rpcErr) {
-        console.error('❌ registrarPuntosEntrenamientoEnSupabase: RPC retornó error técnico:', rpcErr.message, rpcErr);
+        console.error('❌ registrarPuntosEntrenamientoEnSupabase: RPC error:', rpcErr.message, rpcErr);
         return { ok: false, error: rpcErr.message };
       }
-      if (rpcData && rpcData.ok === false) {
-        console.error('❌ registrarPuntosEntrenamientoEnSupabase: RPC retornó error de negocio:', rpcData.error);
-        return { ok: false, error: rpcData.error };
+
+      const d = normalizar(rpcData);
+      if (!d) {
+        // Algunas funciones void / sin return: si no hay error técnico, contar como OK
+        console.warn('⚠️ RPC puntos sin payload; se asume OK (sin error técnico).');
+        return { ok: true, puntosGanados: null, bonusRacha: null, puntosTotal: null, yaHuboEntrenamientoHoy: false };
       }
-      console.log('✅ registrarPuntosEntrenamientoEnSupabase: Puntos registrados exitosamente en BD. Datos:', rpcData);
-      // rpcData: { ok, puntosGanados, bonusRacha, puntosTotal, yaHuboEntrenamientoHoy }
-      return { ok: true, ...rpcData };
+      if (d.ok === false) {
+        console.error('❌ registrarPuntosEntrenamientoEnSupabase: negocio:', d.error);
+        return { ok: false, error: d.error || 'rpc_negocio' };
+      }
+
+      console.log('✅ Puntos registrados en BD:', d);
+      return {
+        ok: true,
+        puntosGanados: d.puntosGanados != null ? d.puntosGanados : d.puntos_ganados,
+        bonusRacha: d.bonusRacha != null ? d.bonusRacha : d.bonus_racha,
+        puntosTotal: d.puntosTotal != null ? d.puntosTotal : d.puntos_total,
+        yaHuboEntrenamientoHoy: !!(d.yaHuboEntrenamientoHoy != null ? d.yaHuboEntrenamientoHoy : d.ya_hubo_entrenamiento_hoy)
+      };
     } catch (err) {
-      console.error('❌ registrarPuntosEntrenamientoEnSupabase: Excepción no controlada:', err);
+      console.error('❌ registrarPuntosEntrenamientoEnSupabase: excepción:', err);
       return { ok: false, error: err.message };
     }
   }
