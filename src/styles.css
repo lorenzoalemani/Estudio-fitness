@@ -1446,3 +1446,32 @@ body {
   border: 1px dashed rgba(251, 191, 36, 0.35);
   text-align: center;
 }
+
+
+/* Plantillas de rutina (profesor) */
+.plantillas-list { display: flex; flex-direction: column; gap: 12px; max-height: 50vh; overflow-y: auto; }
+.plantilla-card {
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 12px;
+  padding: 12px;
+  background: rgba(0,0,0,0.25);
+}
+.plantilla-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.plantilla-titulo { font-weight: 800; color: #fff; font-size: 0.95rem; }
+.plantilla-meta { font-size: 0.78rem; color: var(--text-gray); margin-top: 2px; }
+.plantilla-preview { display: flex; flex-direction: column; gap: 6px; }
+.plantilla-dia {
+  font-size: 0.8rem;
+  color: #c4c4cc;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: rgba(255,255,255,0.04);
+}
+.plantilla-dia strong { display: block; color: #fbbf24; margin-bottom: 2px; font-size: 0.78rem; }
+.plantilla-dia span { color: #9ca3af; line-height: 1.35; }

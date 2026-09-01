@@ -2296,6 +2296,7 @@ document.addEventListener('DOMContentLoaded', () => {
       </main>
 
       ${appState.modalActivo === 'nuevo_alumno' ? renderModalNuevoAlumno() : ''}
+      ${appState.modalActivo === 'elegir_origen_rutina' ? renderModalElegirOrigenRutina() : ''}
       ${(appState.modalActivo === 'crear_rutina' || appState.modalActivo === 'editar_rutina') ? renderModalFormularioRutina(appState.modalActivo) : ''}
       ${appState.modalActivo === 'historial_alumno' ? renderModalHistorialAlumno() : ''}
       ${appState.modalActivo === 'confirmar_borrado_rutina' ? renderModalConfirmarBorradoRutina() : ''}
@@ -2353,11 +2354,16 @@ console.log("====================================");
         await store.syncWithSupabase(alumnoId);
         if (e.target.classList.contains('btn-historial-click')) {
           e.stopPropagation();
-          // Se invalida el caché en cada apertura del historial (no solo al cambiar de alumno)
-          // para que el profesor siempre vea los registros más recientes desde Supabase.
           appState.historialProfesorLogs = null;
           appState.alumnoSeleccionadoId = alumnoId;
           appState.modalActivo = 'historial_alumno';
+          renderApp();
+        } else if (e.target.classList.contains('btn-crear-rutina-click')) {
+          e.stopPropagation();
+          appState.alumnoSeleccionadoId = alumnoId;
+          appState.rutinaEnEdicionId = null;
+          appState.plantillaRutinaSeleccionadaId = null;
+          appState.modalActivo = 'elegir_origen_rutina';
           renderApp();
         } else if (e.target.classList.contains('btn-editar-rutina-click')) {
           e.stopPropagation();
@@ -2366,7 +2372,55 @@ console.log("====================================");
           appState.modalActivo = 'editar_rutina';
           initFormBuilderForRoutine(appState.rutinaEnEdicionId);
           renderApp();
-        // LÓGICA DE APLICACIÓN v4 - ESTUDIO FITNESS (WORKOUT LOGGER & WEB PUSH REAL)
+        } else if (e.target.classList.contains('btn-toggle-estado-rutina-click')) {
+          e.stopPropagation();
+          const rId = e.target.dataset.rutinaId;
+          const estadoActual = e.target.dataset.estadoActual;
+          const nuevoEstado = estadoActual === 'desactivada' ? 'activa' : 'desactivada';
+          const profesorId = window._sessionProfesorId || appState.usuarioActual.data.id;
+          e.target.disabled = true;
+          store.cambiarEstadoRutina(rId, profesorId, nuevoEstado).then(resultado => {
+            if (!resultado || resultado.ok !== true) {
+              alert("❌ No se pudo cambiar el estado de la rutina: " + ((resultado && resultado.error) || "error desconocido"));
+            }
+            renderApp();
+          });
+        } else if (e.target.classList.contains('btn-borrar-rutina-click')) {
+          e.stopPropagation();
+          appState.rutinaAEliminarId = e.target.dataset.rutinaId;
+          appState.modalActivo = 'confirmar_borrado_rutina';
+          renderApp();
+        } else if (e.target.classList.contains('btn-edit-nombre')) {
+          e.stopPropagation();
+          const dniAlumno = e.target.dataset.dni;
+          const alumnoActual = store.getAlumnoPorId(alumnoId);
+          const nombreActual = (alumnoActual && (alumnoActual.nombreProfesor || alumnoActual.nombre)) || '';
+          const nuevoNombre = prompt("Apodo para identificar a este alumno en tu panel:", nombreActual);
+          if (nuevoNombre === null) return;
+          if (!nuevoNombre.trim()) {
+            alert("El apodo no puede estar vacío.");
+            return;
+          }
+          e.target.disabled = true;
+          store.editarNombreProfesor({ dni: dniAlumno, nuevoNombre: nuevoNombre.trim() }).then(() => renderApp()).catch(err => {
+            alert("❌ No se pudo actualizar el apodo: " + err.message);
+            renderApp();
+          });
+        } else {
+          // Click en la tarjeta: solo seleccionar, no abrir rutina propia del alumno
+          appState.alumnoSeleccionadoId = alumnoId;
+          renderApp();
+        }
+      });
+    });
+
+    bindAccordionEvents();
+  }
+
+  // (fin bind panel profesor — el resto del archivo continúa con la 2.ª copia / PWA)
+  void 0; // noop
+
+// LÓGICA DE APLICACIÓN v4 - ESTUDIO FITNESS (WORKOUT LOGGER & WEB PUSH REAL)
 
 // --- INSTALACIÓN DE PWA (banner "Instalar aplicación" vía beforeinstallprompt) ---
 // Se define FUERA del DOMContentLoaded, en el nivel superior del script,
@@ -4664,6 +4718,7 @@ document.addEventListener('DOMContentLoaded', () => {
       </main>
 
       ${appState.modalActivo === 'nuevo_alumno' ? renderModalNuevoAlumno() : ''}
+      ${appState.modalActivo === 'elegir_origen_rutina' ? renderModalElegirOrigenRutina() : ''}
       ${(appState.modalActivo === 'crear_rutina' || appState.modalActivo === 'editar_rutina') ? renderModalFormularioRutina(appState.modalActivo) : ''}
       ${appState.modalActivo === 'historial_alumno' ? renderModalHistorialAlumno() : ''}
       ${appState.modalActivo === 'confirmar_borrado_rutina' ? renderModalConfirmarBorradoRutina() : ''}
@@ -4721,19 +4776,23 @@ console.log("====================================");
         await store.syncWithSupabase(alumnoId);
         if (e.target.classList.contains('btn-historial-click')) {
           e.stopPropagation();
-          // Se invalida el caché en cada apertura del historial (no solo al cambiar de alumno)
-          // para que el profesor siempre vea los registros más recientes desde Supabase.
           appState.historialProfesorLogs = null;
           appState.alumnoSeleccionadoId = alumnoId;
-
-console.log("🔎 DEBUG CREAR RUTINA - alumnoSeleccionadoId:", {
-    alumnoId,
-    appStateId: appState.alumnoSeleccionadoId
-});
-
-appState.rutinaEnEdicionId = null;
-appState.modalActivo = 'crear_rutina';
-          initFormBuilderForNew();
+          appState.modalActivo = 'historial_alumno';
+          renderApp();
+        } else if (e.target.classList.contains('btn-crear-rutina-click')) {
+          e.stopPropagation();
+          appState.alumnoSeleccionadoId = alumnoId;
+          appState.rutinaEnEdicionId = null;
+          appState.plantillaRutinaSeleccionadaId = null;
+          appState.modalActivo = 'elegir_origen_rutina';
+          renderApp();
+        } else if (e.target.classList.contains('btn-editar-rutina-click')) {
+          e.stopPropagation();
+          appState.alumnoSeleccionadoId = alumnoId;
+          appState.rutinaEnEdicionId = e.target.dataset.rutinaId;
+          appState.modalActivo = 'editar_rutina';
+          initFormBuilderForRoutine(appState.rutinaEnEdicionId);
           renderApp();
         } else if (e.target.classList.contains('btn-toggle-estado-rutina-click')) {
           e.stopPropagation();
@@ -4771,19 +4830,46 @@ appState.modalActivo = 'crear_rutina';
           }
           renderApp();
         } else {
-          const rutina = store.getRutinaActiva(alumnoId);
+          // Solo seleccionar alumno (no abrir "Mis rutinas" ni crear sin querer)
           appState.alumnoSeleccionadoId = alumnoId;
-          if (rutina) {
-            appState.rutinaEnEdicionId = rutina.id;
-            appState.modalActivo = 'editar_rutina';
-            initFormBuilderForRoutine(rutina.id);
-          } else {
-            appState.rutinaEnEdicionId = null;
-            appState.modalActivo = 'crear_rutina';
-            initFormBuilderForNew();
-          }
           renderApp();
         }
+      });
+    });
+
+
+    // Modal: elegir origen de rutina (personalizada vs plantilla)
+    document.getElementById('btnRutinaPersonalizada')?.addEventListener('click', () => {
+      appState.rutinaEnEdicionId = null;
+      appState.plantillaRutinaSeleccionadaId = null;
+      initFormBuilderForNew();
+      appState.modalActivo = 'crear_rutina';
+      renderApp();
+    });
+    document.getElementById('btnTogglePlantillas')?.addEventListener('click', () => {
+      const panel = document.getElementById('plantillasPanel');
+      if (panel) panel.hidden = !panel.hidden;
+    });
+    document.querySelectorAll('.btn-usar-plantilla').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const id = btn.dataset.plantillaId;
+        const plantilla = (store.data.rutinas || []).find(r => String(r.id) === String(id));
+        if (!plantilla) {
+          alert('No se encontró esa plantilla.');
+          return;
+        }
+        // Clonar al formulario; al guardar se crea rutina NUEVA para el alumno
+        appState.rutinaEnEdicionId = null;
+        appState.plantillaRutinaSeleccionadaId = plantilla.id;
+        initFormBuilderFromPlantilla(plantilla);
+        appState.modalActivo = 'crear_rutina';
+        renderApp();
+        // Prefijar título si el input existe
+        const titleInput = document.getElementById('routineTitle');
+        if (titleInput && plantilla.titulo) titleInput.value = plantilla.titulo;
+        const durInput = document.getElementById('routineDuration');
+        if (durInput && plantilla.duracionDias) durInput.value = plantilla.duracionDias;
       });
     });
 
@@ -4820,6 +4906,102 @@ appState.modalActivo = 'crear_rutina';
         </div>
       </div>
     `;
+  }
+
+
+  function renderModalElegirOrigenRutina() {
+    const alumno = store.getAlumnoPorId(appState.alumnoSeleccionadoId);
+    const nombre = alumno ? (alumno.nombreProfesor || alumno.nombre || '') : '';
+    const plantillas = (typeof store.getPlantillasRutina === 'function') ? store.getPlantillasRutina() : [];
+    const lista = plantillas.length ? plantillas.map(p => {
+      const diasN = (p.dias || []).length;
+      const ejN = (p.dias || []).reduce((n, d) => n + ((d.ejercicios || []).length), 0);
+      const preview = (p.dias || []).map(d => {
+        const ejs = (d.ejercicios || []).map(e => e.nombre).filter(Boolean).slice(0, 8).join(' · ');
+        const more = (d.ejercicios || []).length > 8 ? '…' : '';
+        return `<div class="plantilla-dia"><strong>${d.nombre || 'Día'}</strong><span>${ejs}${more || (ejs ? '' : 'Sin ejercicios')}</span></div>`;
+      }).join('');
+      return `
+        <div class="plantilla-card" data-plantilla-id="${p.id}">
+          <div class="plantilla-card-head">
+            <div>
+              <div class="plantilla-titulo">${p.titulo || 'Rutina'}</div>
+              <div class="plantilla-meta">${diasN} día(s) · ${ejN} ejercicio(s)</div>
+            </div>
+            <button type="button" class="btn btn-primary btn-sm btn-usar-plantilla" data-plantilla-id="${p.id}">Usar</button>
+          </div>
+          <div class="plantilla-preview">${preview}</div>
+        </div>`;
+    }).join('') : `<p class="stats-empty">No hay rutinas de profesor cargadas todavía. Creá una personalizada primero; después va a aparecer acá como plantilla.</p>`;
+
+    return `
+      <div class="modal-overlay">
+        <div class="modal-content" style="max-width:520px">
+          <div class="modal-header">
+            <h3>📝 Asignar rutina${nombre ? ' — ' + nombre : ''}</h3>
+            <button class="close-btn" id="btnCloseModal">&times;</button>
+          </div>
+          <p style="color:var(--text-gray); font-size:0.9rem; margin-bottom:14px">
+            Elegí cómo querés armar la rutina. Si usás una existente, se <strong style="color:#fff">copia</strong> para este alumno: los cambios no tocan la original.
+          </p>
+          <div style="display:flex; flex-direction:column; gap:10px; margin-bottom:18px">
+            <button type="button" class="btn btn-primary" id="btnRutinaPersonalizada" style="width:100%; padding:14px">✏️ Rutina personalizada</button>
+            <button type="button" class="btn btn-secondary" id="btnTogglePlantillas" style="width:100%; padding:14px">📋 Seleccionar rutina existente</button>
+          </div>
+          <div id="plantillasPanel" hidden>
+            <h4 style="font-size:0.95rem; margin-bottom:10px">Rutinas disponibles</h4>
+            <div class="plantillas-list">${lista}</div>
+          </div>
+        </div>
+      </div>`;
+  }
+
+
+  function renderModalElegirOrigenRutina() {
+    const alumno = store.getAlumnoPorId(appState.alumnoSeleccionadoId);
+    const nombre = alumno ? (alumno.nombreProfesor || alumno.nombre || '') : '';
+    const plantillas = (typeof store.getPlantillasRutina === 'function') ? store.getPlantillasRutina() : [];
+    const lista = plantillas.length ? plantillas.map(p => {
+      const diasN = (p.dias || []).length;
+      const ejN = (p.dias || []).reduce((n, d) => n + ((d.ejercicios || []).length), 0);
+      const preview = (p.dias || []).map(d => {
+        const ejs = (d.ejercicios || []).map(e => e.nombre).filter(Boolean).slice(0, 8).join(' · ');
+        const more = (d.ejercicios || []).length > 8 ? '…' : '';
+        return `<div class="plantilla-dia"><strong>${d.nombre || 'Día'}</strong><span>${ejs}${more || (ejs ? '' : 'Sin ejercicios')}</span></div>`;
+      }).join('');
+      return `
+        <div class="plantilla-card" data-plantilla-id="${p.id}">
+          <div class="plantilla-card-head">
+            <div>
+              <div class="plantilla-titulo">${p.titulo || 'Rutina'}</div>
+              <div class="plantilla-meta">${diasN} día(s) · ${ejN} ejercicio(s)</div>
+            </div>
+            <button type="button" class="btn btn-primary btn-sm btn-usar-plantilla" data-plantilla-id="${p.id}">Usar</button>
+          </div>
+          <div class="plantilla-preview">${preview}</div>
+        </div>`;
+    }).join('') : `<p class="stats-empty">No hay rutinas de profesor cargadas todavía. Creá una personalizada primero; después va a aparecer acá como plantilla.</p>`;
+
+    return `
+      <div class="modal-overlay">
+        <div class="modal-content" style="max-width:520px">
+          <div class="modal-header">
+            <h3>📝 Asignar rutina${nombre ? ' — ' + nombre : ''}</h3>
+            <button class="close-btn" id="btnCloseModal">&times;</button>
+          </div>
+          <p style="color:var(--text-gray); font-size:0.9rem; margin-bottom:14px">
+            Elegí cómo querés armar la rutina. Si usás una existente, se <strong style="color:#fff">copia</strong> para este alumno: los cambios no tocan la original.
+          </p>
+          <div style="display:flex; flex-direction:column; gap:10px; margin-bottom:18px">
+            <button type="button" class="btn btn-primary" id="btnRutinaPersonalizada" style="width:100%; padding:14px">✏️ Rutina personalizada</button>
+            <button type="button" class="btn btn-secondary" id="btnTogglePlantillas" style="width:100%; padding:14px">📋 Seleccionar rutina existente</button>
+          </div>
+          <div id="plantillasPanel" hidden>
+            <h4 style="font-size:0.95rem; margin-bottom:10px">Rutinas disponibles</h4>
+            <div class="plantillas-list">${lista}</div>
+          </div>
+        </div>
+      </div>`;
   }
 
   function renderModalFormularioRutina(modo) {
@@ -5200,11 +5382,12 @@ appState.modalActivo = 'crear_rutina';
 
 
   function initFormBuilderForNew() {
+    // Vacío-neutral: NO precargar rutina de ningún alumno ni "Mis rutinas"
     currentFormDays = [
       {
-        nombre: "Día 1: Pecho, Hombro y Tríceps",
+        nombre: "Día 1",
         ejercicios: [
-          { nombre: "Press Plano con Barra", series: 4, repeticiones: "10-12", peso: "60 kg", notaProfesor: "Controlar bajada", videoUrl: "" }
+          { nombre: "Nuevo Ejercicio", series: 3, repeticiones: "12", peso: "10 kg", notaProfesor: "", videoUrl: "", esEntradaEnCalor: false }
         ]
       }
     ];
@@ -5215,7 +5398,7 @@ appState.modalActivo = 'crear_rutina';
     if (rutina && rutina.dias) {
       currentFormDays = rutina.dias.map(d => ({
         nombre: d.nombre,
-        ejercicios: d.ejercicios.map(e => ({
+        ejercicios: (d.ejercicios || []).map(e => ({
           nombre: e.nombre,
           series: e.seriesTarget || 3,
           repeticiones: e.repeticionesTarget || "12",
@@ -5228,6 +5411,27 @@ appState.modalActivo = 'crear_rutina';
     } else {
       initFormBuilderForNew();
     }
+  }
+
+  /** Clona una plantilla existente al formulario (NO edita la original). */
+  function initFormBuilderFromPlantilla(rutina) {
+    if (!rutina || !Array.isArray(rutina.dias)) {
+      initFormBuilderForNew();
+      return;
+    }
+    currentFormDays = rutina.dias.map(d => ({
+      nombre: d.nombre || 'Día',
+      ejercicios: (d.ejercicios || []).map(e => ({
+        nombre: e.nombre || 'Ejercicio',
+        series: e.seriesTarget != null ? e.seriesTarget : (e.series || 3),
+        repeticiones: e.repeticionesTarget || e.repeticiones || '12',
+        peso: e.pesoSugerido || e.peso || 'S/D',
+        notaProfesor: e.notaProfesor || '',
+        videoUrl: e.videoUrl || '',
+        esEntradaEnCalor: !!e.esEntradaEnCalor
+      }))
+    }));
+    if (!currentFormDays.length) initFormBuilderForNew();
   }
 
   function setupRoutineFormBuilder() {
@@ -6004,60 +6208,7 @@ appState.modalActivo = 'crear_rutina';
     renderApp();
   })();
 });
-        } else if (e.target.classList.contains('btn-toggle-estado-rutina-click')) {
-          e.stopPropagation();
-          const rId = e.target.dataset.rutinaId;
-          const estadoActual = e.target.dataset.estadoActual;
-          const nuevoEstado = estadoActual === 'desactivada' ? 'activa' : 'desactivada';
-          const profesorId = window._sessionProfesorId || appState.usuarioActual.data.id;
-          e.target.disabled = true;
-          const resultado = await store.cambiarEstadoRutina(rId, profesorId, nuevoEstado);
-          if (!resultado || resultado.ok !== true) {
-            alert("❌ No se pudo cambiar el estado de la rutina: " + ((resultado && resultado.error) || "error desconocido"));
-          }
-          renderApp();
-        } else if (e.target.classList.contains('btn-borrar-rutina-click')) {
-          e.stopPropagation();
-          appState.rutinaAEliminarId = e.target.dataset.rutinaId;
-          appState.modalActivo = 'confirmar_borrado_rutina';
-          renderApp();
-        } else if (e.target.classList.contains('btn-edit-nombre')) {
-          e.stopPropagation();
-          const dniAlumno = e.target.dataset.dni;
-          const alumnoActual = store.getAlumnoPorId(alumnoId);
-          const nombreActual = (alumnoActual && (alumnoActual.nombreProfesor || alumnoActual.nombre)) || '';
-          const nuevoNombre = prompt("Apodo para identificar a este alumno en tu panel:", nombreActual);
-          if (nuevoNombre === null) return; // cancelado
-          if (!nuevoNombre.trim()) {
-            alert("El apodo no puede estar vacío.");
-            return;
-          }
-          e.target.disabled = true;
-          try {
-            await store.editarNombreProfesor({ dni: dniAlumno, nuevoNombre: nuevoNombre.trim() });
-          } catch (err) {
-            alert("❌ No se pudo actualizar el apodo: " + err.message);
-          }
-          renderApp();
-        } else {
-          const rutina = store.getRutinaActiva(alumnoId);
-          appState.alumnoSeleccionadoId = alumnoId;
-          if (rutina) {
-            appState.rutinaEnEdicionId = rutina.id;
-            appState.modalActivo = 'editar_rutina';
-            initFormBuilderForRoutine(rutina.id);
-          } else {
-            appState.rutinaEnEdicionId = null;
-            appState.modalActivo = 'crear_rutina';
-            initFormBuilderForNew();
-          }
-          renderApp();
-        }
-      });
-    });
 
-    bindAccordionEvents();
-  }
 
   function renderModalNuevoAlumno() {
     return `
@@ -6469,11 +6620,12 @@ appState.modalActivo = 'crear_rutina';
 
 
   function initFormBuilderForNew() {
+    // Vacío-neutral: NO precargar rutina de ningún alumno ni "Mis rutinas"
     currentFormDays = [
       {
-        nombre: "Día 1: Pecho, Hombro y Tríceps",
+        nombre: "Día 1",
         ejercicios: [
-          { nombre: "Press Plano con Barra", series: 4, repeticiones: "10-12", peso: "60 kg", notaProfesor: "Controlar bajada", videoUrl: "" }
+          { nombre: "Nuevo Ejercicio", series: 3, repeticiones: "12", peso: "10 kg", notaProfesor: "", videoUrl: "", esEntradaEnCalor: false }
         ]
       }
     ];
@@ -6484,7 +6636,7 @@ appState.modalActivo = 'crear_rutina';
     if (rutina && rutina.dias) {
       currentFormDays = rutina.dias.map(d => ({
         nombre: d.nombre,
-        ejercicios: d.ejercicios.map(e => ({
+        ejercicios: (d.ejercicios || []).map(e => ({
           nombre: e.nombre,
           series: e.seriesTarget || 3,
           repeticiones: e.repeticionesTarget || "12",
@@ -6497,6 +6649,27 @@ appState.modalActivo = 'crear_rutina';
     } else {
       initFormBuilderForNew();
     }
+  }
+
+  /** Clona una plantilla existente al formulario (NO edita la original). */
+  function initFormBuilderFromPlantilla(rutina) {
+    if (!rutina || !Array.isArray(rutina.dias)) {
+      initFormBuilderForNew();
+      return;
+    }
+    currentFormDays = rutina.dias.map(d => ({
+      nombre: d.nombre || 'Día',
+      ejercicios: (d.ejercicios || []).map(e => ({
+        nombre: e.nombre || 'Ejercicio',
+        series: e.seriesTarget != null ? e.seriesTarget : (e.series || 3),
+        repeticiones: e.repeticionesTarget || e.repeticiones || '12',
+        peso: e.pesoSugerido || e.peso || 'S/D',
+        notaProfesor: e.notaProfesor || '',
+        videoUrl: e.videoUrl || '',
+        esEntradaEnCalor: !!e.esEntradaEnCalor
+      }))
+    }));
+    if (!currentFormDays.length) initFormBuilderForNew();
   }
 
   function setupRoutineFormBuilder() {
