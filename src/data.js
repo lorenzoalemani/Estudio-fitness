@@ -1190,24 +1190,35 @@ class GymStore {
       .replace(/\s+/g, ' ')
       .trim();
 
+    // Títulos a excluir (pruebas / no sirven como plantilla general)
+    const excluirTitulo = (t) => {
+      const n = normalize(t);
+      if (!n) return true;
+      if (n === 'mi rutina' || n.startsWith('mi rutina ')) return true;
+      if (n === 'rutina ppl' || n === 'ppl' || /\bppl\b/.test(n)) return true;
+      return false;
+    };
+
     (this.data.rutinas || []).forEach(r => {
       if (!r) return;
+      // Solo plantillas de profesor (no "Mis rutinas" del alumno)
+      if (r.profesorId == null) return;
       const dias = Array.isArray(r.dias) ? r.dias : [];
       if (!dias.length) return;
       const ejCount = dias.reduce((n, d) => n + ((d && Array.isArray(d.ejercicios)) ? d.ejercicios.length : 0), 0);
       if (ejCount === 0) return;
 
-      // Título: rutina.titulo, o si está vacío armar algo legible con los nombres de día
       let titulo = String(r.titulo || '').trim();
       if (!titulo) {
         titulo = dias.map(d => d && d.nombre).filter(Boolean).slice(0, 3).join(' / ') || 'Rutina sin título';
       }
+      if (excluirTitulo(titulo)) return;
+
       const key = normalize(titulo);
       if (!key) return;
 
       const prev = map.get(key);
-      // Preferir más ejercicios; a igualdad, preferir la que tenga profesorId (asignada)
-      const score = ejCount * 10 + (r.profesorId != null ? 1 : 0);
+      const score = ejCount;
       if (!prev || score >= prev._score) {
         map.set(key, { ...r, titulo, _score: score });
       }

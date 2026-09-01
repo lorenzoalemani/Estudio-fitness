@@ -94,9 +94,11 @@ document.addEventListener('DOMContentLoaded', () => {
       const togglePlant = e.target && e.target.closest && e.target.closest('#btnTogglePlantillas');
       if (togglePlant) {
         e.preventDefault();
+        e.stopPropagation();
         const panel = document.getElementById('plantillasPanel');
         if (panel) {
           panel.hidden = false;
+          panel.style.display = 'block';
           panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }
         return;
@@ -2630,7 +2632,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <button type="button" class="btn btn-primary" id="btnRutinaPersonalizada" style="width:100%; padding:14px">✏️ Rutina personalizada</button>
             <button type="button" class="btn btn-secondary" id="btnTogglePlantillas" style="width:100%; padding:14px">📋 Seleccionar rutina existente</button>
           </div>
-          <div id="plantillasPanel">
+          <div id="plantillasPanel" hidden>
             <h4 style="font-size:0.95rem; margin-bottom:10px">Rutinas disponibles</h4>
             <div class="plantillas-list">${lista}</div>
           </div>
@@ -2679,7 +2681,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <button type="button" class="btn btn-primary" id="btnRutinaPersonalizada" style="width:100%; padding:14px">✏️ Rutina personalizada</button>
             <button type="button" class="btn btn-secondary" id="btnTogglePlantillas" style="width:100%; padding:14px">📋 Seleccionar rutina existente</button>
           </div>
-          <div id="plantillasPanel">
+          <div id="plantillasPanel" hidden>
             <h4 style="font-size:0.95rem; margin-bottom:10px">Rutinas disponibles</h4>
             <div class="plantillas-list">${lista}</div>
           </div>
