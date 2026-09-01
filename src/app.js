@@ -95,7 +95,10 @@ document.addEventListener('DOMContentLoaded', () => {
       if (togglePlant) {
         e.preventDefault();
         const panel = document.getElementById('plantillasPanel');
-        if (panel) panel.hidden = !panel.hidden;
+        if (panel) {
+          panel.hidden = false;
+          panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
         return;
       }
       const usar = e.target && e.target.closest && e.target.closest('.btn-usar-plantilla');
@@ -2611,7 +2614,7 @@ document.addEventListener('DOMContentLoaded', () => {
           </div>
           <div class="plantilla-preview">${preview}</div>
         </div>`;
-    }).join('') : `<p class="stats-empty">No hay rutinas de profesor cargadas todavía. Creá una personalizada primero; después va a aparecer acá como plantilla.</p>`;
+    }).join('') : `<p class="stats-empty">No se encontraron rutinas con ejercicios en la app todavía. Cuando haya rutinas cargadas (Full Body, etc.) van a aparecer acá para duplicar.</p>`;
 
     return `
       <div class="modal-overlay">
@@ -2627,7 +2630,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <button type="button" class="btn btn-primary" id="btnRutinaPersonalizada" style="width:100%; padding:14px">✏️ Rutina personalizada</button>
             <button type="button" class="btn btn-secondary" id="btnTogglePlantillas" style="width:100%; padding:14px">📋 Seleccionar rutina existente</button>
           </div>
-          <div id="plantillasPanel" hidden>
+          <div id="plantillasPanel">
             <h4 style="font-size:0.95rem; margin-bottom:10px">Rutinas disponibles</h4>
             <div class="plantillas-list">${lista}</div>
           </div>
@@ -2660,7 +2663,7 @@ document.addEventListener('DOMContentLoaded', () => {
           </div>
           <div class="plantilla-preview">${preview}</div>
         </div>`;
-    }).join('') : `<p class="stats-empty">No hay rutinas de profesor cargadas todavía. Creá una personalizada primero; después va a aparecer acá como plantilla.</p>`;
+    }).join('') : `<p class="stats-empty">No se encontraron rutinas con ejercicios en la app todavía. Cuando haya rutinas cargadas (Full Body, etc.) van a aparecer acá para duplicar.</p>`;
 
     return `
       <div class="modal-overlay">
@@ -2676,7 +2679,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <button type="button" class="btn btn-primary" id="btnRutinaPersonalizada" style="width:100%; padding:14px">✏️ Rutina personalizada</button>
             <button type="button" class="btn btn-secondary" id="btnTogglePlantillas" style="width:100%; padding:14px">📋 Seleccionar rutina existente</button>
           </div>
-          <div id="plantillasPanel" hidden>
+          <div id="plantillasPanel">
             <h4 style="font-size:0.95rem; margin-bottom:10px">Rutinas disponibles</h4>
             <div class="plantillas-list">${lista}</div>
           </div>

@@ -1175,28 +1175,44 @@ class GymStore {
   }
 
   /**
-   * Plantillas de rutina para el profesor: rutinas creadas por profesor
-   * (profesorId != null), únicas por título. NO incluye "Mis rutinas" del alumno.
-   * Al asignar se CLONA (nuevo id); la plantilla original no se modifica.
+   * Plantillas para duplicar al asignar a un alumno.
+   * Toma TODAS las rutinas cargadas en memoria que tengan días + ejercicios
+   * (full body, pecho/espalda, etc.), únicas por título.
+   * Se elige la versión con más ejercicios por título.
+   * Al usar una plantilla se CLONA (nuevo id); la original no se modifica.
    */
   getPlantillasRutina() {
     const map = new Map();
+    const normalize = (s) => String(s || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
     (this.data.rutinas || []).forEach(r => {
-      if (!r || r.profesorId == null) return; // excluir rutinas propias del alumno
-      if (!Array.isArray(r.dias) || !r.dias.length) return;
-      const key = String(r.titulo || '')
-        .toLowerCase()
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .replace(/\s+/g, ' ')
-        .trim();
+      if (!r) return;
+      const dias = Array.isArray(r.dias) ? r.dias : [];
+      if (!dias.length) return;
+      const ejCount = dias.reduce((n, d) => n + ((d && Array.isArray(d.ejercicios)) ? d.ejercicios.length : 0), 0);
+      if (ejCount === 0) return;
+
+      // Título: rutina.titulo, o si está vacío armar algo legible con los nombres de día
+      let titulo = String(r.titulo || '').trim();
+      if (!titulo) {
+        titulo = dias.map(d => d && d.nombre).filter(Boolean).slice(0, 3).join(' / ') || 'Rutina sin título';
+      }
+      const key = normalize(titulo);
       if (!key) return;
+
       const prev = map.get(key);
-      const score = (r.dias || []).reduce((n, d) => n + ((d.ejercicios || []).length), 0);
+      // Preferir más ejercicios; a igualdad, preferir la que tenga profesorId (asignada)
+      const score = ejCount * 10 + (r.profesorId != null ? 1 : 0);
       if (!prev || score >= prev._score) {
-        map.set(key, { ...r, _score: score });
+        map.set(key, { ...r, titulo, _score: score });
       }
     });
+
     return Array.from(map.values())
       .map(({ _score, ...r }) => r)
       .sort((a, b) => String(a.titulo || '').localeCompare(String(b.titulo || ''), 'es'));
