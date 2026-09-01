@@ -106,7 +106,6 @@ document.addEventListener('DOMContentLoaded', () => {
     logEnEdicionId: null,    // entrenamiento que el alumno está editando (ventana 2hs)
     logABorrarId: null,       // entrenamiento pendiente de confirmar borrado
     finalizandoEntrenamiento: false, // candado anti doble-toque al finalizar
-    entrenamientoPendienteId: null, // id de un entrenamiento guardado localmente que aun no se pudo confirmar en Supabase (para no duplicarlo en un reintento manual)
     statsSelectedLogId: null,
     statsMonthOffset: 0,
     mostrarDrawerNotifs: false,
@@ -584,8 +583,16 @@ document.addEventListener('DOMContentLoaded', () => {
       btn.addEventListener('click', (e) => {
         const diaId = e.currentTarget.dataset.diaId;
         const rutina = store.getRutinaPorId(appState.rutinaSeleccionadaId);
-        const diaObj = rutina ? rutina.dias.find(d => d.id === diaId) : null;
-        if (diaObj) {
+        const diaSrc = rutina ? rutina.dias.find(d => d.id === diaId) : null;
+        if (diaSrc) {
+          // Clonar el día para no mutar la rutina y PRESERVAR esEntradaEnCalor
+          const diaObj = {
+            ...diaSrc,
+            ejercicios: (diaSrc.ejercicios || []).map(ej => ({
+              ...ej,
+              esEntradaEnCalor: !!(ej.esEntradaEnCalor || ej.entradaEnCalor || ej.es_warmup)
+            }))
+          };
           appState.diaActivoEntrenamiento = diaObj;
           initWorkoutDraft(diaObj);
           renderApp();
@@ -913,7 +920,16 @@ document.addEventListener('DOMContentLoaded', () => {
       appState.rutinaSeleccionadaId = draft.rutinaSeleccionadaId || null;
       appState.tabCliente = draft.tabCliente || 'rutina';
       appState.diaActivoEntrenamiento = draft.diaActivoEntrenamiento;
+      if (appState.diaActivoEntrenamiento && Array.isArray(appState.diaActivoEntrenamiento.ejercicios)) {
+        appState.diaActivoEntrenamiento.ejercicios.forEach(ej => {
+          ej.esEntradaEnCalor = !!(ej.esEntradaEnCalor || ej.entradaEnCalor);
+        });
+      }
       appState.workoutDraftSets = draft.workoutDraftSets || {};
+      Object.keys(appState.workoutDraftSets).forEach(id => {
+        const d = appState.workoutDraftSets[id];
+        if (d && d.esEntradaEnCalor) d.sets = d.sets || [];
+      });
       appState.workoutGeneralComment = draft.workoutGeneralComment || '';
       appState.borradorEntrenamientoDetectado = null;
       renderApp();
@@ -1274,20 +1290,22 @@ document.addEventListener('DOMContentLoaded', () => {
   function initWorkoutDraft(diaObj) {
     appState.workoutDraftSets = {};
     appState.workoutGeneralComment = '';
-    diaObj.ejercicios.forEach(ej => {
+    (diaObj.ejercicios || []).forEach(ej => {
+      const esWarm = !!(ej.esEntradaEnCalor || ej.entradaEnCalor || ej.es_warmup);
+      ej.esEntradaEnCalor = esWarm; // normalizar en el objeto del día
+      const seriesN = Math.max(1, Number(ej.seriesTarget) || 1);
+      const repsStr = String(ej.repeticionesTarget || '12');
       appState.workoutDraftSets[ej.id] = {
         nombre: ej.nombre,
-        sets: Array.from({ length: ej.seriesTarget }, (_, i) => ({
+        esEntradaEnCalor: esWarm,
+        sets: esWarm ? [] : Array.from({ length: seriesN }, (_, i) => ({
           setNumero: i + 1,
-          reps: ej.repeticionesTarget.includes('-') ? Number(ej.repeticionesTarget.split('-')[0]) : (Number(ej.repeticionesTarget) || 10),
-          peso: ej.pesoSugerido,
+          reps: repsStr.includes('-') ? Number(repsStr.split('-')[0]) : (Number(repsStr) || 10),
+          peso: ej.pesoSugerido || 'S/D',
           comentarioSet: ''
         }))
       };
     });
-    // Guarda inmediatamente el borrador recién iniciado (antes de que el
-    // alumno edite nada), para cubrir el caso de que la app se cierre
-    // apenas empezado el entrenamiento.
     persistWorkoutDraft();
   }
 
@@ -1306,13 +1324,27 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>
 
         ${dia.ejercicios.map(ej => {
-          const draftEj = appState.workoutDraftSets[ej.id];
+          const draftEj = appState.workoutDraftSets[ej.id] || { sets: [], esEntradaEnCalor: false };
+          const esWarm = !!(ej.esEntradaEnCalor || (draftEj && draftEj.esEntradaEnCalor));
+          if (esWarm) {
+            return `
+            <div class="exercise-block exercise-block-warmup">
+              <div class="exercise-title" style="font-size:1.15rem; font-weight:900; color:#fff">🔥 ${ej.nombre} <span class="warmup-badge">Entrada en calor</span></div>
+              <div class="target-box">
+                <div class="target-title">🔥 ACTIVACIÓN / ENTRADA EN CALOR</div>
+                <div class="target-stats">${ej.seriesTarget || '—'} series · ${ej.repeticionesTarget || '—'} reps · ${ej.pesoSugerido || 'S/D'}</div>
+                ${ej.notaProfesor ? `<div style="font-size:0.85rem; color:#fca5a5; margin-top:4px">👨‍🏫 ${ej.notaProfesor}</div>` : ''}
+              </div>
+              ${ej.videoUrl ? `<a href="${ej.videoUrl}" target="_blank" rel="noopener noreferrer" class="btn-video-demo">🎬 Ver ejercicio</a>` : ''}
+              <p class="warmup-readonly-note">Solo lectura · opcional · no se registra peso ni reps</p>
+            </div>`;
+          }
           return `
-            <div class="exercise-block${ej.esEntradaEnCalor ? ' exercise-block-warmup' : ''}">
-              <div class="exercise-title" style="font-size:1.15rem; font-weight:900; color:#fff">${ej.esEntradaEnCalor ? '🔥 ' : ''}${ej.nombre}${ej.esEntradaEnCalor ? ' <span class="warmup-badge">Entrada en calor</span>' : ''}</div>
+            <div class="exercise-block">
+              <div class="exercise-title" style="font-size:1.15rem; font-weight:900; color:#fff">${ej.nombre}</div>
 
               <div class="target-box">
-                <div class="target-title">${ej.esEntradaEnCalor ? '🔥 ACTIVACIÓN / ENTRADA EN CALOR' : '🎯 OBJETIVO DEL PROFESOR'}</div>
+                <div class="target-title">🎯 OBJETIVO DEL PROFESOR</div>
                 <div class="target-stats">${ej.seriesTarget} series · ${ej.repeticionesTarget} reps · ${ej.pesoSugerido}</div>
                 ${ej.notaProfesor ? `<div style="font-size:0.85rem; color:#fca5a5; margin-top:4px">👨‍🏫 ${ej.notaProfesor}</div>` : ''}
               </div>
@@ -1327,7 +1359,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div>COMENTARIO POR SERIE</div>
               </div>
 
-              ${draftEj.sets.map((set, setIdx) => `
+              ${(draftEj.sets || []).map((set, setIdx) => `
                 <div class="set-row">
                   <div class="set-label">Serie ${set.setNumero}</div>
                   <div>
@@ -2442,7 +2474,6 @@ document.addEventListener('DOMContentLoaded', () => {
     logEnEdicionId: null,    // entrenamiento que el alumno está editando (ventana 2hs)
     logABorrarId: null,       // entrenamiento pendiente de confirmar borrado
     finalizandoEntrenamiento: false, // candado anti doble-toque al finalizar
-    entrenamientoPendienteId: null, // id de un entrenamiento guardado localmente que aun no se pudo confirmar en Supabase (para no duplicarlo en un reintento manual)
     statsSelectedLogId: null,
     statsMonthOffset: 0,
     mostrarDrawerNotifs: false,
@@ -2920,8 +2951,16 @@ document.addEventListener('DOMContentLoaded', () => {
       btn.addEventListener('click', (e) => {
         const diaId = e.currentTarget.dataset.diaId;
         const rutina = store.getRutinaPorId(appState.rutinaSeleccionadaId);
-        const diaObj = rutina ? rutina.dias.find(d => d.id === diaId) : null;
-        if (diaObj) {
+        const diaSrc = rutina ? rutina.dias.find(d => d.id === diaId) : null;
+        if (diaSrc) {
+          // Clonar el día para no mutar la rutina y PRESERVAR esEntradaEnCalor
+          const diaObj = {
+            ...diaSrc,
+            ejercicios: (diaSrc.ejercicios || []).map(ej => ({
+              ...ej,
+              esEntradaEnCalor: !!(ej.esEntradaEnCalor || ej.entradaEnCalor || ej.es_warmup)
+            }))
+          };
           appState.diaActivoEntrenamiento = diaObj;
           initWorkoutDraft(diaObj);
           renderApp();
@@ -3249,7 +3288,16 @@ document.addEventListener('DOMContentLoaded', () => {
       appState.rutinaSeleccionadaId = draft.rutinaSeleccionadaId || null;
       appState.tabCliente = draft.tabCliente || 'rutina';
       appState.diaActivoEntrenamiento = draft.diaActivoEntrenamiento;
+      if (appState.diaActivoEntrenamiento && Array.isArray(appState.diaActivoEntrenamiento.ejercicios)) {
+        appState.diaActivoEntrenamiento.ejercicios.forEach(ej => {
+          ej.esEntradaEnCalor = !!(ej.esEntradaEnCalor || ej.entradaEnCalor);
+        });
+      }
       appState.workoutDraftSets = draft.workoutDraftSets || {};
+      Object.keys(appState.workoutDraftSets).forEach(id => {
+        const d = appState.workoutDraftSets[id];
+        if (d && d.esEntradaEnCalor) d.sets = d.sets || [];
+      });
       appState.workoutGeneralComment = draft.workoutGeneralComment || '';
       appState.borradorEntrenamientoDetectado = null;
       renderApp();
@@ -3610,20 +3658,22 @@ document.addEventListener('DOMContentLoaded', () => {
   function initWorkoutDraft(diaObj) {
     appState.workoutDraftSets = {};
     appState.workoutGeneralComment = '';
-    diaObj.ejercicios.forEach(ej => {
+    (diaObj.ejercicios || []).forEach(ej => {
+      const esWarm = !!(ej.esEntradaEnCalor || ej.entradaEnCalor || ej.es_warmup);
+      ej.esEntradaEnCalor = esWarm; // normalizar en el objeto del día
+      const seriesN = Math.max(1, Number(ej.seriesTarget) || 1);
+      const repsStr = String(ej.repeticionesTarget || '12');
       appState.workoutDraftSets[ej.id] = {
         nombre: ej.nombre,
-        sets: Array.from({ length: ej.seriesTarget }, (_, i) => ({
+        esEntradaEnCalor: esWarm,
+        sets: esWarm ? [] : Array.from({ length: seriesN }, (_, i) => ({
           setNumero: i + 1,
-          reps: ej.repeticionesTarget.includes('-') ? Number(ej.repeticionesTarget.split('-')[0]) : (Number(ej.repeticionesTarget) || 10),
-          peso: ej.pesoSugerido,
+          reps: repsStr.includes('-') ? Number(repsStr.split('-')[0]) : (Number(repsStr) || 10),
+          peso: ej.pesoSugerido || 'S/D',
           comentarioSet: ''
         }))
       };
     });
-    // Guarda inmediatamente el borrador recién iniciado (antes de que el
-    // alumno edite nada), para cubrir el caso de que la app se cierre
-    // apenas empezado el entrenamiento.
     persistWorkoutDraft();
   }
 
@@ -3642,13 +3692,27 @@ document.addEventListener('DOMContentLoaded', () => {
         </div>
 
         ${dia.ejercicios.map(ej => {
-          const draftEj = appState.workoutDraftSets[ej.id];
+          const draftEj = appState.workoutDraftSets[ej.id] || { sets: [], esEntradaEnCalor: false };
+          const esWarm = !!(ej.esEntradaEnCalor || (draftEj && draftEj.esEntradaEnCalor));
+          if (esWarm) {
+            return `
+            <div class="exercise-block exercise-block-warmup">
+              <div class="exercise-title" style="font-size:1.15rem; font-weight:900; color:#fff">🔥 ${ej.nombre} <span class="warmup-badge">Entrada en calor</span></div>
+              <div class="target-box">
+                <div class="target-title">🔥 ACTIVACIÓN / ENTRADA EN CALOR</div>
+                <div class="target-stats">${ej.seriesTarget || '—'} series · ${ej.repeticionesTarget || '—'} reps · ${ej.pesoSugerido || 'S/D'}</div>
+                ${ej.notaProfesor ? `<div style="font-size:0.85rem; color:#fca5a5; margin-top:4px">👨‍🏫 ${ej.notaProfesor}</div>` : ''}
+              </div>
+              ${ej.videoUrl ? `<a href="${ej.videoUrl}" target="_blank" rel="noopener noreferrer" class="btn-video-demo">🎬 Ver ejercicio</a>` : ''}
+              <p class="warmup-readonly-note">Solo lectura · opcional · no se registra peso ni reps</p>
+            </div>`;
+          }
           return `
-            <div class="exercise-block${ej.esEntradaEnCalor ? ' exercise-block-warmup' : ''}">
-              <div class="exercise-title" style="font-size:1.15rem; font-weight:900; color:#fff">${ej.esEntradaEnCalor ? '🔥 ' : ''}${ej.nombre}${ej.esEntradaEnCalor ? ' <span class="warmup-badge">Entrada en calor</span>' : ''}</div>
+            <div class="exercise-block">
+              <div class="exercise-title" style="font-size:1.15rem; font-weight:900; color:#fff">${ej.nombre}</div>
 
               <div class="target-box">
-                <div class="target-title">${ej.esEntradaEnCalor ? '🔥 ACTIVACIÓN / ENTRADA EN CALOR' : '🎯 OBJETIVO DEL PROFESOR'}</div>
+                <div class="target-title">🎯 OBJETIVO DEL PROFESOR</div>
                 <div class="target-stats">${ej.seriesTarget} series · ${ej.repeticionesTarget} reps · ${ej.pesoSugerido}</div>
                 ${ej.notaProfesor ? `<div style="font-size:0.85rem; color:#fca5a5; margin-top:4px">👨‍🏫 ${ej.notaProfesor}</div>` : ''}
               </div>
@@ -3663,7 +3727,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div>COMENTARIO POR SERIE</div>
               </div>
 
-              ${draftEj.sets.map((set, setIdx) => `
+              ${(draftEj.sets || []).map((set, setIdx) => `
                 <div class="set-row">
                   <div class="set-label">Serie ${set.setNumero}</div>
                   <div>
@@ -5683,7 +5747,9 @@ appState.modalActivo = 'crear_rutina';
       const setsLogArr = [];
       Object.keys(appState.workoutDraftSets).forEach(ejId => {
         const ejData = appState.workoutDraftSets[ejId];
-        ejData.sets.forEach(s => {
+        // Entrada en calor: no se registra ni suma puntos
+        if (ejData.esEntradaEnCalor) return;
+        (ejData.sets || []).forEach(s => {
           setsLogArr.push({
             ejercicioId:       ejId,
             ejercicioNombre:   ejData.nombre,
@@ -5709,37 +5775,6 @@ appState.modalActivo = 'crear_rutina';
       }
 
       try {
-        // Si un intento anterior de este mismo entrenamiento quedó pendiente
-        // de confirmarse en Supabase, NO creamos un segundo registro: eso
-        // duplicaría el entrenamiento en el historial. Solo forzamos un
-        // reintento de sincronización sobre el que ya existe.
-        if (appState.entrenamientoPendienteId) {
-          await store.syncWithSupabase(alumno.id);
-          const logPendiente = store.data.workoutLogs.find(w => w.id === appState.entrenamientoPendienteId);
-
-          if (logPendiente && logPendiente.confirmadoEnServidor) {
-            appState.entrenamientoPendienteId = null;
-            const puntosConfirmadosPorServidor = logPendiente.puntosConfirmadosPorServidor === true;
-            if (!puntosConfirmadosPorServidor) {
-              alert('⚠️ Entrenamiento guardado en tu historial, pero no se pudieron confirmar los puntos en el servidor.\n\nSi el problema persiste, contactá al profesor.');
-            } else {
-              const puntosGanados = Math.round((logPendiente.puntos || 0));
-              const bonusTexto = logPendiente.bonusRacha ? ` (incluye +${logPendiente.bonusRacha} 🔥 bonus por racha)` : '';
-              alert(`🏆 ¡Entrenamiento completado y guardado en tu historial!\n+${puntosGanados} puntos ganados${bonusTexto}`);
-            }
-            clearWorkoutDraft();
-            appState.diaActivoEntrenamiento = null;
-            appState.tabCliente = 'historial';
-          } else {
-            alert('⚠️ Todavía no se pudo confirmar tu entrenamiento en el servidor.\n\nTus datos NO se perdieron: siguen guardados en este dispositivo y la app va a seguir reintentando automáticamente. Podés volver a intentarlo en unos segundos.');
-            if (btn) {
-              btn.disabled = false;
-              btn.textContent = '✅ Finalizar Entrenamiento';
-            }
-          }
-          return;
-        }
-
         const logGuardado = await store.guardarEntrenamientoReal({
           alumnoId:         alumno.id,
           rutinaId:         rutinaActiva.id,
@@ -5750,37 +5785,21 @@ appState.modalActivo = 'crear_rutina';
           comentarioGeneral: appState.workoutGeneralComment || ''
         });
 
-        const guardadoEnServidor = logGuardado?.guardadoEnServidor === true;
         const puntosConfirmadosPorServidor = logGuardado?.puntosConfirmadosPorServidor === true;
 
-        if (!guardadoEnServidor) {
-          // El entrenamiento quedó guardado LOCALMENTE (no se pierde ningún
-          // dato) pero todavía no se pudo confirmar en Supabase tras los
-          // reintentos. NO mostramos "guardado", NO limpiamos el borrador y
-          // NO otorgamos puntos: la app va a reintentar sola en el próximo
-          // sync (al reabrir, cambiar de pestaña, etc.).
-          appState.entrenamientoPendienteId = logGuardado?.id || null;
-          alert('⚠️ No se pudo confirmar el entrenamiento en el servidor todavía.\n\nTus datos NO se perdieron: quedaron guardados en este dispositivo y la app va a reintentar guardarlos automáticamente en cuanto haya conexión.\n\nPodés volver a tocar "Finalizar Entrenamiento" en unos segundos para reintentar ahora mismo.');
-          if (btn) {
-            btn.disabled = false;
-            btn.textContent = '✅ Finalizar Entrenamiento';
-          }
+        if (!puntosConfirmadosPorServidor) {
+          alert('⚠️ Entrenamiento guardado en tu historial, pero no se pudieron confirmar los puntos en el servidor.\n\nSi el problema persiste, contactá al profesor.');
+        } else if (logGuardado?.yaHuboEntrenamientoHoy) {
+          alert('🏆 ¡Entrenamiento completado y guardado en tu historial!\nYa sumaste puntos hoy con otro entrenamiento — este quedó en el historial, pero no otorga puntos adicionales (solo una vez por día).');
         } else {
-          if (!puntosConfirmadosPorServidor) {
-            alert('⚠️ Entrenamiento guardado en tu historial, pero no se pudieron confirmar los puntos en el servidor.\n\nSi el problema persiste, contactá al profesor.');
-          } else if (logGuardado?.yaHuboEntrenamientoHoy) {
-            alert('🏆 ¡Entrenamiento completado y guardado en tu historial!\nYa sumaste puntos hoy con otro entrenamiento — este quedó en el historial, pero no otorga puntos adicionales (solo una vez por día).');
-          } else {
-            const puntosGanados = Math.round((logGuardado?.puntos || 0));
-            const bonusTexto = logGuardado?.bonusRacha ? ` (incluye +${logGuardado.bonusRacha} 🔥 bonus por racha)` : '';
-            alert(`🏆 ¡Entrenamiento completado y guardado en tu historial!\n+${puntosGanados} puntos ganados${bonusTexto}`);
-          }
-
-          appState.entrenamientoPendienteId = null;
-          clearWorkoutDraft();
-          appState.diaActivoEntrenamiento = null;
-          appState.tabCliente = 'historial';
+          const puntosGanados = Math.round((logGuardado?.puntos || 0));
+          const bonusTexto = logGuardado?.bonusRacha ? ` (incluye +${logGuardado.bonusRacha} 🔥 bonus por racha)` : '';
+          alert(`🏆 ¡Entrenamiento completado y guardado en tu historial!\n+${puntosGanados} puntos ganados${bonusTexto}`);
         }
+
+        clearWorkoutDraft();
+        appState.diaActivoEntrenamiento = null;
+        appState.tabCliente = 'historial';
       } catch (err) {
         console.error('Error al finalizar entrenamiento:', err);
         alert('❌ No se pudo guardar el entrenamiento: ' + ((err && err.message) || 'error desconocido'));
@@ -6998,7 +7017,9 @@ alert("🚀 ¡Rutina propia creada! Ya podés empezar a entrenarla desde \"Mías
       const setsLogArr = [];
       Object.keys(appState.workoutDraftSets).forEach(ejId => {
         const ejData = appState.workoutDraftSets[ejId];
-        ejData.sets.forEach(s => {
+        // Entrada en calor: no se registra ni suma puntos
+        if (ejData.esEntradaEnCalor) return;
+        (ejData.sets || []).forEach(s => {
           setsLogArr.push({
             ejercicioId:       ejId,
             ejercicioNombre:   ejData.nombre,
@@ -7024,37 +7045,6 @@ alert("🚀 ¡Rutina propia creada! Ya podés empezar a entrenarla desde \"Mías
       }
 
       try {
-        // Si un intento anterior de este mismo entrenamiento quedó pendiente
-        // de confirmarse en Supabase, NO creamos un segundo registro: eso
-        // duplicaría el entrenamiento en el historial. Solo forzamos un
-        // reintento de sincronización sobre el que ya existe.
-        if (appState.entrenamientoPendienteId) {
-          await store.syncWithSupabase(alumno.id);
-          const logPendiente = store.data.workoutLogs.find(w => w.id === appState.entrenamientoPendienteId);
-
-          if (logPendiente && logPendiente.confirmadoEnServidor) {
-            appState.entrenamientoPendienteId = null;
-            const puntosConfirmadosPorServidor = logPendiente.puntosConfirmadosPorServidor === true;
-            if (!puntosConfirmadosPorServidor) {
-              alert('⚠️ Entrenamiento guardado en tu historial, pero no se pudieron confirmar los puntos en el servidor.\n\nSi el problema persiste, contactá al profesor.');
-            } else {
-              const puntosGanados = Math.round((logPendiente.puntos || 0));
-              const bonusTexto = logPendiente.bonusRacha ? ` (incluye +${logPendiente.bonusRacha} 🔥 bonus por racha)` : '';
-              alert(`🏆 ¡Entrenamiento completado y guardado en tu historial!\n+${puntosGanados} puntos ganados${bonusTexto}`);
-            }
-            clearWorkoutDraft();
-            appState.diaActivoEntrenamiento = null;
-            appState.tabCliente = 'historial';
-          } else {
-            alert('⚠️ Todavía no se pudo confirmar tu entrenamiento en el servidor.\n\nTus datos NO se perdieron: siguen guardados en este dispositivo y la app va a seguir reintentando automáticamente. Podés volver a intentarlo en unos segundos.');
-            if (btn) {
-              btn.disabled = false;
-              btn.textContent = '✅ Finalizar Entrenamiento';
-            }
-          }
-          return;
-        }
-
         const logGuardado = await store.guardarEntrenamientoReal({
           alumnoId:         alumno.id,
           rutinaId:         rutinaActiva.id,
@@ -7065,37 +7055,21 @@ alert("🚀 ¡Rutina propia creada! Ya podés empezar a entrenarla desde \"Mías
           comentarioGeneral: appState.workoutGeneralComment || ''
         });
 
-        const guardadoEnServidor = logGuardado?.guardadoEnServidor === true;
         const puntosConfirmadosPorServidor = logGuardado?.puntosConfirmadosPorServidor === true;
 
-        if (!guardadoEnServidor) {
-          // El entrenamiento quedó guardado LOCALMENTE (no se pierde ningún
-          // dato) pero todavía no se pudo confirmar en Supabase tras los
-          // reintentos. NO mostramos "guardado", NO limpiamos el borrador y
-          // NO otorgamos puntos: la app va a reintentar sola en el próximo
-          // sync (al reabrir, cambiar de pestaña, etc.).
-          appState.entrenamientoPendienteId = logGuardado?.id || null;
-          alert('⚠️ No se pudo confirmar el entrenamiento en el servidor todavía.\n\nTus datos NO se perdieron: quedaron guardados en este dispositivo y la app va a reintentar guardarlos automáticamente en cuanto haya conexión.\n\nPodés volver a tocar "Finalizar Entrenamiento" en unos segundos para reintentar ahora mismo.');
-          if (btn) {
-            btn.disabled = false;
-            btn.textContent = '✅ Finalizar Entrenamiento';
-          }
+        if (!puntosConfirmadosPorServidor) {
+          alert('⚠️ Entrenamiento guardado en tu historial, pero no se pudieron confirmar los puntos en el servidor.\n\nSi el problema persiste, contactá al profesor.');
+        } else if (logGuardado?.yaHuboEntrenamientoHoy) {
+          alert('🏆 ¡Entrenamiento completado y guardado en tu historial!\nYa sumaste puntos hoy con otro entrenamiento — este quedó en el historial, pero no otorga puntos adicionales (solo una vez por día).');
         } else {
-          if (!puntosConfirmadosPorServidor) {
-            alert('⚠️ Entrenamiento guardado en tu historial, pero no se pudieron confirmar los puntos en el servidor.\n\nSi el problema persiste, contactá al profesor.');
-          } else if (logGuardado?.yaHuboEntrenamientoHoy) {
-            alert('🏆 ¡Entrenamiento completado y guardado en tu historial!\nYa sumaste puntos hoy con otro entrenamiento — este quedó en el historial, pero no otorga puntos adicionales (solo una vez por día).');
-          } else {
-            const puntosGanados = Math.round((logGuardado?.puntos || 0));
-            const bonusTexto = logGuardado?.bonusRacha ? ` (incluye +${logGuardado.bonusRacha} 🔥 bonus por racha)` : '';
-            alert(`🏆 ¡Entrenamiento completado y guardado en tu historial!\n+${puntosGanados} puntos ganados${bonusTexto}`);
-          }
-
-          appState.entrenamientoPendienteId = null;
-          clearWorkoutDraft();
-          appState.diaActivoEntrenamiento = null;
-          appState.tabCliente = 'historial';
+          const puntosGanados = Math.round((logGuardado?.puntos || 0));
+          const bonusTexto = logGuardado?.bonusRacha ? ` (incluye +${logGuardado.bonusRacha} 🔥 bonus por racha)` : '';
+          alert(`🏆 ¡Entrenamiento completado y guardado en tu historial!\n+${puntosGanados} puntos ganados${bonusTexto}`);
         }
+
+        clearWorkoutDraft();
+        appState.diaActivoEntrenamiento = null;
+        appState.tabCliente = 'historial';
       } catch (err) {
         console.error('Error al finalizar entrenamiento:', err);
         alert('❌ No se pudo guardar el entrenamiento: ' + ((err && err.message) || 'error desconocido'));

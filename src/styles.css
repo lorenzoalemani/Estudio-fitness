@@ -1434,3 +1434,15 @@ body {
   border-radius: 999px;
   vertical-align: middle;
 }
+
+
+.warmup-readonly-note {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 0.82rem;
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.1);
+  border: 1px dashed rgba(251, 191, 36, 0.35);
+  text-align: center;
+}
