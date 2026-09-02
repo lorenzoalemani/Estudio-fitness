@@ -2958,8 +2958,17 @@ document.addEventListener('DOMContentLoaded', () => {
   function resolverUrlMediaEjercicio(ejOUrl, gifUrlOpcional) {
     if (ejOUrl && typeof ejOUrl === 'object') {
       const u = ejOUrl.videoUrl || ejOUrl.video_url || '';
+      // 1) Ya tiene GIF persistido en el ejercicio de la rutina
       if (isGifMediaUrl(u)) return u;
       if (ejOUrl.gifUrl && isGifMediaUrl(ejOUrl.gifUrl)) return ejOUrl.gifUrl;
+      // 2) Rutinas viejas: videoUrl es YouTube (o vacío) → buscar GIF en catálogo por nombre (solo display)
+      if (typeof buscarCatalogoPorNombre === 'function' && ejOUrl.nombre) {
+        try {
+          const match = buscarCatalogoPorNombre(ejOUrl.nombre);
+          if (match && match.gifUrl && isGifMediaUrl(match.gifUrl)) return match.gifUrl;
+        } catch (_) { /* no romper render */ }
+      }
+      // 3) Fallback: YouTube / link actual o vacío
       return u || '';
     }
     const u = ejOUrl || '';
@@ -4243,8 +4252,17 @@ document.addEventListener('DOMContentLoaded', () => {
   function resolverUrlMediaEjercicio(ejOUrl, gifUrlOpcional) {
     if (ejOUrl && typeof ejOUrl === 'object') {
       const u = ejOUrl.videoUrl || ejOUrl.video_url || '';
+      // 1) Ya tiene GIF persistido en el ejercicio de la rutina
       if (isGifMediaUrl(u)) return u;
       if (ejOUrl.gifUrl && isGifMediaUrl(ejOUrl.gifUrl)) return ejOUrl.gifUrl;
+      // 2) Rutinas viejas: videoUrl es YouTube (o vacío) → buscar GIF en catálogo por nombre (solo display)
+      if (typeof buscarCatalogoPorNombre === 'function' && ejOUrl.nombre) {
+        try {
+          const match = buscarCatalogoPorNombre(ejOUrl.nombre);
+          if (match && match.gifUrl && isGifMediaUrl(match.gifUrl)) return match.gifUrl;
+        } catch (_) { /* no romper render */ }
+      }
+      // 3) Fallback: YouTube / link actual o vacío
       return u || '';
     }
     const u = ejOUrl || '';
