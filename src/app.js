@@ -1309,7 +1309,7 @@ document.addEventListener('DOMContentLoaded', () => {
               </div>
             ` : ''}
           </div>
-          ${ej.videoUrl ? `<a href="${ej.videoUrl}" target="_blank" rel="noopener noreferrer" class="btn-video-demo">🎬 Ver ejercicio</a>` : ''}
+          ${typeof renderExerciseMediaHtml === 'function' ? renderExerciseMediaHtml(ej) : (ej.videoUrl ? `<a href="${ej.videoUrl}" target="_blank" rel="noopener noreferrer" class="btn-video-demo">🎬 Ver ejercicio</a>` : '')}
         </div>
       `).join('')}
 
@@ -1432,7 +1432,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="target-stats">${ej.seriesTarget || '—'} series · ${ej.repeticionesTarget || '—'} reps · ${ej.pesoSugerido || 'S/D'}</div>
                 ${ej.notaProfesor ? `<div style="font-size:0.85rem; color:#fca5a5; margin-top:4px">👨‍🏫 ${ej.notaProfesor}</div>` : ''}
               </div>
-              ${ej.videoUrl ? `<a href="${ej.videoUrl}" target="_blank" rel="noopener noreferrer" class="btn-video-demo">🎬 Ver ejercicio</a>` : ''}
+              ${typeof renderExerciseMediaHtml === 'function' ? renderExerciseMediaHtml(ej) : (ej.videoUrl ? `<a href="${ej.videoUrl}" target="_blank" rel="noopener noreferrer" class="btn-video-demo">🎬 Ver ejercicio</a>` : '')}
               <p class="warmup-readonly-note">Solo lectura · opcional · no se registra peso ni reps</p>
             </div>`;
           }
@@ -1445,7 +1445,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div class="target-stats">${ej.seriesTarget} series · ${ej.repeticionesTarget} reps · ${ej.pesoSugerido}</div>
                 ${ej.notaProfesor ? `<div style="font-size:0.85rem; color:#fca5a5; margin-top:4px">👨‍🏫 ${ej.notaProfesor}</div>` : ''}
               </div>
-              ${ej.videoUrl ? `<a href="${ej.videoUrl}" target="_blank" rel="noopener noreferrer" class="btn-video-demo">🎬 Ver ejercicio</a>` : ''}
+              ${typeof renderExerciseMediaHtml === 'function' ? renderExerciseMediaHtml(ej) : (ej.videoUrl ? `<a href="${ej.videoUrl}" target="_blank" rel="noopener noreferrer" class="btn-video-demo">🎬 Ver ejercicio</a>` : '')}
 
               <h4 style="font-size:0.8rem; text-transform:uppercase; color:var(--text-gray); margin-bottom:8px">✏️ REGISTRO REAL POR SERIE:</h4>
 
@@ -2822,7 +2822,7 @@ document.addEventListener('DOMContentLoaded', () => {
     { nombre: "Apertura con empuje en banco plano", videoUrl: "https://www.youtube.com/shorts/Fc1UgcryhrA", alias: ["Apertura con empuje en banco plano", "apertura con empuje en banco plano"] },
     { nombre: "Apertura en banco inclinado", videoUrl: "https://www.youtube.com/shorts/CQx4FhzelMU", alias: ["Apertura en banco inclinado", "apertura en banco inclinado"] },
     { nombre: "Apertura en banco plano", videoUrl: "https://www.youtube.com/shorts/26TsSvfg28U", alias: ["Apertura en banco plano", "apertura en banco plano"] },
-    { nombre: "Apertura en polea", videoUrl: "https://www.youtube.com/shorts/QEW6RO0O-ak", alias: ["Apertura en polea", "apertura en polea"] },
+    { nombre: "Apertura en polea", videoUrl: "https://www.youtube.com/shorts/QEW6RO0O-ak", gifUrl: "https://static.exercisedb.dev/media/0CXGHya.gif", alias: ["Apertura en polea", "apertura en polea"] },
     { nombre: "Arranque a 1 brazo", videoUrl: "https://www.youtube.com/shorts/IVIrE_x5FtE", alias: ["Arranque a 1 brazo", "arranque a 1 brazo"] },
     { nombre: "Arranque con barra", videoUrl: "https://www.youtube.com/shorts/-7mUZ2RFAw4", alias: ["Arranque con barra", "arranque con barra"] },
     { nombre: "Biceps con barra", videoUrl: "https://www.youtube.com/shorts/B3Feq30xwpo", alias: ["Biceps con barra", "biceps con barra", "bíceps con barra"] },
@@ -2835,7 +2835,7 @@ document.addEventListener('DOMContentLoaded', () => {
     { nombre: "Biceps martillo", videoUrl: "https://www.youtube.com/shorts/QdEY-VZcPMU", alias: ["Biceps martillo", "biceps martillo", "bíceps martillo"] },
     { nombre: "Bicho muerto", videoUrl: "https://www.youtube.com/shorts/_o23Ghklahc", alias: ["Bicho muerto", "bicho muerto"] },
     { nombre: "Bisagras oblicuas", videoUrl: "https://www.youtube.com/shorts/EExl_U2GGEk", alias: ["Bisagras oblicuas", "bisagras oblicuas"] },
-    { nombre: "Camilla de isquios", videoUrl: "https://www.youtube.com/shorts/B6t8MvbTtew", alias: ["Camilla de isquios", "Camilla isquios", "camilla de isquios", "camilla isquios"] },
+    { nombre: "Camilla de isquios", videoUrl: "https://www.youtube.com/shorts/B6t8MvbTtew", gifUrl: "https://static.exercisedb.dev/media/17lJ1kr.gif", alias: ["Camilla de isquios", "Camilla isquios", "camilla de isquios", "camilla isquios"] },
     { nombre: "Camilla de isquios 1 pp", videoUrl: "https://www.youtube.com/shorts/Ix7wiKrC7bQ", alias: ["Camilla de isquios 1 pierna", "Camilla de isquios 1 pp", "Camilla de isquios a un pie", "Camilla de isquios unilateral", "Camilla isquios 1 pp", "camilla de isquios 1 pierna", "camilla de isquios 1 pp", "camilla de isquios a un pie", "camilla de isquios unilateral", "camilla isquios 1 pp"] },
     { nombre: "Cargada", videoUrl: "https://www.youtube.com/shorts/7KMYH9gyeEM", alias: ["Cargada", "cargada"] },
     { nombre: "Cargada + segundo tiempo", videoUrl: "https://www.youtube.com/shorts/MrG8DIttWVA", alias: ["Cargada + segundo tiempo", "cargada + segundo tiempo"] },
@@ -2926,7 +2926,7 @@ document.addEventListener('DOMContentLoaded', () => {
     { nombre: "Wall ball", videoUrl: "https://www.youtube.com/shorts/SDT1KrcO8ac", alias: ["Wall ball", "wall ball", "wallball", "wall balls"] },
     { nombre: "Desplazamiento lateral con banda elastica", videoUrl: "https://www.youtube.com/shorts/N28Hpdezg7Q", alias: ["Desplazamiento lateral con banda elastica", "Desplazamiento lateral con banda elástica", "desplazamiento lateral con banda elastica", "desplazamiento lateral con banda elástica", "desplazamiento lateral banda", "lateral band walk"] },
     { nombre: "Sit up", videoUrl: "https://www.youtube.com/shorts/V3MFEeDYYaE", alias: ["Sit up", "sit up", "sit-up", "situps", "sit ups"] },
-    { nombre: "Burpee", videoUrl: "https://www.youtube.com/shorts/EkK3oVBA__Q", alias: ["Burpee", "burpee", "burpi", "burpees"] },
+    { nombre: "Burpee", videoUrl: "https://www.youtube.com/shorts/EkK3oVBA__Q", gifUrl: "https://static.exercisedb.dev/media/0JtKWum.gif", alias: ["Burpee", "burpee", "burpi", "burpees"] },
     { nombre: "Medio burpee", videoUrl: "https://www.youtube.com/shorts/FH0hjFVDhu8", alias: ["Medio burpee", "medio burpee", "medio burpi", "half burpee"] },
     { nombre: "Burpee con press", videoUrl: "https://www.youtube.com/shorts/2_UZ-E5qHUA", alias: ["Burpee con press", "burpee con press", "burpi con press", "burpee press"] },
     { nombre: "Press pallof", videoUrl: "https://www.youtube.com/shorts/iNn_sNA6TbU", alias: ["Press pallof", "press pallof", "pallof press", "press de pallof"] },
@@ -2942,14 +2942,59 @@ document.addEventListener('DOMContentLoaded', () => {
       .replace(/\s+/g, ' ');
   }
 
-  function buscarVideoPorNombreEjercicio(nombre) {
+  /** true si la URL es un GIF de ExerciseDB (u otro .gif) para mostrar inline */
+  function isGifMediaUrl(url) {
+    if (!url) return false;
+    const u = String(url).toLowerCase();
+    return u.includes('static.exercisedb.dev') || /\.gif(\?|$)/.test(u);
+  }
+
+  /**
+   * Media prioritaria del ejercicio:
+   * 1) GIF ExerciseDB (videoUrl ya es gif, o gifUrl del catálogo)
+   * 2) YouTube / link actual
+   * 3) nada
+   */
+  function resolverUrlMediaEjercicio(ejOUrl, gifUrlOpcional) {
+    if (ejOUrl && typeof ejOUrl === 'object') {
+      const u = ejOUrl.videoUrl || ejOUrl.video_url || '';
+      if (isGifMediaUrl(u)) return u;
+      if (ejOUrl.gifUrl && isGifMediaUrl(ejOUrl.gifUrl)) return ejOUrl.gifUrl;
+      return u || '';
+    }
+    const u = ejOUrl || '';
+    if (isGifMediaUrl(u)) return u;
+    if (gifUrlOpcional && isGifMediaUrl(gifUrlOpcional)) return gifUrlOpcional;
+    return u || '';
+  }
+
+  function renderExerciseMediaHtml(ej) {
+    const url = resolverUrlMediaEjercicio(ej);
+    if (!url) return '';
+    if (isGifMediaUrl(url)) {
+      const alt = String(ej && ej.nombre ? ej.nombre : 'ejercicio')
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+      const src = String(url).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+      return `<div class="exercise-gif-wrap"><img class="exercise-gif-demo" src="${src}" alt="Demostración: ${alt}" loading="lazy" decoding="async"></div>`;
+    }
+    const href = String(url).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+    return `<a href="${href}" target="_blank" rel="noopener noreferrer" class="btn-video-demo">🎬 Ver ejercicio</a>`;
+  }
+
+  function buscarCatalogoPorNombre(nombre) {
     const norm = normalizarNombreEjercicio(nombre);
     if (!norm) return null;
-    const match = CATALOGO_VIDEOS_EJERCICIOS.find(item =>
+    return CATALOGO_VIDEOS_EJERCICIOS.find(item =>
       item.alias.some(a => normalizarNombreEjercicio(a) === norm) ||
       normalizarNombreEjercicio(item.nombre) === norm
-    );
-    return match ? match.videoUrl : null;
+    ) || null;
+  }
+
+  function buscarVideoPorNombreEjercicio(nombre) {
+    const match = buscarCatalogoPorNombre(nombre);
+    if (!match) return null;
+    // Prioridad: GIF ExerciseDB del catálogo, si no YouTube
+    return match.gifUrl || match.videoUrl || null;
   }
 
   function buscarEjerciciosSugeridos(query, limit = 12) {
@@ -2978,8 +3023,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const seen = new Set();
     const out = [];
     for (const s of scored) {
-      if (seen.has(s.videoUrl)) continue;
-      seen.add(s.videoUrl);
+      const key = normalizarNombreEjercicio(s.nombre) || s.videoUrl;
+      if (seen.has(key)) continue;
+      seen.add(key);
       out.push(s);
       if (out.length >= limit) break;
     }
@@ -3013,7 +3059,8 @@ document.addEventListener('DOMContentLoaded', () => {
     box.dataset.ejIdx = String(ejIdx);
     box.innerHTML = sugeridos.map((s, i) => {
       const nom = String(s.nombre).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
-      const url = String(s.videoUrl).replace(/&/g,'&amp;').replace(/"/g,'&quot;');
+      const mediaUrl = s.gifUrl || s.videoUrl || '';
+      const url = String(mediaUrl).replace(/&/g,'&amp;').replace(/"/g,'&quot;');
       return `<button type="button" class="ej-suggest-item" data-suggest-idx="${i}" data-nombre="${nom}" data-url="${url}"><span class="ej-suggest-name">${nom}</span></button>`;
     }).join('');
     box.hidden = false;
@@ -4060,7 +4107,7 @@ document.addEventListener('DOMContentLoaded', () => {
     { nombre: "Apertura con empuje en banco plano", videoUrl: "https://www.youtube.com/shorts/Fc1UgcryhrA", alias: ["Apertura con empuje en banco plano", "apertura con empuje en banco plano"] },
     { nombre: "Apertura en banco inclinado", videoUrl: "https://www.youtube.com/shorts/CQx4FhzelMU", alias: ["Apertura en banco inclinado", "apertura en banco inclinado"] },
     { nombre: "Apertura en banco plano", videoUrl: "https://www.youtube.com/shorts/26TsSvfg28U", alias: ["Apertura en banco plano", "apertura en banco plano"] },
-    { nombre: "Apertura en polea", videoUrl: "https://www.youtube.com/shorts/QEW6RO0O-ak", alias: ["Apertura en polea", "apertura en polea"] },
+    { nombre: "Apertura en polea", videoUrl: "https://www.youtube.com/shorts/QEW6RO0O-ak", gifUrl: "https://static.exercisedb.dev/media/0CXGHya.gif", alias: ["Apertura en polea", "apertura en polea"] },
     { nombre: "Arranque a 1 brazo", videoUrl: "https://www.youtube.com/shorts/IVIrE_x5FtE", alias: ["Arranque a 1 brazo", "arranque a 1 brazo"] },
     { nombre: "Arranque con barra", videoUrl: "https://www.youtube.com/shorts/-7mUZ2RFAw4", alias: ["Arranque con barra", "arranque con barra"] },
     { nombre: "Biceps con barra", videoUrl: "https://www.youtube.com/shorts/B3Feq30xwpo", alias: ["Biceps con barra", "biceps con barra", "bíceps con barra"] },
@@ -4073,7 +4120,7 @@ document.addEventListener('DOMContentLoaded', () => {
     { nombre: "Biceps martillo", videoUrl: "https://www.youtube.com/shorts/QdEY-VZcPMU", alias: ["Biceps martillo", "biceps martillo", "bíceps martillo"] },
     { nombre: "Bicho muerto", videoUrl: "https://www.youtube.com/shorts/_o23Ghklahc", alias: ["Bicho muerto", "bicho muerto"] },
     { nombre: "Bisagras oblicuas", videoUrl: "https://www.youtube.com/shorts/EExl_U2GGEk", alias: ["Bisagras oblicuas", "bisagras oblicuas"] },
-    { nombre: "Camilla de isquios", videoUrl: "https://www.youtube.com/shorts/B6t8MvbTtew", alias: ["Camilla de isquios", "Camilla isquios", "camilla de isquios", "camilla isquios"] },
+    { nombre: "Camilla de isquios", videoUrl: "https://www.youtube.com/shorts/B6t8MvbTtew", gifUrl: "https://static.exercisedb.dev/media/17lJ1kr.gif", alias: ["Camilla de isquios", "Camilla isquios", "camilla de isquios", "camilla isquios"] },
     { nombre: "Camilla de isquios 1 pp", videoUrl: "https://www.youtube.com/shorts/Ix7wiKrC7bQ", alias: ["Camilla de isquios 1 pierna", "Camilla de isquios 1 pp", "Camilla de isquios a un pie", "Camilla de isquios unilateral", "Camilla isquios 1 pp", "camilla de isquios 1 pierna", "camilla de isquios 1 pp", "camilla de isquios a un pie", "camilla de isquios unilateral", "camilla isquios 1 pp"] },
     { nombre: "Cargada", videoUrl: "https://www.youtube.com/shorts/7KMYH9gyeEM", alias: ["Cargada", "cargada"] },
     { nombre: "Cargada + segundo tiempo", videoUrl: "https://www.youtube.com/shorts/MrG8DIttWVA", alias: ["Cargada + segundo tiempo", "cargada + segundo tiempo"] },
@@ -4164,7 +4211,7 @@ document.addEventListener('DOMContentLoaded', () => {
     { nombre: "Wall ball", videoUrl: "https://www.youtube.com/shorts/SDT1KrcO8ac", alias: ["Wall ball", "wall ball", "wallball", "wall balls"] },
     { nombre: "Desplazamiento lateral con banda elastica", videoUrl: "https://www.youtube.com/shorts/N28Hpdezg7Q", alias: ["Desplazamiento lateral con banda elastica", "Desplazamiento lateral con banda elástica", "desplazamiento lateral con banda elastica", "desplazamiento lateral con banda elástica", "desplazamiento lateral banda", "lateral band walk"] },
     { nombre: "Sit up", videoUrl: "https://www.youtube.com/shorts/V3MFEeDYYaE", alias: ["Sit up", "sit up", "sit-up", "situps", "sit ups"] },
-    { nombre: "Burpee", videoUrl: "https://www.youtube.com/shorts/EkK3oVBA__Q", alias: ["Burpee", "burpee", "burpi", "burpees"] },
+    { nombre: "Burpee", videoUrl: "https://www.youtube.com/shorts/EkK3oVBA__Q", gifUrl: "https://static.exercisedb.dev/media/0JtKWum.gif", alias: ["Burpee", "burpee", "burpi", "burpees"] },
     { nombre: "Medio burpee", videoUrl: "https://www.youtube.com/shorts/FH0hjFVDhu8", alias: ["Medio burpee", "medio burpee", "medio burpi", "half burpee"] },
     { nombre: "Burpee con press", videoUrl: "https://www.youtube.com/shorts/2_UZ-E5qHUA", alias: ["Burpee con press", "burpee con press", "burpi con press", "burpee press"] },
     { nombre: "Press pallof", videoUrl: "https://www.youtube.com/shorts/iNn_sNA6TbU", alias: ["Press pallof", "press pallof", "pallof press", "press de pallof"] },
@@ -4180,14 +4227,59 @@ document.addEventListener('DOMContentLoaded', () => {
       .replace(/\s+/g, ' ');
   }
 
-  function buscarVideoPorNombreEjercicio(nombre) {
+  /** true si la URL es un GIF de ExerciseDB (u otro .gif) para mostrar inline */
+  function isGifMediaUrl(url) {
+    if (!url) return false;
+    const u = String(url).toLowerCase();
+    return u.includes('static.exercisedb.dev') || /\.gif(\?|$)/.test(u);
+  }
+
+  /**
+   * Media prioritaria del ejercicio:
+   * 1) GIF ExerciseDB (videoUrl ya es gif, o gifUrl del catálogo)
+   * 2) YouTube / link actual
+   * 3) nada
+   */
+  function resolverUrlMediaEjercicio(ejOUrl, gifUrlOpcional) {
+    if (ejOUrl && typeof ejOUrl === 'object') {
+      const u = ejOUrl.videoUrl || ejOUrl.video_url || '';
+      if (isGifMediaUrl(u)) return u;
+      if (ejOUrl.gifUrl && isGifMediaUrl(ejOUrl.gifUrl)) return ejOUrl.gifUrl;
+      return u || '';
+    }
+    const u = ejOUrl || '';
+    if (isGifMediaUrl(u)) return u;
+    if (gifUrlOpcional && isGifMediaUrl(gifUrlOpcional)) return gifUrlOpcional;
+    return u || '';
+  }
+
+  function renderExerciseMediaHtml(ej) {
+    const url = resolverUrlMediaEjercicio(ej);
+    if (!url) return '';
+    if (isGifMediaUrl(url)) {
+      const alt = String(ej && ej.nombre ? ej.nombre : 'ejercicio')
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+      const src = String(url).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+      return `<div class="exercise-gif-wrap"><img class="exercise-gif-demo" src="${src}" alt="Demostración: ${alt}" loading="lazy" decoding="async"></div>`;
+    }
+    const href = String(url).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+    return `<a href="${href}" target="_blank" rel="noopener noreferrer" class="btn-video-demo">🎬 Ver ejercicio</a>`;
+  }
+
+  function buscarCatalogoPorNombre(nombre) {
     const norm = normalizarNombreEjercicio(nombre);
     if (!norm) return null;
-    const match = CATALOGO_VIDEOS_EJERCICIOS.find(item =>
+    return CATALOGO_VIDEOS_EJERCICIOS.find(item =>
       item.alias.some(a => normalizarNombreEjercicio(a) === norm) ||
       normalizarNombreEjercicio(item.nombre) === norm
-    );
-    return match ? match.videoUrl : null;
+    ) || null;
+  }
+
+  function buscarVideoPorNombreEjercicio(nombre) {
+    const match = buscarCatalogoPorNombre(nombre);
+    if (!match) return null;
+    // Prioridad: GIF ExerciseDB del catálogo, si no YouTube
+    return match.gifUrl || match.videoUrl || null;
   }
 
   function buscarEjerciciosSugeridos(query, limit = 12) {
@@ -4216,8 +4308,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const seen = new Set();
     const out = [];
     for (const s of scored) {
-      if (seen.has(s.videoUrl)) continue;
-      seen.add(s.videoUrl);
+      const key = normalizarNombreEjercicio(s.nombre) || s.videoUrl;
+      if (seen.has(key)) continue;
+      seen.add(key);
       out.push(s);
       if (out.length >= limit) break;
     }
@@ -4251,7 +4344,8 @@ document.addEventListener('DOMContentLoaded', () => {
     box.dataset.ejIdx = String(ejIdx);
     box.innerHTML = sugeridos.map((s, i) => {
       const nom = String(s.nombre).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
-      const url = String(s.videoUrl).replace(/&/g,'&amp;').replace(/"/g,'&quot;');
+      const mediaUrl = s.gifUrl || s.videoUrl || '';
+      const url = String(mediaUrl).replace(/&/g,'&amp;').replace(/"/g,'&quot;');
       return `<button type="button" class="ej-suggest-item" data-suggest-idx="${i}" data-nombre="${nom}" data-url="${url}"><span class="ej-suggest-name">${nom}</span></button>`;
     }).join('');
     box.hidden = false;

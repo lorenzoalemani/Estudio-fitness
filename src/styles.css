@@ -1475,3 +1475,26 @@ body {
 }
 .plantilla-dia strong { display: block; color: #fbbf24; margin-bottom: 2px; font-size: 0.78rem; }
 .plantilla-dia span { color: #9ca3af; line-height: 1.35; }
+
+
+/* GIF ExerciseDB inline en rutina / entrenamiento */
+.exercise-gif-wrap {
+  margin: 10px 0 6px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: rgba(0,0,0,0.35);
+  border: 1px solid rgba(255,255,255,0.08);
+  max-width: 280px;
+}
+.exercise-gif-demo {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 220px;
+  object-fit: contain;
+  background: #0a0a0c;
+}
+@media (max-width: 480px) {
+  .exercise-gif-wrap { max-width: 100%; }
+  .exercise-gif-demo { max-height: 200px; }
+}
