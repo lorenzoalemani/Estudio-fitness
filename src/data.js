@@ -295,10 +295,10 @@ class GymStore {
         // llamada, así que la reconciliación debe limitarse estrictamente a
         // las rutinas de ese alumno — nunca tocar rutinas de otros alumnos
         // que no formaron parte de esta consulta.
-        // Excepción importante: las rutinas "propias" (esPropia: true,
-        // auto-gestionadas por el alumno) son 100% locales por diseño y
-        // NUNCA se escriben ni se leen de Supabase — no deben podarse solo
-        // porque no aparecen en el snapshot de la RPC.
+        // Las rutinas propias SÍ se persisten en Supabase (profesor_id null)
+        // vía RPCs del alumno. Si el snapshot del servidor ya no las incluye
+        // (borradas en otro dispositivo), se podan del estado local junto con
+        // las asignadas por profesor. Ver filtro idsFrescos más abajo.
         if (alumnoId && freshData.rutinas !== null) {
           const idsFrescos = new Set(freshData.rutinas.map(r => r.id));
 
@@ -337,10 +337,20 @@ class GymStore {
           }
 
           if (permitirPodaRutinas) {
+            // Poda alineada con Supabase como fuente de verdad:
+            // - Otras alumnos: no tocar.
+            // - Rutinas del alumno actual (propias O asignadas): si el id ya no
+            //   viene en el snapshot del servidor, eliminar del estado local.
+            // - Las propias SÍ se persisten en Supabase (profesor_id null); si
+            //   fueron borradas en otro dispositivo, deben desaparecer acá.
+            // - crearRutinaPropia solo hace push local tras RPC OK, así que no
+            //   debería haber propias "pendientes de subida" en condiciones normales.
+            // - Snapshots vacíos/transitorios: siguen protegidos por
+            //   permitirPodaRutinas / _rutinasEmptyStreak (arriba).
             this.data.rutinas = this.data.rutinas.filter(r => {
               if (r.alumnoId !== alumnoId) return true; // no es de este alumno: no tocar
-              if (r.esPropia) return true; // rutina propia local: nunca se poda
-              return idsFrescos.has(r.id); // rutina asignada por profesor: podar si ya no existe en Supabase
+              // Propia o del profesor: conservar solo si el servidor todavía la lista
+              return idsFrescos.has(r.id);
             });
           }
 
@@ -1570,9 +1580,34 @@ class GymStore {
 
     // Confirmar eliminación en Supabase PRIMERO; recién si el servidor
     // confirma, se elimina localmente. Si falla, la rutina queda intacta.
+    // Excepción: si el servidor indica que ya no existe / no es propia
+    // (borrada desde otro dispositivo), limpiar la copia local fantasma y
+    // tratar como completado.
     if (window.supabaseEngine) {
       const resultado = await window.supabaseEngine.eliminarRutinaPropiaEnSupabase(rutinaId, alumnoId);
       if (!resultado || resultado.ok !== true) {
+        const errMsg = String((resultado && resultado.error) || 'error_desconocido').toLowerCase();
+        const yaNoExiste =
+          errMsg.includes('no existe') ||
+          errMsg.includes('not found') ||
+          errMsg.includes('ya fue elimin') ||
+          errMsg.includes('ya eliminad') ||
+          errMsg.includes('no es propia') ||
+          errMsg.includes('no tenés permiso') ||
+          errMsg.includes('no tienes permiso') ||
+          errMsg.includes('permiso') ||
+          errMsg.includes('not owned') ||
+          errMsg.includes('already deleted');
+        // Solo limpiamos fantasma si sigue siendo propia de este alumno en local
+        const esPropiaLocal = rutina.profesorId == null && rutina.alumnoId === alumnoId;
+        if (yaNoExiste && esPropiaLocal) {
+          this.data.rutinas.splice(idx, 1);
+          const alumno = this.getAlumnoPorId(alumnoId);
+          if (alumno && alumno.rutinaActivaId === rutinaId) alumno.rutinaActivaId = null;
+          this.saveData();
+          console.log('🗑️ Rutina propia fantasma eliminada localmente (servidor ya no la tiene):', rutinaId);
+          return { ok: true, cleanedGhost: true };
+        }
         return { ok: false, error: (resultado && resultado.error) || 'error_desconocido' };
       }
     }
