@@ -230,6 +230,12 @@ body {
   padding: 16px; max-width: 800px; margin: 0 auto; width: 100%;
 }
 
+/* Botón Cancelar entrenamiento: compacto para no desequilibrar la cabecera */
+.workout-cancel-btn {
+  font-size: 0.75rem !important; padding: 5px 10px !important;
+  opacity: 0.85; white-space: nowrap;
+}
+
 /* Indicador "Ejercicio X de N" */
 .workout-ejercicio-progress {
   text-align: center; font-size: 0.9rem; color: var(--text-gray);

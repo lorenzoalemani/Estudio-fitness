@@ -1391,24 +1391,145 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  // --- Busca los últimos pesos reales utilizados por el alumno para un ejercicio ---
+  // Devuelve un array de { setNumero, peso } ordenado por setNumero, o [] si no hay historial.
+  // Prioridad de match:
+  //   1) ejercicioId exacto (UUID del exercise_goal en la rutina)
+  //   2) Nombre normalizado + ocurrencia dentro del mismo día (para diferenciar
+  //      cuando el mismo ejercicio aparece 2 veces en un mismo día)
+  // Solo considera entrenamientos finalizados/completados (getHistorialEntrenamientosReales
+  // ya filtra por estado 'completado'/'complete'/'done'/sin estado).
+  function buscarUltimosPesosPorEjercicio(alumnoId, ejercicioId, ejercicioNombre, ocurrenciaEnDia) {
+    const historial = store.getHistorialEntrenamientosReales(alumnoId);
+    if (!historial || !historial.length) return [];
+
+    // Ordenar por fecha descendente (más reciente primero)
+    const logsOrdenados = historial
+      .filter(l => Array.isArray(l.sets) && l.sets.length > 0)
+      .sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+
+    const nombreNorm = String(ejercicioNombre || '').trim().toLowerCase();
+
+    // --- Nivel 1: match por ejercicioId exacto ---
+    if (ejercicioId) {
+      for (const log of logsOrdenados) {
+        const setsDelEj = (log.sets || []).filter(s =>
+          s.ejercicioId === ejercicioId
+        );
+        if (setsDelEj.length > 0) {
+          return setsDelEj
+            .sort((a, b) => (a.setNumero || 0) - (b.setNumero || 0))
+            .map(s => ({
+              setNumero: s.setNumero,
+              peso: s.pesoUtilizado != null ? s.pesoUtilizado : (s.peso || '')
+            }));
+        }
+      }
+    }
+
+    // --- Nivel 2: fallback por nombre normalizado + ocurrencia ---
+    if (!nombreNorm) return [];
+
+    for (const log of logsOrdenados) {
+      // Agrupar sets por nombre normalizado para manejar ocurrencias
+      const gruposPorNombre = {};
+      (log.sets || []).forEach(s => {
+        const n = String(s.ejercicioNombre || s.ejercicio || s.nombre || '').trim().toLowerCase();
+        if (!gruposPorNombre[n]) gruposPorNombre[n] = [];
+        gruposPorNombre[n].push(s);
+      });
+
+      const grupos = gruposPorNombre[nombreNorm];
+      if (!grupos || grupos.length === 0) continue;
+
+      // Separar por ocurrencia: cada "grupo de sets consecutivos" del mismo ejercicio
+      // es una ocurrencia. Los sets vienen con setNumero 1, 2, 3... que se resetea
+      // en cada ocurrencia del ejercicio.
+      // Estrategia: agrupar por bloques donde setNumero vuelve a 1 o baja.
+      const ocurrencias = [];
+      let currentOcurrencia = [];
+      let lastSetNum = 0;
+      grupos.sort((a, b) => {
+        // Mantener orden original del array (orden de inserción)
+        return 0;
+      });
+      for (const s of grupos) {
+        const sn = s.setNumero || 0;
+        if (sn <= lastSetNum && currentOcurrencia.length > 0) {
+          ocurrencias.push(currentOcurrencia);
+          currentOcurrencia = [];
+        }
+        currentOcurrencia.push(s);
+        lastSetNum = sn;
+      }
+      if (currentOcurrencia.length > 0) ocurrencias.push(currentOcurrencia);
+
+      // Seleccionar la ocurrencia correspondiente (0-indexed)
+      const idx = Math.min(ocurrenciaEnDia || 0, ocurrencias.length - 1);
+      const setsMatch = ocurrencias[idx];
+      if (setsMatch && setsMatch.length > 0) {
+        return setsMatch
+          .sort((a, b) => (a.setNumero || 0) - (b.setNumero || 0))
+          .map(s => ({
+            setNumero: s.setNumero,
+            peso: s.pesoUtilizado != null ? s.pesoUtilizado : (s.peso || '')
+          }));
+      }
+    }
+
+    return [];
+  }
+
   function initWorkoutDraft(diaObj) {
     appState.workoutDraftSets = {};
     appState.workoutGeneralComment = '';
     appState.ejercicioActivoIndex = 0; // siempre arranca en el primer ejercicio
+
+    const alumnoId = getCurrentAlumnoId();
+
+    // Contar ocurrencias por nombre normalizado para diferenciar
+    // cuando el mismo ejercicio aparece más de una vez en el mismo día
+    const contadorOcurrencias = {};
+
     (diaObj.ejercicios || []).forEach(ej => {
       const esWarm = !!(ej.esEntradaEnCalor || ej.entradaEnCalor || ej.es_warmup);
       ej.esEntradaEnCalor = esWarm; // normalizar en el objeto del día
       const seriesN = Math.max(1, Number(ej.seriesTarget) || 1);
       const repsStr = String(ej.repeticionesTarget || '12');
+
+      // Determinar la ocurrencia de este ejercicio (por nombre) dentro del día
+      const nombreNorm = String(ej.nombre || '').trim().toLowerCase();
+      const ocurrencia = contadorOcurrencias[nombreNorm] || 0;
+      contadorOcurrencias[nombreNorm] = ocurrencia + 1;
+
+      // Buscar pesos históricos si hay alumno logueado
+      let pesosHistoricos = [];
+      if (alumnoId && !esWarm) {
+        pesosHistoricos = buscarUltimosPesosPorEjercicio(alumnoId, ej.id, ej.nombre, ocurrencia);
+      }
+
       appState.workoutDraftSets[ej.id] = {
         nombre: ej.nombre,
         esEntradaEnCalor: esWarm,
-        sets: esWarm ? [] : Array.from({ length: seriesN }, (_, i) => ({
-          setNumero: i + 1,
-          reps: repsStr.includes('-') ? Number(repsStr.split('-')[0]) : (Number(repsStr) || 10),
-          peso: ej.pesoSugerido || 'S/D',
-          comentarioSet: ''
-        }))
+        sets: esWarm ? [] : Array.from({ length: seriesN }, (_, i) => {
+          const setNum = i + 1;
+          // Buscar peso histórico para esta serie (por setNumero)
+          const historico = pesosHistoricos.find(h => h.setNumero === setNum);
+          let pesoInicial;
+          if (historico && historico.peso != null && String(historico.peso).trim() !== '' && String(historico.peso).trim() !== '0') {
+            // Usar el último peso real utilizado por el alumno
+            pesoInicial = historico.peso;
+          } else {
+            // Sin historial válido: usar pesoSugerido o S/D
+            pesoInicial = ej.pesoSugerido || 'S/D';
+          }
+          return {
+            setNumero: setNum,
+            reps: repsStr.includes('-') ? Number(repsStr.split('-')[0]) : (Number(repsStr) || 10),
+            peso: pesoInicial,
+            comentarioSet: ''
+          };
+        })
       };
     });
     persistWorkoutDraft();
@@ -1542,9 +1663,9 @@ document.addEventListener('DOMContentLoaded', () => {
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px">
           <div>
             <span class="badge badge-warning">▶ EN PROGRESO</span>
-            <h2 style="font-size:1.4rem; font-weight:900; margin-top:4px">${dia.nombre}</h2>
+            <h2 style="font-size:1.3rem; font-weight:900; margin-top:4px; color:#fff">DÍA ${dia.diaNumero || 1} : ${dia.nombre}</h2>
           </div>
-          <button class="btn btn-secondary btn-sm" id="btnCancelWorkout">Cancelar ✖</button>
+          <button class="btn btn-secondary btn-sm workout-cancel-btn" id="btnCancelWorkout">Cancelar ✖</button>
         </div>
 
         <div class="workout-ejercicio-progress">
