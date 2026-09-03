@@ -207,6 +207,7 @@ document.addEventListener('DOMContentLoaded', () => {
     statsMonthOffset: 0,
     mostrarDrawerNotifs: false,
     workoutDraftSets: {},       // Estado temporal del entrenamiento en progreso por serie
+    ejercicioActivoIndex: 0,    // Índice del ejercicio visible en el modo entrenamiento ejercicio-por-ejercicio
     borradorEntrenamientoDetectado: null, // borrador recuperado de localStorage, pendiente de confirmar Continuar/Descartar
     historialProfesorLogs: null  // Caché async del historial del alumno visto por el profesor
   };
@@ -1028,6 +1029,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if (d && d.esEntradaEnCalor) d.sets = d.sets || [];
       });
       appState.workoutGeneralComment = draft.workoutGeneralComment || '';
+      // Restaurar el índice del ejercicio activo, validando que esté dentro del rango
+      const totalEj = (appState.diaActivoEntrenamiento && appState.diaActivoEntrenamiento.ejercicios)
+        ? appState.diaActivoEntrenamiento.ejercicios.length : 0;
+      const savedIndex = typeof draft.ejercicioActivoIndex === 'number' ? draft.ejercicioActivoIndex : 0;
+      appState.ejercicioActivoIndex = (totalEj > 0 && savedIndex >= 0 && savedIndex < totalEj) ? savedIndex : 0;
       appState.borradorEntrenamientoDetectado = null;
       renderApp();
     });
@@ -1290,6 +1296,10 @@ document.addEventListener('DOMContentLoaded', () => {
         <div style="font-size:0.85rem; color:var(--text-gray); margin-top:4px">Rutina: ${rutina.titulo}</div>
       </div>
 
+      <button class="btn btn-primary btn-comenzar-entrenamiento" data-dia-id="${dia.id}" style="width:100%; padding:18px; font-size:1.15rem; font-weight:900; margin-bottom:24px; box-shadow: 0 0 35px rgba(255, 46, 46, 0.45)">
+        ▶ EMPEZAR ENTRENAMIENTO
+      </button>
+
       <h3 style="font-size:1.05rem; font-weight:900; text-transform:uppercase; margin-bottom:14px; color:var(--text-white)">
         📋 Ejercicios e Indicaciones del Profesor
       </h3>
@@ -1312,10 +1322,6 @@ document.addEventListener('DOMContentLoaded', () => {
           ${typeof renderExerciseMediaHtml === 'function' ? renderExerciseMediaHtml(ej) : (ej.videoUrl ? `<a href="${ej.videoUrl}" target="_blank" rel="noopener noreferrer" class="btn-video-demo">🎬 Ver ejercicio</a>` : '')}
         </div>
       `).join('')}
-
-      <button class="btn btn-primary btn-comenzar-entrenamiento" data-dia-id="${dia.id}" style="width:100%; padding:18px; font-size:1.15rem; font-weight:900; margin-top:10px; box-shadow: 0 0 35px rgba(255, 46, 46, 0.45)">
-        ▶ EMPEZAR ENTRENAMIENTO
-      </button>
     `;
   }
 
@@ -1349,6 +1355,7 @@ document.addEventListener('DOMContentLoaded', () => {
         diaActivoEntrenamiento: appState.diaActivoEntrenamiento,
         workoutDraftSets: appState.workoutDraftSets,
         workoutGeneralComment: appState.workoutGeneralComment || '',
+        ejercicioActivoIndex: appState.ejercicioActivoIndex || 0,
         savedAt: new Date().toISOString()
       };
       localStorage.setItem(WORKOUT_DRAFT_KEY, JSON.stringify(draft));
@@ -1387,6 +1394,7 @@ document.addEventListener('DOMContentLoaded', () => {
   function initWorkoutDraft(diaObj) {
     appState.workoutDraftSets = {};
     appState.workoutGeneralComment = '';
+    appState.ejercicioActivoIndex = 0; // siempre arranca en el primer ejercicio
     (diaObj.ejercicios || []).forEach(ej => {
       const esWarm = !!(ej.esEntradaEnCalor || ej.entradaEnCalor || ej.es_warmup);
       ej.esEntradaEnCalor = esWarm; // normalizar en el objeto del día
@@ -1410,6 +1418,125 @@ document.addEventListener('DOMContentLoaded', () => {
     const dia = appState.diaActivoEntrenamiento;
     if (!dia) return '';
 
+    const ejercicios = dia.ejercicios || [];
+    const total = ejercicios.length;
+    // Asegurar que el índice esté dentro de rango (defensa extra)
+    const idx = Math.min(Math.max(appState.ejercicioActivoIndex || 0, 0), Math.max(total - 1, 0));
+    appState.ejercicioActivoIndex = idx;
+
+    const ej = ejercicios[idx];
+    if (!ej) return '';
+
+    const draftEj = appState.workoutDraftSets[ej.id] || { sets: [], esEntradaEnCalor: false };
+    const esWarm = !!(ej.esEntradaEnCalor || (draftEj && draftEj.esEntradaEnCalor));
+    const esPrimero = idx === 0;
+    const esUltimo  = idx === total - 1;
+
+    // --- Helper: input de peso con lógica numérico vs texto libre ---
+    // Si el valor guardado es numérico (con o sin unidad al final),
+    // extraemos el número y mostramos [número editable] + "kg" fijo.
+    // Si es texto libre (S/D, Barra + discos, etc.), dejamos el campo
+    // de texto original para que el alumno escriba directamente.
+    function renderPesoInput(ejId, setIdx, pesoActual) {
+      // Intentar extraer un número al principio del string (e.g. "30", "30 kg", "27.5kg")
+      const match = String(pesoActual || '').trim().match(/^(\d+(?:[.,]\d+)?)\s*(?:kg)?$/i);
+      if (match) {
+        const numStr = match[1].replace(',', '.');
+        // Campo numérico editable + sufijo "kg" no editable
+        return `<div class="peso-input-wrap">
+          <input
+            type="text"
+            inputmode="decimal"
+            class="set-input set-input-weight"
+            value="${numStr}"
+            onfocus="this.select()"
+            onblur="window.updateDraftSetPeso('${ejId}', ${setIdx}, this.value)"
+            onchange="window.updateDraftSetPeso('${ejId}', ${setIdx}, this.value)"
+          ><span class="peso-kg-suffix">kg</span>
+        </div>`;
+      }
+      // Texto libre: conservar comportamiento original
+      return `<input
+        type="text"
+        class="set-input"
+        value="${pesoActual || ''}"
+        placeholder="Peso..."
+        onchange="window.updateDraftSet('${ejId}', ${setIdx}, 'peso', this.value)"
+      >`;
+    }
+
+    // --- Bloque del ejercicio actual ---
+    let ejercicioHtml;
+    if (esWarm) {
+      ejercicioHtml = `
+        <div class="exercise-block exercise-block-warmup">
+          <div class="exercise-title" style="font-size:1.15rem; font-weight:900; color:#fff">🔥 ${ej.nombre} <span class="warmup-badge">Entrada en calor</span></div>
+          <div class="target-box">
+            <div class="target-title">🔥 ACTIVACIÓN / ENTRADA EN CALOR</div>
+            <div class="target-stats">${ej.seriesTarget || '—'} series · ${ej.repeticionesTarget || '—'} reps · ${ej.pesoSugerido || 'S/D'}</div>
+            ${ej.notaProfesor ? `<div style="font-size:0.85rem; color:#fca5a5; margin-top:4px">👨‍🏫 ${ej.notaProfesor}</div>` : ''}
+          </div>
+          ${typeof renderExerciseMediaHtml === 'function' ? renderExerciseMediaHtml(ej) : (ej.videoUrl ? `<a href="${ej.videoUrl}" target="_blank" rel="noopener noreferrer" class="btn-video-demo">🎬 Ver ejercicio</a>` : '')}
+          <p class="warmup-readonly-note">Solo lectura · opcional · no se registra peso ni reps</p>
+        </div>`;
+    } else {
+      ejercicioHtml = `
+        <div class="exercise-block">
+          <div class="exercise-title" style="font-size:1.15rem; font-weight:900; color:#fff">${ej.nombre}</div>
+
+          <div class="target-box">
+            <div class="target-title">🎯 OBJETIVO DEL PROFESOR</div>
+            <div class="target-stats">${ej.seriesTarget} series · ${ej.repeticionesTarget} reps · ${ej.pesoSugerido}</div>
+            ${ej.notaProfesor ? `<div style="font-size:0.85rem; color:#fca5a5; margin-top:4px">👨‍🏫 ${ej.notaProfesor}</div>` : ''}
+          </div>
+          ${typeof renderExerciseMediaHtml === 'function' ? renderExerciseMediaHtml(ej) : (ej.videoUrl ? `<a href="${ej.videoUrl}" target="_blank" rel="noopener noreferrer" class="btn-video-demo">🎬 Ver ejercicio</a>` : '')}
+
+          <h4 style="font-size:0.8rem; text-transform:uppercase; color:var(--text-gray); margin-bottom:8px">✏️ REGISTRO REAL POR SERIE:</h4>
+
+          <div class="sets-table-header">
+            <div>SERIE</div>
+            <div>REPS</div>
+            <div>PESO</div>
+            <div>COMENTARIO POR SERIE</div>
+          </div>
+
+          ${(draftEj.sets || []).map((set, setIdx) => `
+            <div class="set-row">
+              <div class="set-label">Serie ${set.setNumero}</div>
+              <div>
+                <input type="number" class="set-input" value="${set.reps}" onchange="window.updateDraftSet('${ej.id}', ${setIdx}, 'reps', this.value)">
+              </div>
+              <div>
+                ${renderPesoInput(ej.id, setIdx, set.peso)}
+              </div>
+              <div>
+                <input type="text" class="set-input set-comment-input" placeholder="Comentario..." value="${set.comentarioSet || ''}" onchange="window.updateDraftSet('${ej.id}', ${setIdx}, 'comentarioSet', this.value)">
+              </div>
+            </div>
+          `).join('')}
+        </div>`;
+    }
+
+    // --- Comentario general y botón Finalizar: solo en el último ejercicio ---
+    const finalizarHtml = esUltimo ? `
+      <div class="exercise-block" style="border-color:var(--border-highlight)">
+        <label class="form-label" style="color:var(--red-primary)">💬 COMENTARIO GENERAL DEL ENTRENAMIENTO (OPCIONAL)</label>
+        <textarea class="exercise-textarea" id="inputGeneralComment" placeholder="Escribe un comentario general sobre cómo te sentiste en la sesión..." onchange="window.updateGeneralComment(this.value)">${appState.workoutGeneralComment || ''}</textarea>
+      </div>
+
+      <button class="btn btn-primary" id="btnFinishWorkout" style="width:100%; padding:16px; font-size:1.1rem; margin-top:10px; box-shadow: 0 0 35px rgba(255, 46, 46, 0.45)">
+        🏆 FINALIZAR Y GUARDAR ENTRENAMIENTO
+      </button>
+    ` : '';
+
+    // --- Botones de navegación ---
+    const navHtml = `
+      <div class="workout-nav-btns">
+        ${!esPrimero ? `<button class="btn btn-secondary workout-nav-btn" onclick="window.irEjercicioAnterior()">⬅️ Ejercicio anterior</button>` : `<div></div>`}
+        ${!esUltimo  ? `<button class="btn btn-primary  workout-nav-btn" onclick="window.irEjercicioSiguiente()">Pasar al siguiente ejercicio ➡️</button>` : ''}
+      </div>
+    `;
+
     return `
       <div class="workout-session-container">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px">
@@ -1420,71 +1547,56 @@ document.addEventListener('DOMContentLoaded', () => {
           <button class="btn btn-secondary btn-sm" id="btnCancelWorkout">Cancelar ✖</button>
         </div>
 
-        ${dia.ejercicios.map(ej => {
-          const draftEj = appState.workoutDraftSets[ej.id] || { sets: [], esEntradaEnCalor: false };
-          const esWarm = !!(ej.esEntradaEnCalor || (draftEj && draftEj.esEntradaEnCalor));
-          if (esWarm) {
-            return `
-            <div class="exercise-block exercise-block-warmup">
-              <div class="exercise-title" style="font-size:1.15rem; font-weight:900; color:#fff">🔥 ${ej.nombre} <span class="warmup-badge">Entrada en calor</span></div>
-              <div class="target-box">
-                <div class="target-title">🔥 ACTIVACIÓN / ENTRADA EN CALOR</div>
-                <div class="target-stats">${ej.seriesTarget || '—'} series · ${ej.repeticionesTarget || '—'} reps · ${ej.pesoSugerido || 'S/D'}</div>
-                ${ej.notaProfesor ? `<div style="font-size:0.85rem; color:#fca5a5; margin-top:4px">👨‍🏫 ${ej.notaProfesor}</div>` : ''}
-              </div>
-              ${typeof renderExerciseMediaHtml === 'function' ? renderExerciseMediaHtml(ej) : (ej.videoUrl ? `<a href="${ej.videoUrl}" target="_blank" rel="noopener noreferrer" class="btn-video-demo">🎬 Ver ejercicio</a>` : '')}
-              <p class="warmup-readonly-note">Solo lectura · opcional · no se registra peso ni reps</p>
-            </div>`;
-          }
-          return `
-            <div class="exercise-block">
-              <div class="exercise-title" style="font-size:1.15rem; font-weight:900; color:#fff">${ej.nombre}</div>
-
-              <div class="target-box">
-                <div class="target-title">🎯 OBJETIVO DEL PROFESOR</div>
-                <div class="target-stats">${ej.seriesTarget} series · ${ej.repeticionesTarget} reps · ${ej.pesoSugerido}</div>
-                ${ej.notaProfesor ? `<div style="font-size:0.85rem; color:#fca5a5; margin-top:4px">👨‍🏫 ${ej.notaProfesor}</div>` : ''}
-              </div>
-              ${typeof renderExerciseMediaHtml === 'function' ? renderExerciseMediaHtml(ej) : (ej.videoUrl ? `<a href="${ej.videoUrl}" target="_blank" rel="noopener noreferrer" class="btn-video-demo">🎬 Ver ejercicio</a>` : '')}
-
-              <h4 style="font-size:0.8rem; text-transform:uppercase; color:var(--text-gray); margin-bottom:8px">✏️ REGISTRO REAL POR SERIE:</h4>
-
-              <div class="sets-table-header">
-                <div>SERIE</div>
-                <div>REPS</div>
-                <div>PESO</div>
-                <div>COMENTARIO POR SERIE</div>
-              </div>
-
-              ${(draftEj.sets || []).map((set, setIdx) => `
-                <div class="set-row">
-                  <div class="set-label">Serie ${set.setNumero}</div>
-                  <div>
-                    <input type="number" class="set-input" value="${set.reps}" onchange="window.updateDraftSet('${ej.id}', ${setIdx}, 'reps', this.value)">
-                  </div>
-                  <div>
-                    <input type="text" class="set-input" value="${set.peso}" onchange="window.updateDraftSet('${ej.id}', ${setIdx}, 'peso', this.value)">
-                  </div>
-                  <div>
-                    <input type="text" class="set-input set-comment-input" placeholder="Comentario..." value="${set.comentarioSet || ''}" onchange="window.updateDraftSet('${ej.id}', ${setIdx}, 'comentarioSet', this.value)">
-                  </div>
-                </div>
-              `).join('')}
-            </div>
-          `;
-        }).join('')}
-
-        <div class="exercise-block" style="border-color:var(--border-highlight)">
-          <label class="form-label" style="color:var(--red-primary)">💬 COMENTARIO GENERAL DEL ENTRENAMIENTO (OPCIONAL)</label>
-          <textarea class="exercise-textarea" id="inputGeneralComment" placeholder="Escribe un comentario general sobre cómo te sentiste en la sesión..." onchange="window.updateGeneralComment(this.value)">${appState.workoutGeneralComment || ''}</textarea>
+        <div class="workout-ejercicio-progress">
+          Ejercicio <strong>${idx + 1}</strong> de <strong>${total}</strong>
         </div>
 
-        <button class="btn btn-primary" id="btnFinishWorkout" style="width:100%; padding:16px; font-size:1.1rem; margin-top:10px; box-shadow: 0 0 35px rgba(255, 46, 46, 0.45)">
-          🏆 FINALIZAR Y GUARDAR ENTRENAMIENTO
-        </button>
+        ${ejercicioHtml}
+
+        ${navHtml}
+
+        ${finalizarHtml}
       </div>
     `;
   }
+
+  // Funciones de navegación: solo cambian el índice y re-renderizan.
+  // NO tocan workoutDraftSets — los valores ya están en appState y se conservan.
+  window.irEjercicioSiguiente = () => {
+    const total = (appState.diaActivoEntrenamiento && appState.diaActivoEntrenamiento.ejercicios)
+      ? appState.diaActivoEntrenamiento.ejercicios.length : 0;
+    if (appState.ejercicioActivoIndex < total - 1) {
+      appState.ejercicioActivoIndex++;
+      persistWorkoutDraft();
+      renderApp();
+    }
+  };
+
+  window.irEjercicioAnterior = () => {
+    if (appState.ejercicioActivoIndex > 0) {
+      appState.ejercicioActivoIndex--;
+      persistWorkoutDraft();
+      renderApp();
+    }
+  };
+
+  // Actualiza el campo peso con formato normalizado:
+  // si el usuario escribió un número válido, guarda "N kg";
+  // si escribió texto vacío, guarda '' (campo en blanco);
+  // si escribió texto no numérico, lo guarda tal cual (preserva libertad).
+  window.updateDraftSetPeso = (ejId, setIdx, rawVal) => {
+    if (!appState.workoutDraftSets[ejId]) return;
+    const trimmed = String(rawVal || '').trim();
+    let valorFinal;
+    if (trimmed === '') {
+      valorFinal = '';
+    } else {
+      const num = parseFloat(trimmed.replace(',', '.'));
+      valorFinal = isNaN(num) ? trimmed : `${num} kg`;
+    }
+    appState.workoutDraftSets[ejId].sets[setIdx].peso = valorFinal;
+    persistWorkoutDraft();
+  };
 
   window.updateDraftSet = (ejId, setIdx, field, val) => {
     if (appState.workoutDraftSets[ejId]) {
