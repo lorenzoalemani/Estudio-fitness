@@ -990,16 +990,58 @@ const { data: rpcData, error: rpcErr } = await this.client.rpc(
     if (!this.client) return { error: true, reason: 'no_client', logs: [] };
     try {
       const alumnoUuid = this.ensureValidUUID(alumnoId);
-      // Intento 1: SELECT directo con nested sets (más fiable con RLS activo)
+
+      // PRIORIDAD 1: Consultar vía RPC obtener_historial_alumno (SECURITY DEFINER)
+      // Garantiza la recuperación de los 18 sets completos sin bloqueos de RLS anidados
+      try {
+        const { data: rpcData, error: rpcErr } = await this.client.rpc(
+          'obtener_historial_alumno',
+          { p_alumno_id: alumnoUuid }
+        );
+
+        if (!rpcErr && Array.isArray(rpcData)) {
+          const logsNormalizados = rpcData.map(l => ({
+            id: l.id,
+            rutinaId: l.rutinaId || l.routine_id || l.rutina_id,
+            rutinaT: l.rutinaT || l.rutinaTitulo || 'Rutina',
+            alumnoId: l.alumnoId || l.alumno_id,
+            diaNumero: l.diaNumero != null ? l.diaNumero : (l.dia_numero || 1),
+            diaNombre: l.diaNombre || l.dia_nombre || '',
+            fecha: l.fecha || l.fecha_entrenamiento,
+            estado: l.estado || 'completado',
+            comentarioGeneral: l.comentarioGeneral || l.comentario_general || '',
+            semana: l.semana != null ? l.semana : 1,
+            sets: Array.isArray(l.sets) ? l.sets.map(s => ({
+              id: s.id,
+              ejercicioId: s.ejercicioId || s.exercise_goal_id || null,
+              ejercicioNombre: s.ejercicioNombre || s.exercise_nombre || s.nombre || '',
+              setNumero: s.setNumero != null ? s.setNumero : (s.set_numero || 0),
+              repsRealizadas: s.repsRealizadas != null ? s.repsRealizadas : (s.reps_realizadas || 0),
+              pesoUtilizado: s.pesoUtilizado != null ? s.pesoUtilizado : (s.peso_utilizado || '0'),
+              comentarioAlumno: s.comentarioAlumno || s.comentario_alumno || ''
+            })) : []
+          }));
+
+          console.log(`✅ [Historial RPC] ${logsNormalizados.length} log(s) obtenidos. Logs con series: ${logsNormalizados.filter(l => l.sets.length > 0).length}`);
+          return { error: false, logs: logsNormalizados };
+        }
+        if (rpcErr) {
+          console.warn('⚠️ RPC obtener_historial_alumno falló, intentando SELECT directo:', rpcErr.message);
+        }
+      } catch (rpcEx) {
+        console.warn('⚠️ Excepción llamando RPC obtener_historial_alumno:', rpcEx && rpcEx.message);
+      }
+
+      // PRIORIDAD 2 (Fallback): SELECT directo a workout_logs
       const { data: rows, error } = await this.client
         .from('workout_logs')
         .select('*, workout_log_sets(*)')
         .eq('alumno_id', alumnoUuid)
         .order('fecha_entrenamiento', { ascending: false });
 
-      if (!error) {
-        // SELECT exitoso
+      if (!error && Array.isArray(rows)) {
         const mapSetRow = (s) => ({
+          id: s.id,
           ejercicioId: s.exercise_goal_id || s.ejercicio_id || null,
           ejercicioNombre: s.exercise_nombre || s.ejercicio_nombre || s.nombre || s.exercise_name || '',
           setNumero: s.set_numero != null ? s.set_numero : (s.setNumero || 0),
@@ -1007,12 +1049,13 @@ const { data: rpcData, error: rpcErr } = await this.client.rpc(
           pesoUtilizado: s.peso_utilizado != null ? s.peso_utilizado : (s.peso || '0'),
           comentarioAlumno: s.comentario_alumno || s.comentario || ''
         });
-        const logs = (rows || []).map(l => {
+        const logs = rows.map(l => {
           const nested = Array.isArray(l.workout_log_sets) ? l.workout_log_sets.map(mapSetRow) : [];
           return {
             id: l.id,
-            alumnoId: l.alumno_id,
             rutinaId: l.routine_id || l.rutina_id,
+            rutinaT: l.rutina_titulo || l.rutina_t || 'Rutina',
+            alumnoId: l.alumno_id,
             diaId: l.dia_id || 'dia-1',
             diaNombre: l.dia_nombre,
             diaNumero: l.dia_numero || 1,
@@ -1023,33 +1066,16 @@ const { data: rpcData, error: rpcErr } = await this.client.rpc(
             sets: nested
           };
         });
-        // Si los sets nested vinieron vacíos, enriquecemos por IDs
+
+        // Guardia: Si los sets nested vinieron vacíos por RLS, enriquecemos por IDs
         if (logs.length && !logs.some(l => l.sets.length > 0)) {
           await this.enriquecerSeriesDeLogs(logs);
         }
-        console.log(`✅ Historial directo: ${logs.length} logs, con series: ${logs.filter(l => (l.sets || []).length).length}`);
+        console.log(`✅ Historial directo (fallback): ${logs.length} logs, con series: ${logs.filter(l => (l.sets || []).length).length}`);
         return { error: false, logs };
       }
 
-      // SELECT falló: intentar RPC corregida (Prioridad 1)
-      console.warn('⚠️ obtenerHistorial SELECT falló, intentando RPC:', error.message);
-      try {
-        const { data: rpcData, error: rpcErr } = await this.client.rpc(
-          'obtener_historial_alumno',
-          { p_alumno_id: alumnoUuid }
-        );
-        if (!rpcErr && Array.isArray(rpcData)) {
-          console.log(`✅ Historial via RPC: ${rpcData.length} logs`);
-          return { error: false, logs: rpcData };
-        }
-        const rpcMsg = rpcErr ? rpcErr.message : 'dato_nulo';
-        console.error('❌ RPC obtener_historial_alumno también falló:', rpcMsg);
-        // IMPORTANTE: retornar error=true, NO retornar [] como si fuera vacío real
-        return { error: true, reason: `rpc_failed: ${rpcMsg}`, logs: [] };
-      } catch (rpcEx) {
-        console.error('❌ Excepción en RPC fallback:', rpcEx && rpcEx.message);
-        return { error: true, reason: `rpc_exception: ${rpcEx && rpcEx.message}`, logs: [] };
-      }
+      return { error: true, reason: error ? error.message : 'desconocido', logs: [] };
     } catch (err) {
       console.error('❌ obtenerHistorialDesdeSupabase excepción general:', err);
       return { error: true, reason: `exception: ${err && err.message}`, logs: [] };
