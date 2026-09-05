@@ -372,6 +372,7 @@ CREATE POLICY "Profesores pueden leer suscripciones para envio de push"
 ON push_subscriptions FOR SELECT TO authenticated
 USING (is_profesor());
 
+
 -- ====================================================================
 -- HABILITACIÓN DE SUPABASE REALTIME
 -- ====================================================================
@@ -381,3 +382,141 @@ ALTER PUBLICATION supabase_realtime ADD TABLE exercise_goals;
 ALTER PUBLICATION supabase_realtime ADD TABLE workout_logs;
 ALTER PUBLICATION supabase_realtime ADD TABLE workout_log_sets;
 ALTER PUBLICATION supabase_realtime ADD TABLE notifications;
+
+-- ====================================================================
+-- FUNCIONES RPC: HISTORIAL DE ENTRENAMIENTOS
+-- CORRECCIÓN: Error original 42883 "function pg_catalog.extract(unknown, integer)"
+-- causado porque la función anterior llamaba EXTRACT() con un argumento de tipo
+-- incorrecto (entero en vez de timestamp/timestamptz). Reescritura completa
+-- usando subquery JSONB sin EXTRACT para evitar el problema de tipos.
+-- APLICAR EN: Supabase Dashboard > SQL Editor > Pegar y ejecutar este bloque.
+-- ====================================================================
+
+CREATE OR REPLACE FUNCTION obtener_historial_alumno(p_alumno_id UUID)
+RETURNS TABLE (
+  id                 UUID,
+  alumno_id          UUID,
+  routine_id         UUID,
+  dia_numero         INT,
+  dia_nombre         TEXT,
+  comentario_general TEXT,
+  estado             TEXT,
+  fecha_entrenamiento TIMESTAMPTZ,
+  sets               JSONB
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  -- Solo el propio alumno o un profesor puede consultar
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION 'No autenticado';
+  END IF;
+  IF auth.uid() <> p_alumno_id THEN
+    IF NOT EXISTS (
+      SELECT 1 FROM profiles WHERE id = auth.uid() AND rol = 'profesor'
+    ) THEN
+      RAISE EXCEPTION 'Sin autorización para ver este historial';
+    END IF;
+  END IF;
+
+  RETURN QUERY
+  SELECT
+    wl.id,
+    wl.alumno_id,
+    wl.routine_id,
+    wl.dia_numero,
+    wl.dia_nombre,
+    wl.comentario_general,
+    wl.estado,
+    wl.fecha_entrenamiento,
+    COALESCE(
+      (
+        SELECT jsonb_agg(
+          jsonb_build_object(
+            'id',                s.id,
+            'exercise_goal_id',  s.exercise_goal_id,
+            'exercise_nombre',   s.exercise_nombre,
+            'set_numero',        s.set_numero,
+            'reps_realizadas',   s.reps_realizadas,
+            'peso_utilizado',    s.peso_utilizado,
+            'comentario_alumno', s.comentario_alumno
+          ) ORDER BY s.set_numero
+        )
+        FROM workout_log_sets s
+        WHERE s.workout_log_id = wl.id
+      ),
+      '[]'::jsonb
+    ) AS sets
+  FROM workout_logs wl
+  WHERE wl.alumno_id = p_alumno_id
+  ORDER BY wl.fecha_entrenamiento DESC;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION obtener_historial_para_profesor(
+  p_alumno_id   UUID,
+  p_profesor_id UUID
+)
+RETURNS TABLE (
+  id                 UUID,
+  alumno_id          UUID,
+  routine_id         UUID,
+  dia_numero         INT,
+  dia_nombre         TEXT,
+  comentario_general TEXT,
+  estado             TEXT,
+  fecha_entrenamiento TIMESTAMPTZ,
+  sets               JSONB
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION 'No autenticado';
+  END IF;
+  IF auth.uid() <> p_profesor_id THEN
+    RAISE EXCEPTION 'El llamante no coincide con el profesor indicado';
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM profiles WHERE id = auth.uid() AND rol = 'profesor'
+  ) THEN
+    RAISE EXCEPTION 'Solo profesores pueden consultar historial de alumnos';
+  END IF;
+
+  RETURN QUERY
+  SELECT
+    wl.id,
+    wl.alumno_id,
+    wl.routine_id,
+    wl.dia_numero,
+    wl.dia_nombre,
+    wl.comentario_general,
+    wl.estado,
+    wl.fecha_entrenamiento,
+    COALESCE(
+      (
+        SELECT jsonb_agg(
+          jsonb_build_object(
+            'id',                s.id,
+            'exercise_goal_id',  s.exercise_goal_id,
+            'exercise_nombre',   s.exercise_nombre,
+            'set_numero',        s.set_numero,
+            'reps_realizadas',   s.reps_realizadas,
+            'peso_utilizado',    s.peso_utilizado,
+            'comentario_alumno', s.comentario_alumno
+          ) ORDER BY s.set_numero
+        )
+        FROM workout_log_sets s
+        WHERE s.workout_log_id = wl.id
+      ),
+      '[]'::jsonb
+    ) AS sets
+  FROM workout_logs wl
+  WHERE wl.alumno_id = p_alumno_id
+  ORDER BY wl.fecha_entrenamiento DESC;
+END;
+$$;

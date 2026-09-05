@@ -385,15 +385,61 @@ class GymStore {
         }
 
         if (freshData.workoutLogs !== null) {
+          const remoteCount = freshData.workoutLogs.length;
           const remoteIds = new Set(freshData.workoutLogs.map(l => String(l.id)));
+
           // Alumnos cubiertos por este snapshot (RLS: el alumno solo ve los suyos;
           // el profesor ve todos). Solo podamos logs locales de esos alumnos.
           const alumnosEnRemote = new Set(
             freshData.workoutLogs.map(l => l.alumnoId).filter(Boolean).map(String)
           );
-          // Si el sync es de un alumno concreto y el server devolvió lista (aunque
-          // vacía), también podamos ese alumnoId aunque no haya filas.
-          if (alumnoId) alumnosEnRemote.add(String(alumnoId));
+
+          // GUARDIA CONSERVADORA CONTRA VACIOS TRANSITORIOS:
+          // Si el servidor devuelve [] para un alumnoId concreto, NO podemos
+          // distinguir "el alumno fue borrado del servidor" de "la sesión Auth
+          // todavía no estaba hidratada y RLS bloqueó silenciosamente la consulta".
+          // En ambos casos el resultado REST es [] sin error.
+          //
+          // Regla: si el remote devolvió exactamente 0 logs para este alumno,
+          // pero el local tiene registros suyos, requerir 2 syncs vacíos
+          // consecutivos antes de podar — igual que hacemos con rutinas.
+          // Esto protege contra pérdidas por sincronizaciones fallidas/parciales.
+          //
+          // Excepción: si el alumnoId no está en el scope de este sync (undefined),
+          // o si el remote SÍ trae logs de ese alumno, el streak se resetea y
+          // se poda normalmente.
+          let permitirPodaLogs = true;
+          if (alumnoId) {
+            const alumnoIdStr = String(alumnoId);
+            const logsLocalesAlumno = this.data.workoutLogs.filter(
+              w => w.alumnoId != null && String(w.alumnoId) === alumnoIdStr
+            );
+            const remoteLogsAlumno = freshData.workoutLogs.filter(
+              l => l.alumnoId != null && String(l.alumnoId) === alumnoIdStr
+            );
+
+            if (remoteLogsAlumno.length === 0 && logsLocalesAlumno.length > 0) {
+              // El remote no trajo nada pero el local tiene historial: suspicioso.
+              const streakPrevio = this._logsEmptyStreak ? (this._logsEmptyStreak[alumnoIdStr] || 0) : 0;
+              if (!this._logsEmptyStreak) this._logsEmptyStreak = {};
+              const streakNuevo = streakPrevio + 1;
+              this._logsEmptyStreak[alumnoIdStr] = streakNuevo;
+              if (streakNuevo < 2) {
+                // Primera vez vacío: preservar logs locales, no podar todavía.
+                permitirPodaLogs = false;
+                console.warn(`⚠️ [sync] workout_logs para alumno ${alumnoIdStr} vino vacío del servidor pero hay ${logsLocalesAlumno.length} log(s) locales. Puede ser RLS sin sesión activa o error de red. Confirmación ${streakNuevo}/2 → se preservan los logs locales por esta vez.`);
+              } else {
+                console.log(`🗑️ [sync] workout_logs confirmó vacío 2 veces seguidas para alumno ${alumnoIdStr} → se acepta como verdad y se poda.`);
+              }
+            } else {
+              // El remote trajo datos (o no había nada local que perder): resetear streak.
+              if (!this._logsEmptyStreak) this._logsEmptyStreak = {};
+              this._logsEmptyStreak[alumnoIdStr] = 0;
+              // Si el sync es de un alumno concreto y el server devolvió lista (aunque
+              // vacía), también podamos ese alumnoId aunque no haya filas.
+              alumnosEnRemote.add(alumnoIdStr);
+            }
+          }
 
           freshData.workoutLogs.forEach(sbLog => {
             const idx = this.data.workoutLogs.findIndex(w => String(w.id) === String(sbLog.id));
@@ -414,19 +460,21 @@ class GymStore {
             }
           });
 
-          // Borrar locales que el server ya no tiene (ej. borrados desde el celu)
-          const antes = this.data.workoutLogs.length;
-          this.data.workoutLogs = this.data.workoutLogs.filter(w => {
-            const aid = w.alumnoId != null ? String(w.alumnoId) : null;
-            // Solo tocamos logs de alumnos incluidos en este snapshot
-            if (aid && alumnosEnRemote.has(aid)) {
-              return remoteIds.has(String(w.id));
+          if (permitirPodaLogs) {
+            // Borrar locales que el server ya no tiene (ej. borrados desde el celu)
+            const antes = this.data.workoutLogs.length;
+            this.data.workoutLogs = this.data.workoutLogs.filter(w => {
+              const aid = w.alumnoId != null ? String(w.alumnoId) : null;
+              // Solo tocamos logs de alumnos incluidos en este snapshot
+              if (aid && alumnosEnRemote.has(aid)) {
+                return remoteIds.has(String(w.id));
+              }
+              return true; // otros alumnos / sin id: no tocar
+            });
+            const borrados = antes - this.data.workoutLogs.length;
+            if (borrados > 0) {
+              console.log('🗑️ Historial: eliminados', borrados, 'log(s) locales que ya no están en Supabase');
             }
-            return true; // otros alumnos / sin id: no tocar
-          });
-          const borrados = antes - this.data.workoutLogs.length;
-          if (borrados > 0) {
-            console.log('🗑️ Historial: eliminados', borrados, 'log(s) locales que ya no están en Supabase');
           }
           huboCambios = true;
         }

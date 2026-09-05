@@ -474,9 +474,9 @@ document.addEventListener('DOMContentLoaded', () => {
             await gymStore.syncWithSupabase(res.data.id);
             // Sincronizar historial desde Supabase
             if (window.supabaseEngine) {
-              const sbLogs = await window.supabaseEngine.obtenerHistorialDesdeSupabase(res.data.id);
-              if (sbLogs && sbLogs.length > 0) {
-                sbLogs.forEach(sbLog => {
+              const sbResult = await window.supabaseEngine.obtenerHistorialDesdeSupabase(res.data.id);
+              if (sbResult && !sbResult.error && sbResult.logs && sbResult.logs.length > 0) {
+                sbResult.logs.forEach(sbLog => {
                   const idx = gymStore.data.workoutLogs.findIndex(w => String(w.id) === String(sbLog.id));
                   const remoteSets = Array.isArray(sbLog.sets) ? sbLog.sets : [];
                   if (idx >= 0) {
@@ -490,6 +490,8 @@ document.addEventListener('DOMContentLoaded', () => {
                 });
                 gymStore.saveData();
                 window.dispatchEvent(new CustomEvent('gym_store_updated'));
+              } else if (sbResult && sbResult.error) {
+                console.warn('⚠️ obtenerHistorialDesdeSupabase falló al cargar historial post-login; se preserva historial local.');
               }
             }
           }, 300);
@@ -2401,6 +2403,9 @@ document.addEventListener('DOMContentLoaded', () => {
       ${Object.entries(grouped).map(([rId, g]) => {
         const totalSemanas = Math.max(1, Math.ceil(g.duracionDias / 7));
         const semanasOrdenadas = Object.keys(g.semanas).map(Number).sort((a, b) => a - b);
+        // Usar el máximo entre la duración teórica y la semana más alta con datos reales
+        const semanasConDatos = semanasOrdenadas.length;
+        const semanaMaxReal = semanasOrdenadas.length > 0 ? semanasOrdenadas[semanasOrdenadas.length - 1] : 0;
 
         return `
         <div style="margin-bottom:28px">
@@ -2409,13 +2414,13 @@ document.addEventListener('DOMContentLoaded', () => {
             <div style="font-size:1.3rem">💪</div>
             <div>
               <div style="font-size:1.1rem; font-weight:900; color:#fff">${g.titulo}</div>
-              <div style="font-size:0.78rem; color:var(--text-gray)">${totalSemanas} semanas · ${g.duracionDias} días
+              <div style="font-size:0.78rem; color:var(--text-gray)">${semanasConDatos} ${semanasConDatos === 1 ? 'semana' : 'semanas'} con registros · ${g.duracionDias} días
                 ${g.fechaInicio ? ' · Inicio: ' + new Date(g.fechaInicio).toLocaleDateString('es-AR') : ''}
               </div>
             </div>
           </div>
 
-          ${Array.from({ length: totalSemanas }, (_, i) => i + 1).map(numSemana => {
+          ${semanasOrdenadas.map(numSemana => {
             const diasEsaSemana = g.semanas[numSemana];
             const tieneRegistros = diasEsaSemana && Object.keys(diasEsaSemana).length > 0;
 
@@ -4153,9 +4158,9 @@ document.addEventListener('DOMContentLoaded', () => {
             setTimeout(async () => {
               await gymStore.syncWithSupabase(perfilAlumno.id);
               if (window.supabaseEngine) {
-                const sbLogs = await window.supabaseEngine.obtenerHistorialDesdeSupabase(perfilAlumno.id);
-                if (sbLogs && sbLogs.length > 0) {
-                  sbLogs.forEach(sbLog => {
+                const sbResult = await window.supabaseEngine.obtenerHistorialDesdeSupabase(perfilAlumno.id);
+                if (sbResult && !sbResult.error && sbResult.logs && sbResult.logs.length > 0) {
+                  sbResult.logs.forEach(sbLog => {
                     const idx = gymStore.data.workoutLogs.findIndex(w => String(w.id) === String(sbLog.id));
                     const remoteSets = Array.isArray(sbLog.sets) ? sbLog.sets : [];
                     if (idx >= 0) {
@@ -4169,6 +4174,8 @@ document.addEventListener('DOMContentLoaded', () => {
                   });
                   gymStore.saveData();
                   window.dispatchEvent(new CustomEvent('gym_store_updated'));
+                } else if (sbResult && sbResult.error) {
+                  console.warn('⚠️ obtenerHistorialDesdeSupabase falló en restauración de sesión; se preserva historial local.');
                 }
               }
             }, 400);
@@ -5454,9 +5461,9 @@ alert("🚀 ¡Rutina propia creada! Ya podés empezar a entrenarla desde \"Mías
             setTimeout(async () => {
               await gymStore.syncWithSupabase(perfilAlumno.id);
               if (window.supabaseEngine) {
-                const sbLogs = await window.supabaseEngine.obtenerHistorialDesdeSupabase(perfilAlumno.id);
-                if (sbLogs && sbLogs.length > 0) {
-                  sbLogs.forEach(sbLog => {
+                const sbResult = await window.supabaseEngine.obtenerHistorialDesdeSupabase(perfilAlumno.id);
+                if (sbResult && !sbResult.error && sbResult.logs && sbResult.logs.length > 0) {
+                  sbResult.logs.forEach(sbLog => {
                     const idx = gymStore.data.workoutLogs.findIndex(w => String(w.id) === String(sbLog.id));
                     const remoteSets = Array.isArray(sbLog.sets) ? sbLog.sets : [];
                     if (idx >= 0) {
@@ -5470,6 +5477,8 @@ alert("🚀 ¡Rutina propia creada! Ya podés empezar a entrenarla desde \"Mías
                   });
                   gymStore.saveData();
                   window.dispatchEvent(new CustomEvent('gym_store_updated'));
+                } else if (sbResult && sbResult.error) {
+                  console.warn('⚠️ obtenerHistorialDesdeSupabase falló en restauración de sesión Auth; se preserva historial local.');
                 }
               }
             }, 400);

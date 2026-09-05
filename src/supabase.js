@@ -986,44 +986,73 @@ const { data: rpcData, error: rpcErr } = await this.client.rpc(
     }
   }
 
-    async obtenerHistorialDesdeSupabase(alumnoId) {
-    if (!this.client) return [];
+  async obtenerHistorialDesdeSupabase(alumnoId) {
+    if (!this.client) return { error: true, reason: 'no_client', logs: [] };
     try {
       const alumnoUuid = this.ensureValidUUID(alumnoId);
-      // Misma fuente que el sync general
+      // Intento 1: SELECT directo con nested sets (más fiable con RLS activo)
       const { data: rows, error } = await this.client
         .from('workout_logs')
-        .select('*')
+        .select('*, workout_log_sets(*)')
         .eq('alumno_id', alumnoUuid)
         .order('fecha_entrenamiento', { ascending: false });
-      if (error) {
-        console.warn('⚠️ obtenerHistorial SELECT:', error.message);
-        // fallback RPC
-        try {
-          const { data, error: rpcErr } = await this.client.rpc('obtener_historial_alumno', { p_alumno_id: alumnoUuid });
-          if (!rpcErr && data) return Array.isArray(data) ? data : [];
-        } catch (_) {}
-        return [];
+
+      if (!error) {
+        // SELECT exitoso
+        const mapSetRow = (s) => ({
+          ejercicioId: s.exercise_goal_id || s.ejercicio_id || null,
+          ejercicioNombre: s.exercise_nombre || s.ejercicio_nombre || s.nombre || s.exercise_name || '',
+          setNumero: s.set_numero != null ? s.set_numero : (s.setNumero || 0),
+          repsRealizadas: s.reps_realizadas != null ? s.reps_realizadas : (s.reps || 0),
+          pesoUtilizado: s.peso_utilizado != null ? s.peso_utilizado : (s.peso || '0'),
+          comentarioAlumno: s.comentario_alumno || s.comentario || ''
+        });
+        const logs = (rows || []).map(l => {
+          const nested = Array.isArray(l.workout_log_sets) ? l.workout_log_sets.map(mapSetRow) : [];
+          return {
+            id: l.id,
+            alumnoId: l.alumno_id,
+            rutinaId: l.routine_id || l.rutina_id,
+            diaId: l.dia_id || 'dia-1',
+            diaNombre: l.dia_nombre,
+            diaNumero: l.dia_numero || 1,
+            fecha: l.fecha_entrenamiento,
+            estado: l.estado,
+            comentarioGeneral: l.comentario_general || '',
+            puntos: l.puntos != null ? l.puntos : undefined,
+            sets: nested
+          };
+        });
+        // Si los sets nested vinieron vacíos, enriquecemos por IDs
+        if (logs.length && !logs.some(l => l.sets.length > 0)) {
+          await this.enriquecerSeriesDeLogs(logs);
+        }
+        console.log(`✅ Historial directo: ${logs.length} logs, con series: ${logs.filter(l => (l.sets || []).length).length}`);
+        return { error: false, logs };
       }
-      const logs = (rows || []).map(l => ({
-        id: l.id,
-        alumnoId: l.alumno_id,
-        rutinaId: l.routine_id || l.rutina_id,
-        diaId: l.dia_id || 'dia-1',
-        diaNombre: l.dia_nombre,
-        diaNumero: l.dia_numero || 1,
-        fecha: l.fecha_entrenamiento,
-        estado: l.estado,
-        comentarioGeneral: l.comentario_general || '',
-        puntos: l.puntos != null ? l.puntos : undefined,
-        sets: []
-      }));
-      await this.enriquecerSeriesDeLogs(logs);
-      console.log(`✅ Historial: ${logs.length} logs, con series: ${logs.filter(l => (l.sets || []).length).length}`);
-      return logs;
+
+      // SELECT falló: intentar RPC corregida (Prioridad 1)
+      console.warn('⚠️ obtenerHistorial SELECT falló, intentando RPC:', error.message);
+      try {
+        const { data: rpcData, error: rpcErr } = await this.client.rpc(
+          'obtener_historial_alumno',
+          { p_alumno_id: alumnoUuid }
+        );
+        if (!rpcErr && Array.isArray(rpcData)) {
+          console.log(`✅ Historial via RPC: ${rpcData.length} logs`);
+          return { error: false, logs: rpcData };
+        }
+        const rpcMsg = rpcErr ? rpcErr.message : 'dato_nulo';
+        console.error('❌ RPC obtener_historial_alumno también falló:', rpcMsg);
+        // IMPORTANTE: retornar error=true, NO retornar [] como si fuera vacío real
+        return { error: true, reason: `rpc_failed: ${rpcMsg}`, logs: [] };
+      } catch (rpcEx) {
+        console.error('❌ Excepción en RPC fallback:', rpcEx && rpcEx.message);
+        return { error: true, reason: `rpc_exception: ${rpcEx && rpcEx.message}`, logs: [] };
+      }
     } catch (err) {
-      console.error('❌ obtenerHistorialDesdeSupabase:', err);
-      return [];
+      console.error('❌ obtenerHistorialDesdeSupabase excepción general:', err);
+      return { error: true, reason: `exception: ${err && err.message}`, logs: [] };
     }
   }
 
