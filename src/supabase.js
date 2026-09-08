@@ -9,6 +9,53 @@ const SUPABASE_CONFIG = {
   // que lee /api/vapid-public-key (Vercel) o /.netlify/functions/vapid-public-key.
 };
 
+// --- PERSISTENCIA DE "ENTRADA EN CALOR" COMPATIBLE CON EL ESQUEMA ACTUAL ---
+// exercise_goals no tiene una columna dedicada para esEntradaEnCalor, y las
+// RPCs guardar_rutina_profesor / guardar_rutina_propia_alumno / obtener_rutinas_alumno
+// (viven solo en la base de Supabase, no en este repo) tampoco la contemplan:
+// cualquier propiedad del ejercicio que no mapee a una columna existente se
+// pierde en el viaje de ida y vuelta a Supabase. Por eso, sin tocar RLS/Auth/
+// esquema/RPCs, el flag se codifica como un sufijo en `pesoSugerido` (columna
+// que ya existe y ya viaja intacta ida y vuelta): al guardar se le agrega el
+// sufijo si el ejercicio es de entrada en calor, y al leer se detecta y se
+// quita, reconstruyendo tanto el valor original de pesoSugerido como el flag.
+window.EF_WARMUP_MARK = '\u2063§EFWARMUP§\u2063';
+
+// Codifica esEntradaEnCalor dentro de pesoSugerido para el payload que viaja
+// a la RPC de Supabase. Devuelve un array NUEVO de días (no muta los objetos
+// originales) para no afectar el estado local en memoria antes de guardar.
+window.efEncodeWarmupParaSupabase = function (dias) {
+  return (dias || []).map(d => ({
+    ...d,
+    ejercicios: (d.ejercicios || []).map(e => {
+      const esWarm = !!(e.esEntradaEnCalor || e.entradaEnCalor || e.es_warmup);
+      if (!esWarm) return { ...e };
+      const base = String(e.pesoSugerido == null ? '' : e.pesoSugerido) || 'S/D';
+      const pesoConMarca = base.endsWith(window.EF_WARMUP_MARK) ? base : (base + window.EF_WARMUP_MARK);
+      return { ...e, pesoSugerido: pesoConMarca };
+    })
+  }));
+};
+
+// Decodifica el marcador desde datos que vienen de Supabase (RPC de lectura)
+// y reconstruye esEntradaEnCalor + el pesoSugerido original. Muta los
+// objetos recibidos in-place (son objetos frescos del JSON de la respuesta,
+// no los que ya están en this.data.rutinas).
+window.efDecodeWarmupDesdeSupabase = function (dias) {
+  (dias || []).forEach(d => {
+    (d.ejercicios || []).forEach(e => {
+      const pesoStr = String(e.pesoSugerido == null ? '' : e.pesoSugerido);
+      const marcadoPorPeso = pesoStr.endsWith(window.EF_WARMUP_MARK);
+      if (marcadoPorPeso) {
+        e.pesoSugerido = pesoStr.slice(0, -window.EF_WARMUP_MARK.length) || 'S/D';
+      }
+      // Compatibilidad con rutinas antiguas u objetos que ya traían el flag
+      e.esEntradaEnCalor = !!(e.esEntradaEnCalor || e.entradaEnCalor || e.es_warmup || marcadoPorPeso);
+    });
+  });
+  return dias;
+};
+
 class SupabaseEngine {
   constructor() {
     this.client = null;
@@ -402,9 +449,14 @@ rutina.alumnoId = alumnoUuid;
     titulo: rutina.titulo
 });
 
+// Payload separado (no muta `rutina`/el estado local en memoria): codifica
+// esEntradaEnCalor en pesoSugerido para que sobreviva el viaje por la RPC
+// (ver window.efEncodeWarmupParaSupabase más arriba en este archivo).
+const rutinaParaRPC = { ...rutina, dias: window.efEncodeWarmupParaSupabase(rutina.dias) };
+
 const { data: rpcData, error: rpcErr } = await this.client.rpc(
     'guardar_rutina_profesor',
-    { p_rutina: rutina }
+    { p_rutina: rutinaParaRPC }
 );
 
       if (rpcErr) {
@@ -445,11 +497,15 @@ const { data: rpcData, error: rpcErr } = await this.client.rpc(
         }))
       }));
 
+      // Payload separado (no muta `rutina`/el estado local en memoria): codifica
+      // esEntradaEnCalor en pesoSugerido para que sobreviva el viaje por la RPC.
+      const rutinaParaRPC = { ...rutina, dias: window.efEncodeWarmupParaSupabase(rutina.dias) };
+
       // Única vía: RPC guardar_rutina_profesor (SECURITY DEFINER)
       // La RPC detecta si la rutina existe y hace UPDATE o INSERT según corresponda.
       const { data: rpcData, error: rpcErr } = await this.client.rpc(
         'guardar_rutina_profesor',
-        { p_rutina: rutina }
+        { p_rutina: rutinaParaRPC }
       );
 
       if (rpcErr) {
@@ -559,9 +615,13 @@ const { data: rpcData, error: rpcErr } = await this.client.rpc(
         }))
       }));
 
+      // Payload separado (no muta `rutina`/el estado local en memoria): codifica
+      // esEntradaEnCalor en pesoSugerido para que sobreviva el viaje por la RPC.
+      const rutinaParaRPC = { ...rutina, dias: window.efEncodeWarmupParaSupabase(rutina.dias) };
+
       const { data: rpcData, error: rpcErr } = await this.client.rpc(
         'guardar_rutina_propia_alumno',
-        { p_rutina: rutina }
+        { p_rutina: rutinaParaRPC }
       );
 
       if (rpcErr) {

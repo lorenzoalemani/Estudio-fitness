@@ -366,6 +366,12 @@ class GymStore {
             sbRutina.esPropia = esRutinaPropia;
             sbRutina.alumnoCreadorId = esRutinaPropia ? sbRutina.alumnoId : undefined;
 
+            // Reconstruir esEntradaEnCalor: exercise_goals no tiene columna
+            // dedicada, así que el flag viaja codificado en pesoSugerido
+            // (ver window.efEncodeWarmupParaSupabase/efDecodeWarmupDesdeSupabase
+            // en supabase.js). Acá se decodifica antes de pisar el estado local.
+            if (window.efDecodeWarmupDesdeSupabase) window.efDecodeWarmupDesdeSupabase(sbRutina.dias);
+
             const idx = this.data.rutinas.findIndex(r => r.id === sbRutina.id);
             if (idx >= 0) {
               this.data.rutinas[idx] = sbRutina;
@@ -602,6 +608,11 @@ class GymStore {
         const esRutinaPropia = sbRutina.profesorId === null;
         sbRutina.esPropia = esRutinaPropia;
         sbRutina.alumnoCreadorId = esRutinaPropia ? sbRutina.alumnoId : undefined;
+
+        // Mismo fix que en syncWithSupabase: decodificar esEntradaEnCalor
+        // desde el marcador embebido en pesoSugerido antes de pisar el
+        // estado local (ver supabase.js: efDecodeWarmupDesdeSupabase).
+        if (window.efDecodeWarmupDesdeSupabase) window.efDecodeWarmupDesdeSupabase(sbRutina.dias);
 
         const idx = this.data.rutinas.findIndex(rt => rt.id === sbRutina.id);
         if (idx >= 0) {
