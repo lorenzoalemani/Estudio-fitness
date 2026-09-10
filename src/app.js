@@ -209,7 +209,11 @@ document.addEventListener('DOMContentLoaded', () => {
     workoutDraftSets: {},       // Estado temporal del entrenamiento en progreso por serie
     ejercicioActivoIndex: 0,    // Índice del ejercicio visible en el modo entrenamiento ejercicio-por-ejercicio
     borradorEntrenamientoDetectado: null, // borrador recuperado de localStorage, pendiente de confirmar Continuar/Descartar
-    historialProfesorLogs: null  // Caché async del historial del alumno visto por el profesor
+    historialProfesorLogs: null,  // Caché async del historial del alumno visto por el profesor
+    mostrarModalRacha: false,
+    rachaModalData: null,
+    presetSeleccionadaId: null,
+    mostrarModalPresetDetalle: false
   };
 
   // Escuchar cambios de Supabase Realtime / Local Store
@@ -603,6 +607,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const pendienteAutorizacion = alumno.estadoAutorizacion === 'pendiente';
 
     const historialEntrenamientos = store.getHistorialEntrenamientosReales(alumno.id);
+    const rachaInfo = calcularRachaAlumno(alumno.id);
 
     appContainer.innerHTML = `
       ${renderHeader()}
@@ -613,6 +618,16 @@ document.addEventListener('DOMContentLoaded', () => {
             ⚠️ Tu DNI (<strong>${alumno.dni}</strong>) todavía no fue autorizado por tu profesor, así que aún no
             vas a ver rutinas asignadas. Mientras tanto, ¡ya podés crear y entrenar tus propias rutinas en
             <strong>"Mías"</strong>! Pedile a tu profe que te autorice para recibir rutinas personalizadas.
+          </div>
+        ` : ''}
+
+        ${(!appState.diaActivoEntrenamiento && rachaInfo.requiereAtencionRecuperar) ? `
+          <div class="racha-warning-card" style="background: linear-gradient(135deg, rgba(255,107,0,0.15), rgba(255,60,0,0.25)); border: 1px solid rgba(255,107,0,0.4); border-radius: 16px; padding: 14px 16px; margin-bottom: 16px; display: flex; align-items: center; gap: 14px; box-shadow: 0 4px 16px rgba(255,107,0,0.15);">
+            <div style="font-size: 2.2rem; filter: drop-shadow(0 0 10px rgba(255,107,0,0.6)); animation: efFlameGlow 1.2s infinite alternate;">🔥</div>
+            <div style="flex: 1">
+              <div style="font-weight: 900; font-size: 1rem; color: #ff8a00; letter-spacing: 0.3px">¡No pierdas tu racha! 🔥</div>
+              <div style="font-size: 0.82rem; color: #e0e0e0; margin-top: 2px">Llevás <strong>${rachaInfo.rachaActual} días</strong> de racha. ¡Entrená hoy para mantenerla viva!</div>
+            </div>
           </div>
         ` : ''}
 
@@ -635,6 +650,8 @@ document.addEventListener('DOMContentLoaded', () => {
       ${appState.modalActivo === 'editar_entrenamiento' ? renderModalEditarEntrenamiento(alumno) : ''}
       ${appState.modalActivo === 'confirmar_borrar_entrenamiento' ? renderModalConfirmarBorrarEntrenamiento(alumno) : ''}
       ${appState.borradorEntrenamientoDetectado ? renderModalRecuperarBorrador() : ''}
+      ${renderStreakModal()}
+      ${renderPresetDetailModal()}
 
       ${renderBottomNav()}
     `;
@@ -644,6 +661,7 @@ document.addEventListener('DOMContentLoaded', () => {
     bindBottomNavEvents();
     bindMisRutinasEvents(alumno);
     bindHistorialEvents(alumno);
+    bindPresetAndStreakEvents();
     if (appState.tabCliente === 'stats') bindStatsEvents(historialEntrenamientos);
     bindBorradorEntrenamientoEvents();
 
@@ -705,23 +723,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function renderRoutinesListView(alumno) {
     const rutinas = store.getRutinasAlumno(alumno.id);
-    if (!rutinas || rutinas.length === 0) {
-      return `
-        <div class="routine-banner" style="text-align:center; justify-content:center; flex-direction:column; padding:30px 20px">
-          <div style="font-size:2.5rem; margin-bottom:10px">🏋️</div>
-          <h2 style="font-size:1.3rem; font-weight:900">Sin Rutinas Asignadas</h2>
-          <p style="color:var(--text-gray); font-size:0.9rem; margin-top:6px">Tu profesor te asignará una nueva rutina personalizada en breve.</p>
-        </div>
-      `;
-    }
 
     return `
+      ${renderPresetsSection()}
+
       <div style="margin-bottom:16px">
-        <h2 style="font-size:1.4rem; font-weight:900; letter-spacing:0.5px">Mis Rutinas</h2>
+        <h2 style="font-size:1.4rem; font-weight:900; letter-spacing:0.5px">Mis Rutinas Asignadas</h2>
         <p style="font-size:0.85rem; color:var(--text-gray)">Seleccioná una rutina para ver tus días de entrenamiento</p>
       </div>
 
-      ${rutinas.map(r => {
+      ${(!rutinas || rutinas.length === 0) ? `
+        <div class="routine-banner" style="text-align:center; justify-content:center; flex-direction:column; padding:30px 20px">
+          <div style="font-size:2.5rem; margin-bottom:10px">🏋️</div>
+          <h2 style="font-size:1.3rem; font-weight:900">Sin Rutinas Asignadas</h2>
+          <p style="color:var(--text-gray); font-size:0.9rem; margin-top:6px">Tu profesor te asignará una nueva rutina personalizada en breve, o podés elegir una rutina preestablecida arriba.</p>
+        </div>
+      ` : rutinas.map(r => {
         const semanas = Math.max(1, Math.ceil((r.duracionDias || 30) / 7));
         const esActiva = r.estado === 'activa';
         const diasRestantes = store.calcularDiasRestantes(r.fechaVencimiento);
@@ -1734,16 +1751,999 @@ document.addEventListener('DOMContentLoaded', () => {
   };
 
   // Extrae el día calendario (YYYY-MM-DD) de un ISO string usando la ZONA HORARIA LOCAL
-  // del navegador, NO UTC. log.fecha se guarda como new Date().toISOString() (ej. "2026-08-12T23:30:00.000Z"),
-  // y usar toISOString().slice(0,10) para agrupar desplazaría al día siguiente cualquier
-  // entrenamiento hecho entre las 21:00 y las 23:59 hora Argentina (UTC-3). No modifica el
-  // formato almacenado en Supabase, solo cómo se interpreta acá para contar días.
+  // (o Argentina) para agrupar días correctamente.
   function getFechaCalendarioLocal(fechaISO) {
+    if (!fechaISO) return '';
     const d = new Date(fechaISO);
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${y}-${m}-${day}`;
+    if (isNaN(d.getTime())) return '';
+    try {
+      return d.toLocaleDateString('sv-SE', { timeZone: 'America/Argentina/Buenos_Aires' });
+    } catch (e) {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    }
+  }
+
+  // ====================================================================
+  // NUEVO SISTEMA DE RUTINAS PREESTABLECIDAS (13 PLANTILLAS DE ENTRENAMIENTO)
+  // ====================================================================
+  const PRESET_ROUTINES = [
+    {
+      id: 'preset-principiante-1d',
+      titulo: 'PRINCIPIANTE',
+      nivel: 'Principiante',
+      duracionDias: 1,
+      diasTexto: '1 DÍA',
+      descripcion: 'Rutina de prueba para quienes recién comienzan en el gimnasio.',
+      imagen: 'https://images.unsplash.com/photo-1517838277536-f5f99be501cd?q=80&w=600&auto=format&fit=crop',
+      dias: [
+        {
+          nombre: 'Sesión Principiante (Full Body)',
+          diaNumero: 1,
+          ejercicios: [
+            { nombre: 'Prensa de piernas', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Según nivel', notaProfesor: 'Mantener la espalda bien apoyada.' },
+            { nombre: 'Press de pecho en maquina', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Según nivel', notaProfesor: 'Empujar con control sintiendo el pecho.' },
+            { nombre: 'Jalon dorsal prono amplio', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Según nivel', notaProfesor: 'Llevar la barra al pecho sin dar tirones.' },
+            { nombre: 'Remo sentado en polea', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Según nivel', notaProfesor: 'Mantener postura erguida.' },
+            { nombre: 'Peso muerto rumano con mancuernas', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Según nivel', notaProfesor: 'Flexión ligera de rodilla, cadera hacia atrás.' },
+            { nombre: 'Vuelos laterales con mancuernas', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Según nivel', notaProfesor: 'Elevar hasta la altura de los hombros.' },
+            { nombre: 'Biceps con mancuernas', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Según nivel', notaProfesor: 'Codos fijos pegados al cuerpo.' },
+            { nombre: 'Extension de triceps con soga en polea', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Según nivel', notaProfesor: 'Abrir la soga al final de la extensión.' }
+          ]
+        }
+      ]
+    },
+    {
+      id: 'preset-intermedio-1d',
+      titulo: 'INTERMEDIO',
+      nivel: 'Intermedio',
+      duracionDias: 1,
+      diasTexto: '1 DÍA',
+      descripcion: 'Sesión de prueba completa de un solo día para nivel intermedio.',
+      imagen: 'https://images.unsplash.com/photo-1534438327276-14e5300c3a48?q=80&w=600&auto=format&fit=crop',
+      dias: [
+        {
+          nombre: 'Sesión Intermedia (Full Body)',
+          diaNumero: 1,
+          ejercicios: [
+            { nombre: 'Sentadilla trasera con barra', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Según nivel', notaProfesor: 'Bajar con control manteniendo núcleo firme.' },
+            { nombre: 'Press de pecho plano con barra', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Según nivel', notaProfesor: 'Retracción escapular durante todo el rango.' },
+            { nombre: 'Jalon dorsal neutro', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Según nivel', notaProfesor: 'Enfoque de tracción dorsal.' },
+            { nombre: 'Press de hombro con mancuernas', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Según nivel', notaProfesor: 'Subida fluida sin chocar mancuernas.' },
+            { nombre: 'Hip thrust', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Según nivel', notaProfesor: 'Pausa de 1 seg arriba contrayendo glúteos.' },
+            { nombre: 'Remo con mancuerna', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Según nivel', notaProfesor: 'Tracción enfocada hacia la cadera.' },
+            { nombre: 'Biceps martillo', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Según nivel', notaProfesor: 'Agarre neutro estricto.' },
+            { nombre: 'Plancha frontal', seriesTarget: 3, repeticionesTarget: '45 seg', pesoSugerido: 'Corporal', notaProfesor: 'Cuerpo totalmente alineado.' }
+          ]
+        }
+      ]
+    },
+    {
+      id: 'preset-avanzado-1d',
+      titulo: 'AVANZADO',
+      nivel: 'Avanzado',
+      duracionDias: 1,
+      diasTexto: '1 DÍA',
+      descripcion: 'Sesión intensiva de un solo día para nivel avanzado.',
+      imagen: 'https://images.unsplash.com/photo-1581009146145-b5ef050c2e1e?q=80&w=600&auto=format&fit=crop',
+      dias: [
+        {
+          nombre: 'Sesión Avanzada (Alta Intensidad)',
+          diaNumero: 1,
+          ejercicios: [
+            { nombre: 'Peso muerto', seriesTarget: 4, repeticionesTarget: '6-8', pesoSugerido: 'Alto', notaProfesor: 'Empuje de piernas inicial con torso neutro.' },
+            { nombre: 'Press de pecho inclinado con mancuernas', seriesTarget: 4, repeticionesTarget: '8-10', pesoSugerido: 'Alto', notaProfesor: 'Apertura controlada abajo.' },
+            { nombre: 'Dominadas o jalon al pecho', seriesTarget: 4, repeticionesTarget: '8-10', pesoSugerido: 'Según nivel', notaProfesor: 'Contracción completa en cada repetición.' },
+            { nombre: 'Sentadilla bulgara', seriesTarget: 3, repeticionesTarget: '10 por pierna', pesoSugerido: 'Medio', notaProfesor: 'Profundidad estable.' },
+            { nombre: 'Press militar con barra', seriesTarget: 4, repeticionesTarget: '8', pesoSugerido: 'Alto', notaProfesor: 'Bloqueo vertical de hombros.' },
+            { nombre: 'Remo en smith', seriesTarget: 3, repeticionesTarget: '10', pesoSugerido: 'Medio-Alto', notaProfesor: 'Trazo guiado al abdomen.' },
+            { nombre: 'Biceps con barra z', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio', notaProfesor: 'Sin balanceo.' },
+            { nombre: 'Fondos en paralelas', seriesTarget: 3, repeticionesTarget: '10-12', pesoSugerido: 'Corporal/Lastre', notaProfesor: 'Inclinación de torso al bajar.' },
+            { nombre: 'Abs rectos con peso', seriesTarget: 3, repeticionesTarget: '15', pesoSugerido: 'Disco 5-10kg', notaProfesor: 'Enrollamiento abdominal.' }
+          ]
+        }
+      ]
+    },
+    {
+      id: 'preset-ppl-x2-5d',
+      titulo: 'PPL X2',
+      nivel: 'Intermedio / Avanzado',
+      duracionDias: 30,
+      diasTexto: '5 DÍAS',
+      descripcion: 'Programa Push / Pull / Legs / Push / Pull de 5 días.',
+      imagen: 'https://images.unsplash.com/photo-1583454110551-21f2fa2afe61?q=80&w=600&auto=format&fit=crop',
+      dias: [
+        {
+          nombre: 'Día 1 — Push A',
+          diaNumero: 1,
+          ejercicios: [
+            { nombre: 'Press de pecho plano con barra', seriesTarget: 4, repeticionesTarget: '8-10', pesoSugerido: 'Progresivo' },
+            { nombre: 'Press de hombro en maquina', seriesTarget: 3, repeticionesTarget: '10-12', pesoSugerido: 'Medio' },
+            { nombre: 'Apertura en banco inclinado', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Vuelos laterales en polea', seriesTarget: 4, repeticionesTarget: '12-15', pesoSugerido: 'Controlado' },
+            { nombre: 'Extension de triceps con soga en polea', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Press frances con barra z', seriesTarget: 3, repeticionesTarget: '10-12', pesoSugerido: 'Medio' },
+            { nombre: 'Plancha frontal', seriesTarget: 3, repeticionesTarget: '45 seg', pesoSugerido: 'Corporal' }
+          ]
+        },
+        {
+          nombre: 'Día 2 — Pull A',
+          diaNumero: 2,
+          ejercicios: [
+            { nombre: 'Jalon dorsal prono amplio', seriesTarget: 4, repeticionesTarget: '8-10', pesoSugerido: 'Progresivo' },
+            { nombre: 'Remo sentado en polea', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio-Alto' },
+            { nombre: 'Pull over en polea con soga', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Face pull', seriesTarget: 3, repeticionesTarget: '15', pesoSugerido: 'Medio' },
+            { nombre: 'Biceps con barra en polea', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Biceps martillo', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Abs bolitas', seriesTarget: 3, repeticionesTarget: '15', pesoSugerido: 'Corporal' }
+          ]
+        },
+        {
+          nombre: 'Día 3 — Legs',
+          diaNumero: 3,
+          ejercicios: [
+            { nombre: 'Sentadilla trasera con barra', seriesTarget: 4, repeticionesTarget: '8-10', pesoSugerido: 'Progresivo' },
+            { nombre: 'Prensa de piernas', seriesTarget: 4, repeticionesTarget: '10-12', pesoSugerido: 'Alto' },
+            { nombre: 'Peso muerto rumano con mancuernas', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio-Alto' },
+            { nombre: 'Cuadricera', seriesTarget: 3, repeticionesTarget: '12-15', pesoSugerido: 'Medio' },
+            { nombre: 'Camilla de isquios', seriesTarget: 3, repeticionesTarget: '12-15', pesoSugerido: 'Medio' },
+            { nombre: 'Gemelos de pie', seriesTarget: 4, repeticionesTarget: '15', pesoSugerido: 'Medio' }
+          ]
+        },
+        {
+          nombre: 'Día 4 — Push B',
+          diaNumero: 4,
+          ejercicios: [
+            { nombre: 'Press de pecho inclinado con mancuernas', seriesTarget: 4, repeticionesTarget: '8-10', pesoSugerido: 'Medio-Alto' },
+            { nombre: 'Fondos en paralelas', seriesTarget: 3, repeticionesTarget: '10', pesoSugerido: 'Corporal' },
+            { nombre: 'Press militar con barra', seriesTarget: 3, repeticionesTarget: '10', pesoSugerido: 'Medio' },
+            { nombre: 'Vuelos frontales con polea', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Controlado' },
+            { nombre: 'Triceps copa con mancuerna', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Extension de triceps 1 brazo en polea', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Controlado' }
+          ]
+        },
+        {
+          nombre: 'Día 5 — Pull B',
+          diaNumero: 5,
+          ejercicios: [
+            { nombre: 'Jalon dorsal supino', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio-Alto' },
+            { nombre: 'Remo con mancuerna', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio-Alto' },
+            { nombre: 'Jalon dorsal 1 brazo', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Encogimiento con mancuernas', seriesTarget: 3, repeticionesTarget: '15', pesoSugerido: 'Alto' },
+            { nombre: 'Biceps en banco scott', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Biceps con mancuerna banco inclinado', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Bicho muerto', seriesTarget: 3, repeticionesTarget: '12 por lado', pesoSugerido: 'Corporal' }
+          ]
+        }
+      ]
+    },
+    {
+      id: 'preset-ppl-3d',
+      titulo: 'PPL',
+      nivel: 'Principiante / Intermedio',
+      duracionDias: 30,
+      diasTexto: '3 DÍAS',
+      descripcion: 'Rutina clásica Push / Pull / Legs de 3 días.',
+      imagen: 'https://images.unsplash.com/photo-1526506118085-60ce8714f8c5?q=80&w=600&auto=format&fit=crop',
+      dias: [
+        {
+          nombre: 'Día 1 — Push',
+          diaNumero: 1,
+          ejercicios: [
+            { nombre: 'Press de pecho plano con mancuernas', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio' },
+            { nombre: 'Press de hombro en maquina', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Apertura en polea', seriesTarget: 3, repeticionesTarget: '12-15', pesoSugerido: 'Medio' },
+            { nombre: 'Vuelos laterales con mancuernas', seriesTarget: 4, repeticionesTarget: '12', pesoSugerido: 'Controlado' },
+            { nombre: 'Extension de triceps con soga en polea', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Fondos en banco', seriesTarget: 3, repeticionesTarget: '12-15', pesoSugerido: 'Corporal' }
+          ]
+        },
+        {
+          nombre: 'Día 2 — Pull',
+          diaNumero: 2,
+          ejercicios: [
+            { nombre: 'Jalon dorsal prono amplio', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio-Alto' },
+            { nombre: 'Remo sentado en polea', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio' },
+            { nombre: 'Face pull', seriesTarget: 3, repeticionesTarget: '15', pesoSugerido: 'Medio' },
+            { nombre: 'Biceps con mancuernas', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Biceps martillo', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Plancha frontal', seriesTarget: 3, repeticionesTarget: '40 seg', pesoSugerido: 'Corporal' }
+          ]
+        },
+        {
+          nombre: 'Día 3 — Legs',
+          diaNumero: 3,
+          ejercicios: [
+            { nombre: 'Prensa de piernas', seriesTarget: 4, repeticionesTarget: '10-12', pesoSugerido: 'Alto' },
+            { nombre: 'Peso muerto rumano con mancuernas', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio-Alto' },
+            { nombre: 'Cuadricera', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Camilla de isquios', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Gemelos de pie', seriesTarget: 4, repeticionesTarget: '15', pesoSugerido: 'Medio' },
+            { nombre: 'Abs bolitas', seriesTarget: 3, repeticionesTarget: '15', pesoSugerido: 'Corporal' }
+          ]
+        }
+      ]
+    },
+    {
+      id: 'preset-fullbody-x3-3d',
+      titulo: 'FULL BODY X3',
+      nivel: 'Principiante / Intermedio',
+      duracionDias: 30,
+      diasTexto: '3 DÍAS',
+      descripcion: 'Cuerpo completo 3 veces por semana con variaciones.',
+      imagen: 'https://images.unsplash.com/photo-1540497077202-7c8a3999166f?q=80&w=600&auto=format&fit=crop',
+      dias: [
+        {
+          nombre: 'Día 1 — Full Body A',
+          diaNumero: 1,
+          ejercicios: [
+            { nombre: 'Sentadilla trasera con barra', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio-Alto' },
+            { nombre: 'Press de pecho plano con barra', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio-Alto' },
+            { nombre: 'Jalon dorsal prono amplio', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio-Alto' },
+            { nombre: 'Press de hombro en maquina', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Biceps con barra', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Extension de triceps con soga en polea', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Plancha frontal', seriesTarget: 3, repeticionesTarget: '45 seg', pesoSugerido: 'Corporal' }
+          ]
+        },
+        {
+          nombre: 'Día 2 — Full Body B',
+          diaNumero: 2,
+          ejercicios: [
+            { nombre: 'Peso muerto rumano con mancuernas', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio-Alto' },
+            { nombre: 'Press de pecho inclinado con mancuernas', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio' },
+            { nombre: 'Remo sentado en polea', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio' },
+            { nombre: 'Vuelos laterales en polea', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Controlado' },
+            { nombre: 'Biceps martillo', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Fondos en banco', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Corporal' },
+            { nombre: 'Abs rectos con piernas a 45°', seriesTarget: 3, repeticionesTarget: '15', pesoSugerido: 'Corporal' }
+          ]
+        },
+        {
+          nombre: 'Día 3 — Full Body C',
+          diaNumero: 3,
+          ejercicios: [
+            { nombre: 'Prensa de piernas', seriesTarget: 4, repeticionesTarget: '12', pesoSugerido: 'Alto' },
+            { nombre: 'Fondos en paralelas', seriesTarget: 3, repeticionesTarget: '10', pesoSugerido: 'Corporal' },
+            { nombre: 'Jalon dorsal neutro', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio' },
+            { nombre: 'Hip thrust', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio-Alto' },
+            { nombre: 'Biceps en banco scott', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Triceps copa con mancuerna', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Bicho muerto', seriesTarget: 3, repeticionesTarget: '12 por lado', pesoSugerido: 'Corporal' }
+          ]
+        }
+      ]
+    },
+    {
+      id: 'preset-fullbody-x2-2d',
+      titulo: 'FULL BODY X2',
+      nivel: 'Principiante',
+      duracionDias: 30,
+      diasTexto: '2 DÍAS',
+      descripcion: 'Entrenamiento completo de 2 días por semana.',
+      imagen: 'https://images.unsplash.com/photo-1517838277536-f5f99be501cd?q=80&w=600&auto=format&fit=crop',
+      dias: [
+        {
+          nombre: 'Día 1 — Full Body 1',
+          diaNumero: 1,
+          ejercicios: [
+            { nombre: 'Prensa de piernas', seriesTarget: 4, repeticionesTarget: '12', pesoSugerido: 'Medio-Alto' },
+            { nombre: 'Press de pecho plano con barra', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio' },
+            { nombre: 'Jalon dorsal prono amplio', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio' },
+            { nombre: 'Vuelos laterales con mancuernas', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Controlado' },
+            { nombre: 'Biceps con mancuernas', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Extension de triceps con soga en polea', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Plancha frontal', seriesTarget: 3, repeticionesTarget: '40 seg', pesoSugerido: 'Corporal' }
+          ]
+        },
+        {
+          nombre: 'Día 2 — Full Body 2',
+          diaNumero: 2,
+          ejercicios: [
+            { nombre: 'Peso muerto rumano con mancuernas', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio-Alto' },
+            { nombre: 'Press de hombro en maquina', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio' },
+            { nombre: 'Remo sentado en polea', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio' },
+            { nombre: 'Cuadricera', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Biceps martillo', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Fondos en banco', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Corporal' },
+            { nombre: 'Abs bolitas', seriesTarget: 3, repeticionesTarget: '15', pesoSugerido: 'Corporal' }
+          ]
+        }
+      ]
+    },
+    {
+      id: 'preset-upper-lower-4d',
+      titulo: 'UPPER / LOWER',
+      nivel: 'Intermedio',
+      duracionDias: 30,
+      diasTexto: '4 DÍAS',
+      descripcion: 'División de 4 días enfocada en Torso y Pierna.',
+      imagen: 'https://images.unsplash.com/photo-1574680096145-d05b474e2155?q=80&w=600&auto=format&fit=crop',
+      dias: [
+        {
+          nombre: 'Día 1 — Upper A',
+          diaNumero: 1,
+          ejercicios: [
+            { nombre: 'Press de pecho plano con barra', seriesTarget: 4, repeticionesTarget: '8-10', pesoSugerido: 'Medio-Alto' },
+            { nombre: 'Jalon dorsal prono amplio', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio-Alto' },
+            { nombre: 'Press de hombro con mancuernas', seriesTarget: 3, repeticionesTarget: '10-12', pesoSugerido: 'Medio' },
+            { nombre: 'Remo sentado en polea', seriesTarget: 3, repeticionesTarget: '10-12', pesoSugerido: 'Medio' },
+            { nombre: 'Vuelos laterales en polea', seriesTarget: 3, repeticionesTarget: '12-15', pesoSugerido: 'Controlado' },
+            { nombre: 'Biceps con barra en polea', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Extension de triceps con soga en polea', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' }
+          ]
+        },
+        {
+          nombre: 'Día 2 — Lower A',
+          diaNumero: 2,
+          ejercicios: [
+            { nombre: 'Sentadilla trasera con barra', seriesTarget: 4, repeticionesTarget: '8-10', pesoSugerido: 'Progresivo' },
+            { nombre: 'Peso muerto rumano con mancuernas', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio-Alto' },
+            { nombre: 'Prensa de piernas', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Alto' },
+            { nombre: 'Camilla de isquios', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Gemelos de pie', seriesTarget: 4, repeticionesTarget: '15', pesoSugerido: 'Medio' },
+            { nombre: 'Plancha frontal', seriesTarget: 3, repeticionesTarget: '45 seg', pesoSugerido: 'Corporal' }
+          ]
+        },
+        {
+          nombre: 'Día 3 — Upper B',
+          diaNumero: 3,
+          ejercicios: [
+            { nombre: 'Press de pecho inclinado con mancuernas', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio-Alto' },
+            { nombre: 'Jalon dorsal neutro', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio-Alto' },
+            { nombre: 'Press militar con barra', seriesTarget: 3, repeticionesTarget: '10', pesoSugerido: 'Medio' },
+            { nombre: 'Remo con mancuerna', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Face pull', seriesTarget: 3, repeticionesTarget: '15', pesoSugerido: 'Medio' },
+            { nombre: 'Biceps martillo', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Fondos en paralelas', seriesTarget: 3, repeticionesTarget: '10', pesoSugerido: 'Corporal' }
+          ]
+        },
+        {
+          nombre: 'Día 4 — Lower B',
+          diaNumero: 4,
+          ejercicios: [
+            { nombre: 'Hip thrust', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Alto' },
+            { nombre: 'Sentadilla bulgara', seriesTarget: 3, repeticionesTarget: '10 por pierna', pesoSugerido: 'Medio' },
+            { nombre: 'Cuadricera', seriesTarget: 4, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Isquios sentado en maquina', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Gemelos de pie', seriesTarget: 4, repeticionesTarget: '15', pesoSugerido: 'Medio' },
+            { nombre: 'Abs rectos con peso', seriesTarget: 3, repeticionesTarget: '15', pesoSugerido: 'Disco 5kg' }
+          ]
+        }
+      ]
+    },
+    {
+      id: 'preset-upper-lower-x2-4d',
+      titulo: 'UPPER / LOWER X2',
+      nivel: 'Avanzado',
+      duracionDias: 30,
+      diasTexto: '4 DÍAS',
+      descripcion: 'Variante avanzada con ciclo de Fuerza e Hipertrofia.',
+      imagen: 'https://images.unsplash.com/photo-1517838277536-f5f99be501cd?q=80&w=600&auto=format&fit=crop',
+      dias: [
+        {
+          nombre: 'Día 1 — Upper Fuerza',
+          diaNumero: 1,
+          ejercicios: [
+            { nombre: 'Press de pecho plano con barra', seriesTarget: 4, repeticionesTarget: '6-8', pesoSugerido: 'Alto' },
+            { nombre: 'Remo en smith', seriesTarget: 4, repeticionesTarget: '6-8', pesoSugerido: 'Alto' },
+            { nombre: 'Press militar con barra', seriesTarget: 3, repeticionesTarget: '8', pesoSugerido: 'Medio-Alto' },
+            { nombre: 'Dominadas o jalon al pecho', seriesTarget: 3, repeticionesTarget: '8-10', pesoSugerido: 'Medio-Alto' },
+            { nombre: 'Biceps con barra', seriesTarget: 3, repeticionesTarget: '10', pesoSugerido: 'Medio' },
+            { nombre: 'Press frances con barra z', seriesTarget: 3, repeticionesTarget: '10', pesoSugerido: 'Medio' }
+          ]
+        },
+        {
+          nombre: 'Día 2 — Lower Fuerza',
+          diaNumero: 2,
+          ejercicios: [
+            { nombre: 'Sentadilla trasera con barra', seriesTarget: 4, repeticionesTarget: '6-8', pesoSugerido: 'Alto' },
+            { nombre: 'Peso muerto', seriesTarget: 4, repeticionesTarget: '6', pesoSugerido: 'Alto' },
+            { nombre: 'Prensa de piernas', seriesTarget: 3, repeticionesTarget: '10', pesoSugerido: 'Alto' },
+            { nombre: 'Camilla de isquios', seriesTarget: 3, repeticionesTarget: '10-12', pesoSugerido: 'Medio' },
+            { nombre: 'Gemelos de pie', seriesTarget: 4, repeticionesTarget: '12', pesoSugerido: 'Alto' }
+          ]
+        },
+        {
+          nombre: 'Día 3 — Upper Hipertrofia',
+          diaNumero: 3,
+          ejercicios: [
+            { nombre: 'Press de pecho inclinado con mancuernas', seriesTarget: 4, repeticionesTarget: '10-12', pesoSugerido: 'Medio' },
+            { nombre: 'Jalon dorsal supino', seriesTarget: 4, repeticionesTarget: '10-12', pesoSugerido: 'Medio' },
+            { nombre: 'Vuelos laterales en polea', seriesTarget: 4, repeticionesTarget: '12-15', pesoSugerido: 'Controlado' },
+            { nombre: 'Apertura en polea', seriesTarget: 3, repeticionesTarget: '12-15', pesoSugerido: 'Medio' },
+            { nombre: 'Pull over en polea con soga', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Biceps con mancuerna banco inclinado', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Extension de triceps 1 brazo en polea', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Controlado' }
+          ]
+        },
+        {
+          nombre: 'Día 4 — Lower Hipertrofia',
+          diaNumero: 4,
+          ejercicios: [
+            { nombre: 'Hip thrust', seriesTarget: 4, repeticionesTarget: '10-12', pesoSugerido: 'Alto' },
+            { nombre: 'Sentadilla bulgara', seriesTarget: 3, repeticionesTarget: '12 por pierna', pesoSugerido: 'Medio' },
+            { nombre: 'Cuadricera', seriesTarget: 4, repeticionesTarget: '12-15', pesoSugerido: 'Medio' },
+            { nombre: 'Isquios sentado en maquina', seriesTarget: 4, repeticionesTarget: '12-15', pesoSugerido: 'Medio' },
+            { nombre: 'Abs rectos con peso', seriesTarget: 4, repeticionesTarget: '15', pesoSugerido: 'Disco 10kg' }
+          ]
+        }
+      ]
+    },
+    {
+      id: 'preset-bro-split-5d',
+      titulo: 'BRO SPLIT',
+      nivel: 'Intermedio / Avanzado',
+      duracionDias: 30,
+      diasTexto: '5 DÍAS',
+      descripcion: 'Un grupo muscular principal por día (Pecho, Espalda, Hombros, Brazos, Piernas).',
+      imagen: 'https://images.unsplash.com/photo-1581009146145-b5ef050c2e1e?q=80&w=600&auto=format&fit=crop',
+      dias: [
+        {
+          nombre: 'Día 1 — Pecho',
+          diaNumero: 1,
+          ejercicios: [
+            { nombre: 'Press de pecho plano con barra', seriesTarget: 4, repeticionesTarget: '8-10', pesoSugerido: 'Medio-Alto' },
+            { nombre: 'Press de pecho inclinado con mancuernas', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio' },
+            { nombre: 'Press de pecho en maquina', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Apertura en polea', seriesTarget: 3, repeticionesTarget: '12-15', pesoSugerido: 'Controlado' },
+            { nombre: 'Fondos en banco', seriesTarget: 3, repeticionesTarget: '15', pesoSugerido: 'Corporal' }
+          ]
+        },
+        {
+          nombre: 'Día 2 — Espalda',
+          diaNumero: 2,
+          ejercicios: [
+            { nombre: 'Jalon dorsal prono amplio', seriesTarget: 4, repeticionesTarget: '8-10', pesoSugerido: 'Medio-Alto' },
+            { nombre: 'Remo sentado en polea', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio-Alto' },
+            { nombre: 'Jalon dorsal neutro', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Remo con mancuerna', seriesTarget: 3, repeticionesTarget: '10', pesoSugerido: 'Medio-Alto' },
+            { nombre: 'Pull over en polea con soga', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Encogimiento con mancuernas', seriesTarget: 3, repeticionesTarget: '15', pesoSugerido: 'Alto' }
+          ]
+        },
+        {
+          nombre: 'Día 3 — Hombros',
+          diaNumero: 3,
+          ejercicios: [
+            { nombre: 'Press de hombro en maquina', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio-Alto' },
+            { nombre: 'Vuelos laterales con mancuernas', seriesTarget: 4, repeticionesTarget: '12', pesoSugerido: 'Controlado' },
+            { nombre: 'Vuelos laterales en polea', seriesTarget: 3, repeticionesTarget: '12-15', pesoSugerido: 'Controlado' },
+            { nombre: 'Vuelos frontales con polea', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Controlado' },
+            { nombre: 'Face pull', seriesTarget: 4, repeticionesTarget: '15', pesoSugerido: 'Medio' }
+          ]
+        },
+        {
+          nombre: 'Día 4 — Brazos',
+          diaNumero: 4,
+          ejercicios: [
+            { nombre: 'Biceps con barra', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio' },
+            { nombre: 'Extension de triceps con soga en polea', seriesTarget: 4, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Biceps martillo', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Fondos en paralelas', seriesTarget: 3, repeticionesTarget: '10', pesoSugerido: 'Corporal' },
+            { nombre: 'Biceps en banco scott', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Triceps copa con mancuerna', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' }
+          ]
+        },
+        {
+          nombre: 'Día 5 — Piernas',
+          diaNumero: 5,
+          ejercicios: [
+            { nombre: 'Sentadilla trasera con barra', seriesTarget: 4, repeticionesTarget: '8-10', pesoSugerido: 'Progresivo' },
+            { nombre: 'Prensa de piernas', seriesTarget: 4, repeticionesTarget: '10-12', pesoSugerido: 'Alto' },
+            { nombre: 'Peso muerto rumano con mancuernas', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio-Alto' },
+            { nombre: 'Cuadricera', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Camilla de isquios', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Gemelos de pie', seriesTarget: 4, repeticionesTarget: '15', pesoSugerido: 'Medio' }
+          ]
+        }
+      ]
+    },
+    {
+      id: 'preset-ppl-upper-lower-5d',
+      titulo: 'PUSH / PULL / LEGS + UPPER / LOWER',
+      nivel: 'Avanzado',
+      duracionDias: 30,
+      diasTexto: '5 DÍAS',
+      descripcion: 'Estructura híbrida avanzada de 5 días.',
+      imagen: 'https://images.unsplash.com/photo-1534438327276-14e5300c3a48?q=80&w=600&auto=format&fit=crop',
+      dias: [
+        {
+          nombre: 'Día 1 — Push',
+          diaNumero: 1,
+          ejercicios: [
+            { nombre: 'Press de pecho plano con barra', seriesTarget: 4, repeticionesTarget: '8-10', pesoSugerido: 'Alto' },
+            { nombre: 'Press de hombro en maquina', seriesTarget: 3, repeticionesTarget: '10-12', pesoSugerido: 'Medio' },
+            { nombre: 'Apertura en banco inclinado', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Vuelos laterales en polea', seriesTarget: 4, repeticionesTarget: '12', pesoSugerido: 'Controlado' },
+            { nombre: 'Extension de triceps con soga en polea', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Fondos en banco', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Corporal' }
+          ]
+        },
+        {
+          nombre: 'Día 2 — Pull',
+          diaNumero: 2,
+          ejercicios: [
+            { nombre: 'Jalon dorsal prono amplio', seriesTarget: 4, repeticionesTarget: '8-10', pesoSugerido: 'Alto' },
+            { nombre: 'Remo sentado en polea', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio-Alto' },
+            { nombre: 'Face pull', seriesTarget: 3, repeticionesTarget: '15', pesoSugerido: 'Medio' },
+            { nombre: 'Biceps con barra', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Biceps martillo', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' }
+          ]
+        },
+        {
+          nombre: 'Día 3 — Legs',
+          diaNumero: 3,
+          ejercicios: [
+            { nombre: 'Sentadilla trasera con barra', seriesTarget: 4, repeticionesTarget: '8-10', pesoSugerido: 'Alto' },
+            { nombre: 'Peso muerto rumano con mancuernas', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio-Alto' },
+            { nombre: 'Prensa de piernas', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Alto' },
+            { nombre: 'Cuadricera', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Camilla de isquios', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Gemelos de pie', seriesTarget: 4, repeticionesTarget: '15', pesoSugerido: 'Medio' }
+          ]
+        },
+        {
+          nombre: 'Día 4 — Upper',
+          diaNumero: 4,
+          ejercicios: [
+            { nombre: 'Press de pecho inclinado con mancuernas', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio-Alto' },
+            { nombre: 'Jalon dorsal neutro', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio-Alto' },
+            { nombre: 'Press militar con barra', seriesTarget: 3, repeticionesTarget: '10', pesoSugerido: 'Medio' },
+            { nombre: 'Remo con mancuerna', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Vuelos laterales con mancuernas', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Biceps con mancuerna banco inclinado', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' }
+          ]
+        },
+        {
+          nombre: 'Día 5 — Lower',
+          diaNumero: 5,
+          ejercicios: [
+            { nombre: 'Hip thrust', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Alto' },
+            { nombre: 'Sentadilla bulgara', seriesTarget: 3, repeticionesTarget: '10 por pierna', pesoSugerido: 'Medio' },
+            { nombre: 'Prensa de piernas', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Alto' },
+            { nombre: 'Isquios sentado en maquina', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Abs rectos con peso', seriesTarget: 4, repeticionesTarget: '15', pesoSugerido: 'Disco 5kg' }
+          ]
+        }
+      ]
+    },
+    {
+      id: 'preset-torso-pierna-4d',
+      titulo: 'TORSO / PIERNA',
+      nivel: 'Intermedio',
+      duracionDias: 30,
+      diasTexto: '4 DÍAS',
+      descripcion: 'Fuerza e hipertrofia alternando torso y pierna.',
+      imagen: 'https://images.unsplash.com/photo-1574680096145-d05b474e2155?q=80&w=600&auto=format&fit=crop',
+      dias: [
+        {
+          nombre: 'Día 1 — Torso A',
+          diaNumero: 1,
+          ejercicios: [
+            { nombre: 'Press de pecho plano con barra', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio-Alto' },
+            { nombre: 'Jalon dorsal prono amplio', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio-Alto' },
+            { nombre: 'Press de hombro en maquina', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Remo sentado en polea', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Vuelos laterales con mancuernas', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Controlado' },
+            { nombre: 'Biceps con barra', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Extension de triceps con soga en polea', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' }
+          ]
+        },
+        {
+          nombre: 'Día 2 — Pierna A',
+          diaNumero: 2,
+          ejercicios: [
+            { nombre: 'Sentadilla trasera con barra', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio-Alto' },
+            { nombre: 'Peso muerto rumano con mancuernas', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio-Alto' },
+            { nombre: 'Prensa de piernas', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Alto' },
+            { nombre: 'Camilla de isquios', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Gemelos de pie', seriesTarget: 4, repeticionesTarget: '15', pesoSugerido: 'Medio' },
+            { nombre: 'Plancha frontal', seriesTarget: 3, repeticionesTarget: '45 seg', pesoSugerido: 'Corporal' }
+          ]
+        },
+        {
+          nombre: 'Día 3 — Torso B',
+          diaNumero: 3,
+          ejercicios: [
+            { nombre: 'Press de pecho inclinado con mancuernas', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio' },
+            { nombre: 'Jalon dorsal neutro', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio-Alto' },
+            { nombre: 'Press militar con barra', seriesTarget: 3, repeticionesTarget: '10', pesoSugerido: 'Medio' },
+            { nombre: 'Remo con mancuerna', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Vuelos laterales en polea', seriesTarget: 3, repeticionesTarget: '15', pesoSugerido: 'Controlado' },
+            { nombre: 'Biceps martillo', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Fondos en banco', seriesTarget: 3, repeticionesTarget: '15', pesoSugerido: 'Corporal' }
+          ]
+        },
+        {
+          nombre: 'Día 4 — Pierna B',
+          diaNumero: 4,
+          ejercicios: [
+            { nombre: 'Hip thrust', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Alto' },
+            { nombre: 'Sentadilla bulgara', seriesTarget: 3, repeticionesTarget: '10 por pierna', pesoSugerido: 'Medio' },
+            { nombre: 'Cuadricera', seriesTarget: 4, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Isquios sentado en maquina', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Gemelos de pie', seriesTarget: 4, repeticionesTarget: '15', pesoSugerido: 'Medio' },
+            { nombre: 'Abs bolitas', seriesTarget: 3, repeticionesTarget: '15', pesoSugerido: 'Corporal' }
+          ]
+        }
+      ]
+    },
+    {
+      id: 'preset-fullbody-3d-alt',
+      titulo: 'FULL BODY',
+      nivel: 'Principiante / Intermedio',
+      duracionDias: 30,
+      diasTexto: '3 DÍAS',
+      descripcion: 'Sesiones Full Body A, B y C alternadas.',
+      imagen: 'https://images.unsplash.com/photo-1540497077202-7c8a3999166f?q=80&w=600&auto=format&fit=crop',
+      dias: [
+        {
+          nombre: 'Día 1 — Full Body A',
+          diaNumero: 1,
+          ejercicios: [
+            { nombre: 'Sentadilla trasera con barra', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio-Alto' },
+            { nombre: 'Press de pecho plano con barra', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio-Alto' },
+            { nombre: 'Jalon dorsal prono amplio', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio-Alto' },
+            { nombre: 'Vuelos laterales con mancuernas', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Biceps con barra', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Extension de triceps con soga en polea', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' }
+          ]
+        },
+        {
+          nombre: 'Día 2 — Full Body B',
+          diaNumero: 2,
+          ejercicios: [
+            { nombre: 'Peso muerto rumano con mancuernas', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio-Alto' },
+            { nombre: 'Press de hombro en maquina', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio' },
+            { nombre: 'Remo sentado en polea', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio' },
+            { nombre: 'Apertura en banco inclinado', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Biceps martillo', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio' },
+            { nombre: 'Fondos en banco', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Corporal' }
+          ]
+        },
+        {
+          nombre: 'Día 3 — Full Body C',
+          diaNumero: 3,
+          ejercicios: [
+            { nombre: 'Prensa de piernas', seriesTarget: 4, repeticionesTarget: '12', pesoSugerido: 'Alto' },
+            { nombre: 'Press de pecho inclinado con mancuernas', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio' },
+            { nombre: 'Jalon dorsal neutro', seriesTarget: 4, repeticionesTarget: '10', pesoSugerido: 'Medio' },
+            { nombre: 'Hip thrust', seriesTarget: 3, repeticionesTarget: '12', pesoSugerido: 'Medio-Alto' },
+            { nombre: 'Face pull', seriesTarget: 3, repeticionesTarget: '15', pesoSugerido: 'Medio' },
+            { nombre: 'Plancha frontal', seriesTarget: 3, repeticionesTarget: '45 seg', pesoSugerido: 'Corporal' }
+          ]
+        }
+      ]
+    }
+  ];
+
+  // ====================================================================
+  // RACHA DE ENTRENAMIENTO & PRESETS - LÓGICA DE CÁLCULO Y RENDER
+  // ====================================================================
+
+  function calcularRachaAlumno(alumnoId) {
+    const logs = store.getHistorialEntrenamientosReales(alumnoId) || [];
+    if (!logs.length) {
+      return { rachaActual: 0, entrenoHoy: false, requiereAtencionRecuperar: false, fechasCompletadas: new Set(), diasSemanaActual: [] };
+    }
+
+    const datesSet = new Set();
+    logs.forEach(log => {
+      const isoDate = log.fecha || log.fecha_entrenamiento || log.fechaEntrenamiento;
+      if (isoDate) {
+        const localStr = getFechaCalendarioLocal(isoDate);
+        if (localStr) datesSet.add(localStr);
+      }
+    });
+
+    const sortedDates = Array.from(datesSet).sort();
+    if (!sortedDates.length) {
+      return { rachaActual: 0, entrenoHoy: false, requiereAtencionRecuperar: false, fechasCompletadas: datesSet, diasSemanaActual: [] };
+    }
+
+    const hoyStr = getFechaCalendarioLocal(new Date().toISOString());
+
+    function parseDateStr(str) {
+      const [y, m, d] = str.split('-').map(Number);
+      return new Date(Date.UTC(y, m - 1, d));
+    }
+
+    const latestDateStr = sortedDates[sortedDates.length - 1];
+    let rachaCount = 1;
+    let currDate = parseDateStr(latestDateStr);
+
+    for (let i = sortedDates.length - 2; i >= 0; i--) {
+      const prevDate = parseDateStr(sortedDates[i]);
+      let missedNonSundays = 0;
+      let temp = new Date(prevDate.getTime() + 86400000);
+      while (temp < currDate) {
+        if (temp.getUTCDay() !== 0) { // 0 es Domingo (gimnasio cerrado)
+          missedNonSundays++;
+        }
+        temp = new Date(temp.getTime() + 86400000);
+      }
+
+      if (missedNonSundays <= 1) { // Tolerancia de 1 día sin entrenar
+        rachaCount++;
+        currDate = prevDate;
+      } else {
+        break;
+      }
+    }
+
+    const hoyDate = parseDateStr(hoyStr);
+    const latestDate = parseDateStr(latestDateStr);
+
+    let missedSinceLatest = 0;
+    let temp = new Date(latestDate.getTime() + 86400000);
+    while (temp <= hoyDate) {
+      if (temp.getUTCDay() !== 0 && temp < hoyDate) {
+        missedSinceLatest++;
+      }
+      temp = new Date(temp.getTime() + 86400000);
+    }
+
+    const entrenoHoy = datesSet.has(hoyStr);
+    let rachaActual = rachaCount;
+    let requiereAtencionRecuperar = false;
+
+    if (missedSinceLatest > 1 && !entrenoHoy) {
+      rachaActual = 0;
+    } else if (missedSinceLatest === 1 && !entrenoHoy) {
+      requiereAtencionRecuperar = true;
+    }
+
+    const todayLocal = new Date();
+    const dayOfWeek = todayLocal.getDay();
+    const distanceToMon = (dayOfWeek === 0 ? 6 : dayOfWeek - 1);
+    const mondayLocal = new Date(todayLocal);
+    mondayLocal.setDate(todayLocal.getDate() - distanceToMon);
+
+    const diasSemanaActual = [];
+    const nombresDias = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(mondayLocal);
+      d.setDate(mondayLocal.getDate() + i);
+      const dStr = getFechaCalendarioLocal(d.toISOString());
+      const esHoy = dStr === hoyStr;
+      const completado = datesSet.has(dStr);
+      diasSemanaActual.push({
+        letra: nombresDias[i],
+        fechaStr: dStr,
+        esHoy,
+        completado,
+        esDomingo: i === 6
+      });
+    }
+
+    return {
+      rachaActual,
+      entrenoHoy,
+      requiereAtencionRecuperar,
+      fechasCompletadas: datesSet,
+      diasSemanaActual
+    };
+  }
+
+  let _streakModalTimeout = null;
+
+  function renderStreakModal() {
+    if (!appState.mostrarModalRacha || !appState.rachaModalData) return '';
+
+    const { count, diasSemana } = appState.rachaModalData;
+
+    if (_streakModalTimeout) clearTimeout(_streakModalTimeout);
+    _streakModalTimeout = setTimeout(() => {
+      if (appState.mostrarModalRacha) {
+        appState.mostrarModalRacha = false;
+        appState.rachaModalData = null;
+        renderApp();
+      }
+    }, 4500);
+
+    return `
+      <div class="ef-streak-overlay" id="streakModalOverlay">
+        <div class="ef-streak-card" onclick="event.stopPropagation()">
+          <div class="ef-streak-flame-container">
+            <span class="ef-streak-flame">🔥</span>
+          </div>
+          <div class="ef-streak-number">${count}</div>
+          <div class="ef-streak-label">${count === 1 ? 'DÍA DE RACHA' : 'DÍAS DE RACHA'}</div>
+
+          <div class="ef-streak-week-row">
+            ${(diasSemana || []).map(day => `
+              <div class="ef-streak-day-item">
+                <span class="ef-streak-day-letter">${day.letra}</span>
+                <div class="ef-streak-day-circle ${day.esHoy ? 'active-today' : (day.completado ? 'completed' : '')}">
+                  ${day.completado || day.esHoy ? '🏋️' : '○'}
+                </div>
+              </div>
+            `).join('')}
+          </div>
+
+          <button class="ef-streak-btn-close" id="btnCloseStreakModal">
+            ¡CONTINUAR ENTRENANDO! 🔥
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderPresetsSection() {
+    return `
+      <div class="ef-presets-section">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
+          <div>
+            <h3 style="font-size:1.15rem; font-weight:900; color:#fff; display:flex; align-items:center; gap:8px">
+              🔥 Rutinas Preestablecidas
+            </h3>
+            <p style="font-size:0.8rem; color:var(--text-gray); margin-top:2px">Plantillas listas para probar y utilizar</p>
+          </div>
+        </div>
+
+        <div class="ef-presets-carousel">
+          ${PRESET_ROUTINES.map(p => `
+            <div class="ef-preset-card">
+              <img class="ef-preset-img" src="${p.imagen}" alt="${p.titulo}" loading="lazy" />
+              <div class="ef-preset-body">
+                <div class="ef-preset-title">${p.titulo}</div>
+                <div class="ef-preset-meta">
+                  <span class="ef-preset-tag">${p.nivel}</span>
+                  <span class="ef-preset-tag ef-preset-tag-dias">📅 ${p.diasTexto}</span>
+                </div>
+                <p class="ef-preset-desc">${p.descripcion}</p>
+                <div class="ef-preset-actions">
+                  <button class="ef-preset-btn-ver btn-ver-preset" data-preset-id="${p.id}">VER RUTINA</button>
+                  <button class="ef-preset-btn-usar btn-usar-preset" data-preset-id="${p.id}">USAR ESTA</button>
+                </div>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderPresetDetailModal() {
+    if (!appState.mostrarModalPresetDetalle || !appState.presetSeleccionadaId) return '';
+
+    const preset = PRESET_ROUTINES.find(p => p.id === appState.presetSeleccionadaId);
+    if (!preset) return '';
+
+    return `
+      <div class="ef-streak-overlay" style="z-index:9999;" id="presetDetailOverlay">
+        <div class="ef-streak-card" style="max-width: 520px; text-align: left; max-height: 85vh; overflow-y: auto;" onclick="event.stopPropagation()">
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:12px">
+            <div>
+              <h2 style="font-size:1.4rem; font-weight:900; color:#fff">${preset.titulo}</h2>
+              <div style="display:flex; gap:8px; margin-top:6px">
+                <span class="ef-preset-tag">${preset.nivel}</span>
+                <span class="ef-preset-tag ef-preset-tag-dias">📅 ${preset.diasTexto}</span>
+              </div>
+            </div>
+            <button id="btnClosePresetDetail" style="background:none; border:none; color:var(--text-gray); font-size:1.6rem; cursor:pointer">&times;</button>
+          </div>
+
+          <p style="font-size:0.88rem; color:var(--text-gray); margin-bottom:18px; line-height:1.4">${preset.descripcion}</p>
+
+          <div style="display:flex; flex-direction:column; gap:14px; margin-bottom:20px">
+            ${preset.dias.map(d => `
+              <div style="background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); border-radius:14px; padding:14px">
+                <h4 style="font-size:0.95rem; font-weight:800; color:#ff8a00; margin-bottom:10px">${d.nombre} (${d.ejercicios.length} ejercicios)</h4>
+                <div style="display:flex; flex-direction:column; gap:6px">
+                  ${d.ejercicios.map((e, idx) => `
+                    <div style="display:flex; justify-content:space-between; align-items:center; font-size:0.84rem; padding:4px 0; border-bottom:1px solid rgba(255,255,255,0.04)">
+                      <div>
+                        <strong style="color:#fff">${idx + 1}. ${e.nombre}</strong>
+                        ${e.notaProfesor ? `<div style="font-size:0.75rem; color:#a1a1aa">${e.notaProfesor}</div>` : ''}
+                      </div>
+                      <div style="font-weight:700; color:#ff8a00; white-space:nowrap; margin-left:10px">
+                        ${e.seriesTarget} x ${e.repeticionesTarget}
+                      </div>
+                    </div>
+                  `).join('')}
+                </div>
+              </div>
+            `).join('')}
+          </div>
+
+          <div style="display:flex; gap:10px">
+            <button class="ef-preset-btn-usar btn-usar-preset" data-preset-id="${preset.id}" style="padding:12px; font-size:0.95rem; width:100%">
+              🚀 USAR ESTA RUTINA
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  async function usarPresetRutina(presetId) {
+    const preset = PRESET_ROUTINES.find(p => p.id === presetId);
+    if (!preset) return;
+
+    const alumno = appState.usuarioActual?.data;
+    if (!alumno) return;
+
+    const confirmacion = confirm(`¿Deseas agregar la rutina preestablecida "${preset.titulo}" (${preset.diasTexto}) a tus rutinas?`);
+    if (!confirmacion) return;
+
+    try {
+      const formattedDays = preset.dias.map(d => ({
+        id: (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() : ("day-" + Date.now() + Math.random().toString(36).substring(2, 6)),
+        nombre: d.nombre,
+        diaNumero: d.diaNumero,
+        ejercicios: d.ejercicios.map(e => ({
+          id: (window.crypto && window.crypto.randomUUID) ? window.crypto.randomUUID() : ("ej-" + Date.now() + Math.random().toString(36).substring(2, 6)),
+          nombre: e.nombre,
+          seriesTarget: Number(e.seriesTarget) || 3,
+          repeticionesTarget: String(e.repeticionesTarget || '12'),
+          pesoSugerido: e.pesoSugerido || 'S/D',
+          notaProfesor: e.notaProfesor || '',
+          esEntradaEnCalor: !!e.esEntradaEnCalor
+        }))
+      }));
+
+      if (appState.usuarioActual.rol === 'alumno') {
+        await store.crearRutinaPropia({
+          alumnoId: alumno.id,
+          titulo: preset.titulo,
+          duracionDias: preset.duracionDias || 30,
+          dias: formattedDays
+        });
+        alert(`🚀 ¡Rutina "${preset.titulo}" agregada con éxito! Ya podés verla y entrenarla en "Mías".`);
+        appState.tabCliente = 'mis_rutinas';
+        appState.mostrarModalPresetDetalle = false;
+        renderApp();
+      } else if (appState.usuarioActual.rol === 'profesor') {
+        alert(`💡 Como profesor, podés asignar esta rutina ("${preset.titulo}") a cualquier alumno desde su perfil.`);
+      }
+    } catch (err) {
+      alert("❌ No se pudo agregar la rutina: " + ((err && err.message) || err));
+    }
+  }
+
+  function bindPresetAndStreakEvents() {
+    document.getElementById('btnCloseStreakModal')?.addEventListener('click', () => {
+      appState.mostrarModalRacha = false;
+      appState.rachaModalData = null;
+      renderApp();
+    });
+    document.getElementById('streakModalOverlay')?.addEventListener('click', () => {
+      appState.mostrarModalRacha = false;
+      appState.rachaModalData = null;
+      renderApp();
+    });
+
+    document.querySelectorAll('.btn-ver-preset').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const id = e.currentTarget.dataset.presetId;
+        if (id) {
+          appState.presetSeleccionadaId = id;
+          appState.mostrarModalPresetDetalle = true;
+          renderApp();
+        }
+      });
+    });
+
+    document.querySelectorAll('.btn-usar-preset').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const id = e.currentTarget.dataset.presetId;
+        if (id) usarPresetRutina(id);
+      });
+    });
+
+    document.getElementById('btnClosePresetDetail')?.addEventListener('click', () => {
+      appState.mostrarModalPresetDetalle = false;
+      renderApp();
+    });
+    document.getElementById('presetDetailOverlay')?.addEventListener('click', () => {
+      appState.mostrarModalPresetDetalle = false;
+      renderApp();
+    });
   }
 
   // --- HISTORIAL AGRUPADO: Rutina → Semana → Día → Ejercicios → Series ---
@@ -3990,6 +4990,14 @@ document.addEventListener('DOMContentLoaded', () => {
         clearWorkoutDraft();
         appState.diaActivoEntrenamiento = null;
         appState.tabCliente = 'historial';
+
+        // Disparar pantalla/modal de racha animada
+        const rachaInfo = calcularRachaAlumno(alumno.id);
+        appState.rachaModalData = {
+          count: rachaInfo.rachaActual,
+          diasSemana: rachaInfo.diasSemanaActual
+        };
+        appState.mostrarModalRacha = true;
       } catch (err) {
         console.error('Error al finalizar entrenamiento:', err);
         alert('❌ No se pudo guardar el entrenamiento: ' + ((err && err.message) || 'error desconocido'));
@@ -5294,6 +6302,14 @@ alert("🚀 ¡Rutina propia creada! Ya podés empezar a entrenarla desde \"Mías
         clearWorkoutDraft();
         appState.diaActivoEntrenamiento = null;
         appState.tabCliente = 'historial';
+
+        // Disparar pantalla/modal de racha animada
+        const rachaInfo = calcularRachaAlumno(alumno.id);
+        appState.rachaModalData = {
+          count: rachaInfo.rachaActual,
+          diasSemana: rachaInfo.diasSemanaActual
+        };
+        appState.mostrarModalRacha = true;
       } catch (err) {
         console.error('Error al finalizar entrenamiento:', err);
         alert('❌ No se pudo guardar el entrenamiento: ' + ((err && err.message) || 'error desconocido'));

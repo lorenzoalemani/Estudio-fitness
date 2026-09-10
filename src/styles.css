@@ -1540,3 +1540,281 @@ body {
   .exercise-gif-wrap { max-width: 100%; }
   .exercise-gif-demo { max-height: 200px; }
 }
+
+/* ====================================================================
+   NUEVO SISTEMA DE RACHA DE ENTRENAMIENTO Y RUTINAS PREESTABLECIDAS
+   ==================================================================== */
+
+@keyframes efRachaPopIn {
+  0% { transform: scale(0.7) translateY(20px); opacity: 0; }
+  100% { transform: scale(1) translateY(0); opacity: 1; }
+}
+
+@keyframes efFlameGlow {
+  0% { transform: scale(1); filter: drop-shadow(0 0 12px rgba(255, 107, 0, 0.6)); }
+  100% { transform: scale(1.12); filter: drop-shadow(0 0 28px rgba(255, 160, 0, 0.95)); }
+}
+
+@keyframes efDayActivePop {
+  0% { transform: scale(0.6); opacity: 0; }
+  60% { transform: scale(1.25); }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.ef-streak-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(7, 8, 12, 0.88);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.ef-streak-card {
+  background: linear-gradient(145deg, #1c1f2b 0%, #10121a 100%);
+  border: 1px solid rgba(255, 107, 0, 0.4);
+  box-shadow: 0 16px 48px rgba(255, 107, 0, 0.35);
+  border-radius: 24px;
+  padding: 28px 22px;
+  text-align: center;
+  max-width: 360px;
+  width: 100%;
+  position: relative;
+  animation: efRachaPopIn 0.45s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+}
+
+.ef-streak-flame-container {
+  margin-bottom: 10px;
+}
+
+.ef-streak-flame {
+  font-size: 4.8rem;
+  display: inline-block;
+  animation: efFlameGlow 1.4s infinite alternate;
+}
+
+.ef-streak-number {
+  font-size: 3.8rem;
+  font-weight: 900;
+  line-height: 1;
+  background: linear-gradient(180deg, #ffffff 0%, #ff8a00 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin-bottom: 4px;
+}
+
+.ef-streak-label {
+  font-size: 0.85rem;
+  font-weight: 900;
+  letter-spacing: 1.8px;
+  color: #ff9d2e;
+  text-transform: uppercase;
+  margin-bottom: 22px;
+}
+
+.ef-streak-week-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 22px;
+  background: rgba(0, 0, 0, 0.3);
+  padding: 12px 10px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.ef-streak-day-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+}
+
+.ef-streak-day-letter {
+  font-size: 0.75rem;
+  font-weight: 800;
+  color: var(--text-gray);
+}
+
+.ef-streak-day-circle {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.15);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.25);
+  transition: all 0.3s ease;
+}
+
+.ef-streak-day-circle.completed {
+  background: rgba(255, 107, 0, 0.22);
+  border-color: #ff6b00;
+  color: #ff8a00;
+  font-weight: bold;
+}
+
+.ef-streak-day-circle.active-today {
+  background: linear-gradient(135deg, #ff8a00 0%, #e65100 100%);
+  border-color: #ffaa44;
+  color: #fff;
+  box-shadow: 0 0 16px rgba(255, 107, 0, 0.8);
+  animation: efDayActivePop 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+}
+
+.ef-streak-btn-close {
+  background: linear-gradient(135deg, #ff6b00 0%, #d84315 100%);
+  color: #fff;
+  border: none;
+  border-radius: 12px;
+  padding: 12px 24px;
+  font-weight: 900;
+  font-size: 0.95rem;
+  width: 100%;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(255, 107, 0, 0.35);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.ef-streak-btn-close:active {
+  transform: scale(0.97);
+}
+
+/* CAROUSEL & TARJETAS DE RUTINAS PREESTABLECIDAS */
+.ef-presets-section {
+  margin-bottom: 24px;
+}
+
+.ef-presets-carousel {
+  display: flex;
+  gap: 14px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  padding: 6px 2px 14px 2px;
+  -webkit-overflow-scrolling: touch;
+}
+.ef-presets-carousel::-webkit-scrollbar {
+  height: 6px;
+}
+.ef-presets-carousel::-webkit-scrollbar-thumb {
+  background: rgba(255, 107, 0, 0.4);
+  border-radius: 4px;
+}
+
+.ef-preset-card {
+  flex: 0 0 270px;
+  scroll-snap-align: start;
+  background: var(--bg-card-solid, #14141a);
+  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.12));
+  border-radius: 18px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.ef-preset-card:hover {
+  border-color: rgba(255, 107, 0, 0.5);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(255, 107, 0, 0.15);
+}
+
+.ef-preset-img {
+  width: 100%;
+  height: 125px;
+  object-fit: cover;
+  display: block;
+}
+
+.ef-preset-body {
+  padding: 14px 14px;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.ef-preset-title {
+  font-size: 1.1rem;
+  font-weight: 900;
+  margin-bottom: 6px;
+  color: #fff;
+  letter-spacing: 0.3px;
+}
+
+.ef-preset-meta {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.ef-preset-tag {
+  font-size: 0.72rem;
+  font-weight: 800;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(255, 107, 0, 0.15);
+  color: #ff8a00;
+  border: 1px solid rgba(255, 107, 0, 0.3);
+}
+
+.ef-preset-tag-dias {
+  background: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
+  border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+.ef-preset-desc {
+  font-size: 0.82rem;
+  color: var(--text-gray, #a1a1aa);
+  line-height: 1.35;
+  margin-bottom: 14px;
+  flex: 1;
+}
+
+.ef-preset-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.ef-preset-btn-ver {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 10px;
+  padding: 9px 6px;
+  font-size: 0.8rem;
+  font-weight: 800;
+  cursor: pointer;
+  text-align: center;
+  transition: background 0.15s ease;
+}
+.ef-preset-btn-ver:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.ef-preset-btn-usar {
+  flex: 1;
+  background: linear-gradient(135deg, #ff6b00 0%, #e65100 100%);
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  padding: 9px 6px;
+  font-size: 0.8rem;
+  font-weight: 900;
+  cursor: pointer;
+  text-align: center;
+  box-shadow: 0 4px 12px rgba(255, 107, 0, 0.25);
+  transition: transform 0.15s ease;
+}
+.ef-preset-btn-usar:active {
+  transform: scale(0.96);
+}
+
