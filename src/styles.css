@@ -54,103 +54,116 @@ body {
 
 /* HEADER */
 .app-header {
-  background: rgba(7, 7, 9, 0.9);
+  background: rgba(7, 7, 9, 0.94);
   backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border-bottom: 1px solid var(--border-color);
   position: sticky; top: 0; z-index: 100;
-  padding: calc(12px + env(safe-area-inset-top)) 14px 12px;
-  display: flex; align-items: center; justify-content: space-between;
-  gap: 6px;
+  padding: calc(12px + env(safe-area-inset-top)) 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
 }
 
-/* Logo + título: se achica proporcionalmente en pantallas chicas sin truncar */
+.header-main-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 10px;
+}
+
 .brand-wrapper {
-  display: flex; align-items: center; gap: 8px; cursor: pointer;
-  min-width: 0; flex-shrink: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  flex-shrink: 0;
 }
 
 .brand-logo {
-  height: 36px; width: auto; flex-shrink: 0;
+  height: 36px;
+  width: auto;
+  flex-shrink: 0;
   filter: drop-shadow(0 0 10px rgba(255, 46, 46, 0.5));
 }
 
 .brand-title {
-  font-size: 1.1rem; font-weight: 900; letter-spacing: 0.5px; text-transform: uppercase;
-  white-space: nowrap; min-width: 0;
+  font-size: 1.2rem;
+  font-weight: 900;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .brand-title span { color: var(--red-primary); }
 
-/* Usuario + campanita + salir: ocupa el espacio restante (flex:1) y dentro
-   de él, SOLO el badge de usuario puede achicarse/truncar. La campanita y
-   "Salir" quedan con flex-shrink:0 -> NUNCA se salen de la pantalla, sin
-   importar cuán largo sea el nombre del usuario ni el ancho del viewport. */
 .header-actions {
-  display: flex; align-items: center; justify-content: flex-end; gap: 8px;
-  flex: 1 1 auto; min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
-/* Badge de usuario dentro del header: muestra nombre completo, se adapta en
-   pantallas chicas con font-size menor (ver media query abajo). */
-.header-user-badge {
-  min-width: 0; flex-shrink: 1;
+/* Badge de usuario en desktop (al lado de los botones) */
+.header-user-desktop {
+  display: inline-flex !important;
+  font-size: 0.8rem;
   white-space: nowrap;
-  display: inline-block;
-  font-size: 0.78rem;
+  flex-shrink: 0;
 }
 
-/* BOTÓN-ÍCONO CIRCULAR (campanita de notificaciones): tamaño táctil mínimo
-   recomendado (~44px) para que quede fácil de tocar y completamente visible.
-   flex-shrink:0 en header-actions garantiza que nunca se recorte. */
+/* Barra de usuario en mobile (debajo del logo y botones) */
+.header-user-mobile-bar {
+  display: none;
+  width: 100%;
+}
+
+.header-user-badge {
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* BOTÓN-ÍCONO CIRCULAR (campanita de notificaciones) */
 .btn-icon {
-  width: 44px; height: 44px; padding: 0;
+  width: 42px;
+  height: 42px;
+  padding: 0;
   border-radius: 50%;
   font-size: 1.2rem;
   flex-shrink: 0;
 }
 
-.notif-bell-btn { position: relative; }
+.notif-bell-btn {
+  position: relative;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  width: 42px !important;
+  height: 42px !important;
+  min-width: 42px;
+  padding: 0 !important;
+  flex-shrink: 0;
+}
 
-/* Iconos Lucide del header (campana + salir) */
 .header-icon {
   display: block;
   flex-shrink: 0;
   width: 20px;
   height: 20px;
 }
+
 .header-icon-bell {
-  width: 24px !important;
-  height: 24px !important;
-  min-width: 24px;
-  min-height: 24px;
-}
-.notif-bell-btn {
-  display: inline-flex !important;
-  align-items: center;
-  justify-content: center;
-  width: 44px !important;
-  height: 44px !important;
-  min-width: 44px;
-  padding: 0 !important;
-}
-.notif-bell-btn svg.header-icon-bell {
-  width: 24px !important;
-  height: 24px !important;
-  min-width: 24px !important;
-  min-height: 24px !important;
-}
-.header-logout-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-.header-logout-btn .header-icon {
-  width: 18px;
-  height: 18px;
+  width: 22px !important;
+  height: 22px !important;
+  min-width: 22px;
+  min-height: 22px;
 }
 
-
-/* Punto/indicador de "push no activado todavía" (reemplaza al texto "Activar Push") */
 .notif-bell-dot {
   position: absolute; top: 3px; right: 3px;
   width: 10px; height: 10px; border-radius: 50%;
@@ -159,20 +172,31 @@ body {
   pointer-events: none;
 }
 
-.header-logout-btn { flex-shrink: 0; }
+.header-logout-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
 
-/* Botón de fuego/racha en header: mismo estilo que la campanita */
+.header-logout-btn .header-icon {
+  width: 18px;
+  height: 18px;
+}
+
+/* Botón de fuego/racha en header: mismo estilo circular que la campanita */
 .header-fire-btn {
   position: relative;
   display: inline-flex !important;
   align-items: center;
   justify-content: center;
-  width: 40px !important;
-  height: 40px !important;
-  min-width: 40px;
+  width: 42px !important;
+  height: 42px !important;
+  min-width: 42px;
   padding: 0 !important;
   flex-shrink: 0;
 }
+
 .header-fire-btn svg.header-icon-fire {
   width: 22px !important;
   height: 22px !important;
@@ -180,55 +204,72 @@ body {
   min-height: 22px !important;
 }
 
-/* --- RESPONSIVE: header en pantallas chicas (≤480px) --- */
-@media (max-width: 480px) {
+/* --- RESPONSIVE MOBILE (≤ 640px): 2 filas elegantes, SIN superposiciones --- */
+@media (max-width: 640px) {
   .app-header {
-    padding: calc(10px + env(safe-area-inset-top)) 10px 10px;
-    gap: 4px;
+    padding: calc(8px + env(safe-area-inset-top)) 12px 8px;
+    gap: 6px;
   }
+
+  .header-main-row {
+    gap: 8px;
+  }
+
   .brand-logo {
     height: 30px;
   }
+
   .brand-title {
-    font-size: 0.88rem;
-    letter-spacing: 0;
+    font-size: 1.05rem;
+    letter-spacing: 0.3px;
   }
-  .brand-wrapper {
+
+  /* En mobile el usuario va en su propia fila dedicada */
+  .header-user-desktop {
+    display: none !important;
+  }
+
+  .header-actions {
     gap: 6px;
   }
-  .header-actions {
-    gap: 4px;
-  }
-  .header-user-badge {
-    font-size: 0.68rem;
-    padding: 3px 7px;
-  }
+
   .header-fire-btn {
     width: 36px !important;
     height: 36px !important;
-    min-width: 36px;
+    min-width: 36px !important;
   }
+
   .notif-bell-btn {
     width: 36px !important;
     height: 36px !important;
-    min-width: 36px;
+    min-width: 36px !important;
   }
+
   .header-logout-btn {
-    padding: 5px 8px;
-    font-size: 0.72rem;
+    padding: 6px 8px;
+    font-size: 0.75rem;
+    height: 36px;
   }
+
   .header-logout-label {
     display: none;
   }
-}
 
-/* Pantallas muy chicas (≤360px): ocultar nombre de usuario, priorizar botones */
-@media (max-width: 360px) {
-  .brand-title {
-    font-size: 0.78rem;
+  /* Fila 2: Nombre del alumno 100% visible, sin truncar y sin tapar nada */
+  .header-user-mobile-bar {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    width: 100%;
   }
-  .header-user-badge {
-    display: none !important;
+
+  .header-user-mobile-bar .header-user-badge {
+    font-size: 0.76rem;
+    padding: 3px 10px;
+    border-radius: 14px;
+    white-space: nowrap;
+    max-width: 100%;
+    font-weight: 700;
   }
 }
 
@@ -647,12 +688,9 @@ body {
     box-sizing: border-box;
   }
 
-  .app-header { padding: calc(10px + env(safe-area-inset-top)) 12px 10px; gap: 6px; }
   .header-actions { gap: 6px; }
-  .header-user-badge { max-width: 92px; font-size: 0.68rem; padding: 4px 8px; }
   .header-logout-label { display: none; }
   #btnLogout { padding: 8px 10px; }
-  .brand-title { font-size: 1.05rem; max-width: 120px; }
   .brand-logo { height: 32px; }
   .login-container { width: 94%; padding: 20px 14px; margin: 16px auto; }
   
@@ -761,17 +799,12 @@ body {
   .bottom-nav-icon { width: 20px; height: 20px; }
   .bottom-nav-icon svg { width: 19px; height: 19px; }
   .bottom-nav-item { padding: 6px 2px; }
-
-  .header-user-badge { max-width: 68px; font-size: 0.64rem; padding: 4px 6px; }
-  .brand-title { max-width: 88px; font-size: 0.95rem; }
 }
 
 /* Refuerzo para pantallas extremadamente angostas (iPhone SE 1ra gen, 320px) */
 @media (max-width: 340px) {
-  .header-user-badge { max-width: 46px; }
-  .brand-title { max-width: 64px; font-size: 0.88rem; }
-  .brand-logo { height: 28px; }
-  .app-header { padding-left: 8px; padding-right: 8px; }
+  .brand-logo { height: 26px; }
+  .brand-title { font-size: 0.95rem; }
   .header-actions { gap: 4px; }
 }
 

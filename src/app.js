@@ -313,45 +313,55 @@ document.addEventListener('DOMContentLoaded', () => {
 
     return `
       <header class="app-header">
-        <div class="brand-wrapper" id="btnHeaderHome">
-          <img src="./src/logo.svg" alt="Estudio Fitness Logo" class="brand-logo">
-          <div class="brand-title">Estudio<span>Fitness</span></div>
+        <div class="header-main-row">
+          <div class="brand-wrapper" id="btnHeaderHome">
+            <img src="./src/logo.svg" alt="Estudio Fitness Logo" class="brand-logo">
+            <div class="brand-title">Estudio<span>Fitness</span></div>
+          </div>
+
+          <div class="header-actions">
+            ${user ? `
+              <span class="badge header-user-badge header-user-desktop ${isProfesor ? 'badge-warning' : 'badge-active'}" title="${user.nombre}">
+                ${isProfesor ? '⚡' : '👤'} ${user.nombre}
+              </span>
+            ` : ''}
+
+            ${appState.usuarioActual && !isProfesor ? `
+              <button
+                class="btn btn-secondary btn-icon header-fire-btn"
+                id="btnHeaderStreak"
+                title="Tu racha de entrenamiento"
+              >
+                <svg class="header-icon header-icon-fire" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:22px;height:22px;min-width:22px;min-height:22px;display:block;color:#fff;">
+                  <path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/>
+                </svg>
+              </button>
+            ` : ''}
+
+            ${appState.usuarioActual ? `
+              <button
+                class="btn btn-secondary btn-icon notif-bell-btn"
+                id="btnNotifBell"
+                title="${pushConcedido ? 'Notificaciones' : 'Notificaciones (tocá para activar el push)'}"
+              >
+                <svg class="header-icon header-icon-bell" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:24px;height:24px;min-width:24px;min-height:24px;display:block;color:#fff;"><path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M22 8c0-2.3-.8-4.3-2-6"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/><path d="M4 2C2.8 3.7 2 5.7 2 8"/></svg>
+                ${!pushConcedido
+                  ? `<span class="notif-bell-dot" title="Push desactivado"></span>`
+                  : (unreadCount > 0 ? `<span style="position:absolute; top:-4px; right:-4px; background:var(--red-primary); color:#fff; border-radius:50%; width:18px; height:18px; font-size:0.7rem; font-weight:800; display:flex; align-items:center; justify-content:center">${unreadCount}</span>` : '')
+                }
+              </button>
+              <button class="btn btn-secondary btn-sm header-logout-btn" id="btnLogout"><span class="header-logout-label">Salir</span> <svg class="header-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/></svg></button>
+            ` : ''}
+          </div>
         </div>
 
-        <div class="header-actions">
-          ${user ? `
-            <span class="badge header-user-badge ${isProfesor ? 'badge-warning' : 'badge-active'}" title="${user.nombre}">
+        ${user ? `
+          <div class="header-user-mobile-bar">
+            <span class="badge header-user-badge header-user-mobile ${isProfesor ? 'badge-warning' : 'badge-active'}" title="${user.nombre}">
               ${isProfesor ? '⚡' : '👤'} ${user.nombre}
             </span>
-          ` : ''}
-
-          ${appState.usuarioActual && !isProfesor ? `
-            <button
-              class="btn btn-secondary btn-icon header-fire-btn"
-              id="btnHeaderStreak"
-              title="Tu racha de entrenamiento"
-            >
-              <svg class="header-icon header-icon-fire" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:22px;height:22px;min-width:22px;min-height:22px;display:block;color:#fff;">
-                <path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/>
-              </svg>
-            </button>
-          ` : ''}
-
-          ${appState.usuarioActual ? `
-            <button
-              class="btn btn-secondary btn-icon notif-bell-btn"
-              id="btnNotifBell"
-              title="${pushConcedido ? 'Notificaciones' : 'Notificaciones (tocá para activar el push)'}"
-            >
-              <svg class="header-icon header-icon-bell" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:24px;height:24px;min-width:24px;min-height:24px;display:block;color:#fff;"><path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M22 8c0-2.3-.8-4.3-2-6"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/><path d="M4 2C2.8 3.7 2 5.7 2 8"/></svg>
-              ${!pushConcedido
-                ? `<span class="notif-bell-dot" title="Push desactivado"></span>`
-                : (unreadCount > 0 ? `<span style="position:absolute; top:-4px; right:-4px; background:var(--red-primary); color:#fff; border-radius:50%; width:18px; height:18px; font-size:0.7rem; font-weight:800; display:flex; align-items:center; justify-content:center">${unreadCount}</span>` : '')
-              }
-            </button>
-            <button class="btn btn-secondary btn-sm header-logout-btn" id="btnLogout"><span class="header-logout-label">Salir</span> <svg class="header-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/></svg></button>
-          ` : ''}
-        </div>
+          </div>
+        ` : ''}
       </header>
 
       ${appState.mostrarDrawerNotifs ? renderNotifDrawer(notifs) : ''}
