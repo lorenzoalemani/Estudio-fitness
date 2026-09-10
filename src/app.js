@@ -213,7 +213,8 @@ document.addEventListener('DOMContentLoaded', () => {
     mostrarModalRacha: false,
     rachaModalData: null,
     presetSeleccionadaId: null,
-    mostrarModalPresetDetalle: false
+    mostrarModalPresetDetalle: false,
+    mostrarModalRachaInfo: false
   };
 
   // Escuchar cambios de Supabase Realtime / Local Store
@@ -322,6 +323,18 @@ document.addEventListener('DOMContentLoaded', () => {
             <span class="badge header-user-badge ${isProfesor ? 'badge-warning' : 'badge-active'}" title="${user.nombre}">
               ${isProfesor ? '⚡' : '👤'} ${user.nombre}
             </span>
+          ` : ''}
+
+          ${appState.usuarioActual && !isProfesor ? `
+            <button
+              class="btn btn-secondary btn-icon header-fire-btn"
+              id="btnHeaderStreak"
+              title="Tu racha de entrenamiento"
+            >
+              <svg class="header-icon header-icon-fire" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="width:22px;height:22px;min-width:22px;min-height:22px;display:block;color:#fff;">
+                <path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/>
+              </svg>
+            </button>
           ` : ''}
 
           ${appState.usuarioActual ? `
@@ -652,6 +665,7 @@ document.addEventListener('DOMContentLoaded', () => {
       ${appState.borradorEntrenamientoDetectado ? renderModalRecuperarBorrador() : ''}
       ${renderStreakModal()}
       ${renderPresetDetailModal()}
+      ${renderStreakInfoModal()}
 
       ${renderBottomNav()}
     `;
@@ -664,6 +678,20 @@ document.addEventListener('DOMContentLoaded', () => {
     bindPresetAndStreakEvents();
     if (appState.tabCliente === 'stats') bindStatsEvents(historialEntrenamientos);
     bindBorradorEntrenamientoEvents();
+
+    // Evento: botón de fuego en header -> modal de racha info
+    document.getElementById('btnHeaderStreak')?.addEventListener('click', () => {
+      appState.mostrarModalRachaInfo = true;
+      renderApp();
+    });
+    document.getElementById('btnCloseStreakInfo')?.addEventListener('click', () => {
+      appState.mostrarModalRachaInfo = false;
+      renderApp();
+    });
+    document.getElementById('streakInfoOverlay')?.addEventListener('click', () => {
+      appState.mostrarModalRachaInfo = false;
+      renderApp();
+    });
 
     // Eventos de navegación por tarjetas de rutina (excluye las de "Mis Rutinas",
     // que tienen su propio binding en bindMisRutinasEvents para soportar Editar/Borrar)
@@ -2543,18 +2571,23 @@ document.addEventListener('DOMContentLoaded', () => {
         appState.rachaModalData = null;
         renderApp();
       }
-    }, 4500);
+    }, 6000);
 
     return `
       <div class="ef-streak-overlay" id="streakModalOverlay">
         <div class="ef-streak-card" onclick="event.stopPropagation()">
-          <div class="ef-streak-flame-container">
+
+          <!-- FASE 1: FUEGO — aparece solo primero -->
+          <div class="ef-streak-flame-container ef-streak-phase1">
             <span class="ef-streak-flame">🔥</span>
           </div>
-          <div class="ef-streak-number">${count}</div>
-          <div class="ef-streak-label">${count === 1 ? 'DÍA DE RACHA' : 'DÍAS DE RACHA'}</div>
 
-          <div class="ef-streak-week-row">
+          <!-- FASE 3: NÚMERO — aparece junto con el día -->
+          <div class="ef-streak-number ef-streak-phase3">${count}</div>
+          <div class="ef-streak-label ef-streak-phase3">${count === 1 ? 'DÍA DE RACHA' : 'DÍAS DE RACHA'}</div>
+
+          <!-- FASE 2: SEMANA — aparece después del fuego -->
+          <div class="ef-streak-week-row ef-streak-phase2">
             ${(diasSemana || []).map(day => `
               <div class="ef-streak-day-item">
                 <span class="ef-streak-day-letter">${day.letra}</span>
@@ -2565,9 +2598,54 @@ document.addEventListener('DOMContentLoaded', () => {
             `).join('')}
           </div>
 
-          <button class="ef-streak-btn-close" id="btnCloseStreakModal">
+          <button class="ef-streak-btn-close ef-streak-phase2" id="btnCloseStreakModal">
             ¡CONTINUAR ENTRENANDO! 🔥
           </button>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderStreakInfoModal() {
+    if (!appState.mostrarModalRachaInfo) return '';
+    const alumno = appState.usuarioActual?.data;
+    if (!alumno) return '';
+    const info = calcularRachaAlumno(alumno.id);
+    const count = info.rachaActual;
+    const dias = info.diasSemanaActual;
+
+    return `
+      <div class="ef-streak-overlay" id="streakInfoOverlay" style="z-index:9998;">
+        <div class="ef-streak-card" onclick="event.stopPropagation()" style="animation: efRachaPopIn 0.35s cubic-bezier(0.175,0.885,0.32,1.275) forwards;">
+
+          <div class="ef-streak-flame-container" style="margin-bottom:6px;">
+            <span class="ef-streak-flame" style="font-size:3.2rem;">🔥</span>
+          </div>
+          <div class="ef-streak-number" style="font-size:3rem; opacity:1;">${count}</div>
+          <div class="ef-streak-label" style="opacity:1;">${count === 1 ? 'DÍA DE RACHA' : 'DÍAS DE RACHA'}</div>
+
+          <div class="ef-streak-week-row" style="opacity:1;">
+            ${dias.map(day => `
+              <div class="ef-streak-day-item">
+                <span class="ef-streak-day-letter">${day.letra}</span>
+                <div class="ef-streak-day-circle ${day.esHoy ? 'active-today' : (day.completado ? 'completed' : '')}" style="animation:none; opacity:1;">
+                  ${day.completado || day.esHoy ? '🏋️' : (day.esDomingo ? '—' : '○')}
+                </div>
+              </div>
+            `).join('')}
+          </div>
+
+          ${info.entrenoHoy ? `
+            <div style="font-size:0.82rem; color:#66bb6a; font-weight:700; margin-bottom:14px; letter-spacing:0.3px;">✅ ¡Ya entrenaste hoy!</div>
+          ` : (info.requiereAtencionRecuperar ? `
+            <div style="font-size:0.82rem; color:#ff8a00; font-weight:700; margin-bottom:14px; letter-spacing:0.3px;">⚠️ ¡Entrená hoy para no perder tu racha!</div>
+          ` : (count === 0 ? `
+            <div style="font-size:0.82rem; color:var(--text-gray); font-weight:700; margin-bottom:14px;">Empezá a entrenar para iniciar tu racha 💪</div>
+          ` : `
+            <div style="font-size:0.82rem; color:#e0e0e0; font-weight:700; margin-bottom:14px;">¡Seguí así! 💪</div>
+          `))}
+
+          <button class="ef-streak-btn-close" id="btnCloseStreakInfo">CERRAR</button>
         </div>
       </div>
     `;
