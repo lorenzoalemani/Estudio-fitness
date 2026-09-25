@@ -1970,3 +1970,271 @@ body {
   transform: scale(0.96);
 }
 
+/* ====================================================================
+   MODAL Y BOTÓN "VER ÚLTIMO ENTRENAMIENTO" (REFERENCIA CONTEXTUAL)
+   ==================================================================== */
+.btn-ver-ultimo-entrenamiento {
+  background: rgba(255, 138, 0, 0.1);
+  border: 1px solid rgba(255, 138, 0, 0.4);
+  color: #ff9d2e;
+  border-radius: var(--radius-sm);
+  transition: all 0.2s ease;
+  user-select: none;
+}
+.btn-ver-ultimo-entrenamiento:hover {
+  background: rgba(255, 138, 0, 0.18);
+  border-color: #ff9d2e;
+}
+.btn-ver-ultimo-entrenamiento:active {
+  transform: scale(0.98);
+}
+
+.ef-ref-header {
+  padding: 18px 20px 14px 20px;
+  background: linear-gradient(180deg, rgba(255, 138, 0, 0.12) 0%, rgba(20, 20, 26, 0.95) 100%);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.ef-ref-pills {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  -webkit-overflow-scrolling: touch;
+}
+.ef-ref-pill {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text-gray);
+  border-radius: 20px;
+  padding: 5px 12px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.ef-ref-pill.active {
+  background: rgba(255, 138, 0, 0.25);
+  border-color: #ff9d2e;
+  color: #fff;
+  box-shadow: 0 0 10px rgba(255, 138, 0, 0.3);
+}
+
+.ef-ref-exercise-card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+.ef-ref-exercise-title {
+  font-size: 0.95rem;
+  font-weight: 800;
+  color: #fff;
+  margin-bottom: 8px;
+}
+.ef-ref-sets-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ef-ref-set-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(0, 0, 0, 0.25);
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 0.82rem;
+}
+.ef-ref-set-num {
+  font-weight: 700;
+  color: var(--text-gray);
+  width: 65px;
+}
+.ef-ref-set-reps {
+  color: #e0e0e0;
+}
+.ef-ref-set-weight {
+  font-weight: 800;
+  color: #ff9d2e;
+}
+.ef-ref-set-comment {
+  font-size: 0.72rem;
+  color: var(--yellow-warning);
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ====================================================================
+   REDISEÑO DE HISTORIAL (4 NIVELES: RUTINAS → DÍAS → SESIONES → DETALLE)
+   ==================================================================== */
+.ef-hist-view {
+  max-width: 720px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.ef-hist-header {
+  margin-bottom: 16px;
+}
+.ef-hist-title {
+  font-size: 1.35rem;
+  font-weight: 900;
+  color: #fff;
+  letter-spacing: 0.3px;
+}
+.ef-hist-subtitle {
+  font-size: 0.82rem;
+  color: var(--text-gray);
+  margin-top: 3px;
+}
+
+.ef-hist-cards-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ef-hist-card {
+  background: rgba(20, 20, 26, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  padding: 16px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  user-select: none;
+}
+.ef-hist-card:hover {
+  background: rgba(28, 29, 38, 0.95);
+  border-color: rgba(255, 46, 46, 0.35);
+  transform: translateY(-1px);
+}
+.ef-hist-card:active {
+  transform: scale(0.99);
+}
+
+.ef-hist-card-title {
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: #fff;
+}
+.ef-hist-card-meta {
+  font-size: 0.78rem;
+  color: var(--text-gray);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+.ef-hist-card-arrow {
+  font-size: 1.4rem;
+  color: var(--text-muted);
+  font-weight: 300;
+  padding-left: 10px;
+}
+
+.ef-session-detail-card {
+  background: rgba(18, 19, 26, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 18px;
+  padding: 18px 20px;
+}
+.ef-session-detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.ef-session-breadcrumb-title {
+  font-size: 0.75rem;
+  font-weight: 800;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.ef-session-title {
+  font-size: 1.3rem;
+  font-weight: 900;
+  color: #fff;
+  margin-top: 3px;
+}
+.ef-session-subtitle {
+  font-size: 0.8rem;
+  color: var(--text-gray);
+  margin-top: 3px;
+}
+
+.ef-session-comment {
+  background: rgba(255, 138, 0, 0.08);
+  border-left: 3px solid #ff8a00;
+  border-radius: 0 8px 8px 0;
+  padding: 10px 14px;
+  margin: 14px 0;
+  font-size: 0.84rem;
+  color: #e5e5e5;
+}
+
+.ef-session-exercises-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 14px;
+}
+.ef-session-exercise-block {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+.ef-session-exercise-name {
+  font-size: 0.95rem;
+  font-weight: 800;
+  color: #fff;
+}
+.ef-session-sets-table {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ef-session-set-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(0, 0, 0, 0.25);
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 0.82rem;
+}
+.ef-session-set-idx {
+  font-weight: 700;
+  color: var(--text-gray);
+  width: 65px;
+}
+.ef-session-set-reps {
+  color: #e0e0e0;
+}
+.ef-session-set-weight {
+  font-weight: 800;
+  color: #ff8a00;
+}
+.ef-session-comp-badge {
+  font-size: 0.72rem;
+  color: #fca5a5;
+  background: rgba(255, 46, 46, 0.08);
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 46, 46, 0.2);
+}
+.ef-session-set-comment {
+  font-size: 0.74rem;
+  color: var(--yellow-warning);
+}
+

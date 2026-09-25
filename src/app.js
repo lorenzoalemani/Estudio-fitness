@@ -214,7 +214,12 @@ document.addEventListener('DOMContentLoaded', () => {
     rachaModalData: null,
     presetSeleccionadaId: null,
     mostrarModalPresetDetalle: false,
-    mostrarModalRachaInfo: false
+    mostrarModalRachaInfo: false,
+    mostrarModalUltimoEntrenamiento: false,
+    candidatosUltimoEntrenamiento: [],
+    indiceReferenciaSeleccionada: 0,
+    diaParaReferencia: null,
+    historialNav: { rutinaId: null, diaKey: null, logId: null }
   };
 
   // Escuchar cambios de Supabase Realtime / Local Store
@@ -676,6 +681,7 @@ document.addEventListener('DOMContentLoaded', () => {
       ${renderStreakModal()}
       ${renderPresetDetailModal()}
       ${renderStreakInfoModal()}
+      ${renderModalUltimoEntrenamiento()}
 
       ${renderBottomNav()}
     `;
@@ -685,6 +691,7 @@ document.addEventListener('DOMContentLoaded', () => {
     bindBottomNavEvents();
     bindMisRutinasEvents(alumno);
     bindHistorialEvents(alumno);
+    bindUltimoEntrenamientoEvents();
     bindPresetAndStreakEvents();
     if (appState.tabCliente === 'stats') bindStatsEvents(historialEntrenamientos);
     bindBorradorEntrenamientoEvents();
@@ -904,8 +911,60 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
-  // --- EDICIÓN DE ENTRENAMIENTO YA GUARDADO (ventana de 2hs, solo el propio alumno) ---
+  // --- NAVEGACIÓN Y ACCIONES DEL HISTORIAL JERÁRQUICO ---
   function bindHistorialEvents(alumno) {
+    // Nivel 1 -> Nivel 2: Click en una rutina
+    document.querySelectorAll('.btn-hist-rutina').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const rId = btn.dataset.rutinaId;
+        appState.historialNav = { rutinaId: rId, diaKey: null, logId: null };
+        renderApp();
+      });
+    });
+
+    // Nivel 2 -> Nivel 3: Click en un día de esa rutina
+    document.querySelectorAll('.btn-hist-dia').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const dKey = btn.dataset.diaKey;
+        appState.historialNav.diaKey = dKey;
+        appState.historialNav.logId = null;
+        renderApp();
+      });
+    });
+
+    // Nivel 3 -> Nivel 4: Click en una sesión concreta
+    document.querySelectorAll('.btn-hist-session').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const lId = btn.dataset.logId;
+        appState.historialNav.logId = lId;
+        renderApp();
+      });
+    });
+
+    // Botones de volver atrás en breadcrumbs
+    document.querySelectorAll('.btn-hist-back-to-rutinas').forEach(btn => {
+      btn.addEventListener('click', () => {
+        appState.historialNav = { rutinaId: null, diaKey: null, logId: null };
+        renderApp();
+      });
+    });
+
+    document.querySelectorAll('.btn-hist-back-to-dias').forEach(btn => {
+      btn.addEventListener('click', () => {
+        appState.historialNav.diaKey = null;
+        appState.historialNav.logId = null;
+        renderApp();
+      });
+    });
+
+    document.querySelectorAll('.btn-hist-back-to-sessions').forEach(btn => {
+      btn.addEventListener('click', () => {
+        appState.historialNav.logId = null;
+        renderApp();
+      });
+    });
+
+    // Edición y borrado (disponibles en el detalle de la sesión)
     document.querySelectorAll('.btn-editar-entrenamiento-click').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -930,6 +989,154 @@ document.addEventListener('DOMContentLoaded', () => {
         appState.modalActivo = 'confirmar_borrar_entrenamiento';
         renderApp();
       });
+    });
+  }
+
+  // --- EVENTOS DEL MODAL "VER ÚLTIMO ENTRENAMIENTO" ---
+  function bindUltimoEntrenamientoEvents() {
+    // Abrir modal de referencia
+    document.querySelectorAll('.btn-ver-ultimo-entrenamiento').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const diaId = btn.dataset.diaId;
+        const alumno = appState.usuarioActual?.data;
+        if (!alumno) return;
+
+        let dia = appState.diaActivoEntrenamiento;
+        let rutina = store.getRutinaPorId(appState.rutinaSeleccionadaId) || store.getRutinaActiva(alumno.id);
+        if (!dia && rutina) {
+          dia = (rutina.dias || []).find(d => String(d.id) === String(diaId || appState.diaSeleccionadoId));
+        }
+
+        if (!dia) {
+          alert("Seleccioná un día de entrenamiento primero.");
+          return;
+        }
+
+        appState.diaParaReferencia = dia;
+        const refs = obtenerEntrenamientosReferencia(alumno.id, rutina?.id, dia);
+
+        if (!refs.todos || !refs.todos.length) {
+          alert("ℹ️ Aún no tienes entrenamientos previos registrados para este día o con ejercicios similares.\n\n¡Comenzá a registrar tus series y este será tu primer punto de referencia!");
+          return;
+        }
+
+        appState.candidatosUltimoEntrenamiento = refs.todos;
+        appState.indiceReferenciaSeleccionada = 0;
+        appState.mostrarModalUltimoEntrenamiento = true;
+        renderApp();
+      });
+    });
+
+    // Cerrar modal
+    document.getElementById('btnCloseModalUltimoEntrenamiento')?.addEventListener('click', () => {
+      appState.mostrarModalUltimoEntrenamiento = false;
+      renderApp();
+    });
+    document.getElementById('btnCerrarReferencia')?.addEventListener('click', () => {
+      appState.mostrarModalUltimoEntrenamiento = false;
+      renderApp();
+    });
+    document.getElementById('ultimoEntrenamientoOverlay')?.addEventListener('click', (e) => {
+      if (e.target.id === 'ultimoEntrenamientoOverlay') {
+        appState.mostrarModalUltimoEntrenamiento = false;
+        renderApp();
+      }
+    });
+
+    // Cambiar entre candidatos (pills)
+    document.querySelectorAll('.btn-switch-referencia').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const idx = parseInt(btn.dataset.candIdx, 10);
+        if (!isNaN(idx)) {
+          appState.indiceReferenciaSeleccionada = idx;
+          renderApp();
+        }
+      });
+    });
+
+    // Iniciar sesión precargando valores del entrenamiento seleccionado
+    document.getElementById('btnIniciarConReferencia')?.addEventListener('click', () => {
+      const alumno = appState.usuarioActual?.data;
+      if (!alumno) return;
+      const rutina = store.getRutinaPorId(appState.rutinaSeleccionadaId) || store.getRutinaActiva(alumno.id);
+      const dia = appState.diaParaReferencia || (rutina && (rutina.dias || []).find(d => d.id === appState.diaSeleccionadoId));
+      if (!dia) return;
+
+      const cand = (appState.candidatosUltimoEntrenamiento || [])[appState.indiceReferenciaSeleccionada || 0];
+
+      // Iniciar draft estándar del día
+      const diaObj = {
+        ...dia,
+        ejercicios: (dia.ejercicios || []).map(ej => ({
+          ...ej,
+          esEntradaEnCalor: !!(ej.esEntradaEnCalor || ej.entradaEnCalor || ej.es_warmup)
+        }))
+      };
+      appState.diaActivoEntrenamiento = diaObj;
+      initWorkoutDraft(diaObj);
+
+      // Copiar valores de referencia si hay candidato
+      if (cand && cand.log && Array.isArray(cand.log.sets)) {
+        (diaObj.ejercicios || []).forEach(ej => {
+          if (ej.esEntradaEnCalor || !appState.workoutDraftSets[ej.id]) return;
+          const matchingSets = cand.log.sets.filter(s => {
+            const sn = String(s.ejercicioNombre || s.ejercicio || '').trim().toLowerCase();
+            const en = String(ej.nombre || '').trim().toLowerCase();
+            return s.ejercicioId === ej.id || (sn && en && sn === en);
+          });
+          if (matchingSets.length > 0) {
+            matchingSets.forEach(ms => {
+              const target = appState.workoutDraftSets[ej.id].sets.find(ts => ts.setNumero === ms.setNumero);
+              if (target) {
+                if (ms.pesoUtilizado != null && ms.pesoUtilizado !== '' && ms.pesoUtilizado !== 'S/D') target.peso = ms.pesoUtilizado;
+                else if (ms.peso != null && ms.peso !== '' && ms.peso !== 'S/D') target.peso = ms.peso;
+                if (ms.repsRealizadas != null && ms.repsRealizadas !== '') target.reps = ms.repsRealizadas;
+                else if (ms.reps != null && ms.reps !== '') target.reps = ms.reps;
+              }
+            });
+          }
+        });
+        persistWorkoutDraft();
+      }
+
+      appState.mostrarModalUltimoEntrenamiento = false;
+      renderApp();
+    });
+
+    // Aplicar referencia a sesión ya activa
+    document.getElementById('btnAplicarReferenciaActual')?.addEventListener('click', () => {
+      const dia = appState.diaActivoEntrenamiento;
+      if (!dia) return;
+      const cand = (appState.candidatosUltimoEntrenamiento || [])[appState.indiceReferenciaSeleccionada || 0];
+
+      if (cand && cand.log && Array.isArray(cand.log.sets)) {
+        (dia.ejercicios || []).forEach(ej => {
+          if (ej.esEntradaEnCalor || !appState.workoutDraftSets[ej.id]) return;
+          const matchingSets = cand.log.sets.filter(s => {
+            const sn = String(s.ejercicioNombre || s.ejercicio || '').trim().toLowerCase();
+            const en = String(ej.nombre || '').trim().toLowerCase();
+            return s.ejercicioId === ej.id || (sn && en && sn === en);
+          });
+          if (matchingSets.length > 0) {
+            matchingSets.forEach(ms => {
+              const target = appState.workoutDraftSets[ej.id].sets.find(ts => ts.setNumero === ms.setNumero);
+              if (target) {
+                if (ms.pesoUtilizado != null && ms.pesoUtilizado !== '' && ms.pesoUtilizado !== 'S/D') target.peso = ms.pesoUtilizado;
+                else if (ms.peso != null && ms.peso !== '' && ms.peso !== 'S/D') target.peso = ms.peso;
+                if (ms.repsRealizadas != null && ms.repsRealizadas !== '') target.reps = ms.repsRealizadas;
+                else if (ms.reps != null && ms.reps !== '') target.reps = ms.reps;
+              }
+            });
+          }
+        });
+        persistWorkoutDraft();
+      }
+
+      appState.mostrarModalUltimoEntrenamiento = false;
+      alert("✅ Pesos y repeticiones de referencia aplicados a tu sesión actual.");
+      renderApp();
     });
   }
 
@@ -1353,9 +1560,14 @@ document.addEventListener('DOMContentLoaded', () => {
         <div style="font-size:0.85rem; color:var(--text-gray); margin-top:4px">Rutina: ${rutina.titulo}</div>
       </div>
 
-      <button class="btn btn-primary btn-comenzar-entrenamiento" data-dia-id="${dia.id}" style="width:100%; padding:18px; font-size:1.15rem; font-weight:900; margin-bottom:24px; box-shadow: 0 0 35px rgba(255, 46, 46, 0.45)">
-        ▶ EMPEZAR ENTRENAMIENTO
-      </button>
+      <div style="display:flex; flex-direction:column; gap:10px; margin-bottom:24px">
+        <button class="btn btn-primary btn-comenzar-entrenamiento" data-dia-id="${dia.id}" style="width:100%; padding:16px; font-size:1.15rem; font-weight:900; box-shadow: 0 0 35px rgba(255, 46, 46, 0.45)">
+          ▶ EMPEZAR ENTRENAMIENTO
+        </button>
+        <button type="button" class="btn btn-secondary btn-ver-ultimo-entrenamiento" data-dia-id="${dia.id}" style="width:100%; padding:13px; font-size:0.95rem; font-weight:800; display:flex; align-items:center; justify-content:center; gap:8px; border-color:rgba(255,138,0,0.5); color:#ff9d2e">
+          📊 VER ÚLTIMO ENTRENAMIENTO
+        </button>
+      </div>
 
       <h3 style="font-size:1.05rem; font-weight:900; text-transform:uppercase; margin-bottom:14px; color:var(--text-white)">
         📋 Ejercicios e Indicaciones del Profesor
@@ -1368,7 +1580,7 @@ document.addEventListener('DOMContentLoaded', () => {
           <div class="target-box">
             <div class="target-title">${ej.esEntradaEnCalor ? '🔥 Activación / Entrada en calor' : '🎯 Objetivo Indicado por el Profesor:'}</div>
             <div class="target-stats">
-              ${ej.seriesTarget} series × ${ej.repeticionesTarget} reps · ${ej.pesoSugerido}
+              ${ej.seriesTarget || '—'} series × ${ej.repeticionesTarget || '—'} reps · ${(ej.pesoSugerido && ej.pesoSugerido !== 'S/D') ? ej.pesoSugerido : '—'}
             </div>
             ${ej.notaProfesor ? `
               <div style="font-size:0.85rem; color:#fca5a5; margin-top:6px; border-top:1px dashed rgba(255,255,255,0.1); padding-top:6px">
@@ -1446,6 +1658,140 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (e) {
       return null;
     }
+  }
+
+  // --- BÚSQUEDA INTELIGENTE DE ENTRENAMIENTOS DE REFERENCIA ("VER ÚLTIMO ENTRENAMIENTO") ---
+  // Prioridad 1: Mismo día de la misma rutina (ej: último viernes de esta rutina).
+  // Prioridad 2: Misma rutina, otro día con mayor coincidencia de ejercicios (ej: martes = viernes).
+  // Prioridad 3: Misma rutina > cantidad de ejercicios coincidentes > fecha más reciente.
+  // Permite consultar el principal y también otros candidatos relevantes.
+  function obtenerEntrenamientosReferencia(alumnoId, rutinaActualId, diaActual) {
+    const historial = store.getHistorialEntrenamientosReales(alumnoId) || [];
+    if (!historial.length || !diaActual) return { principal: null, todos: [] };
+
+    // Ejercicios del día actual (excluyendo entrada en calor)
+    const ejerciciosObjetivo = (diaActual.ejercicios || [])
+      .filter(e => !e.esEntradaEnCalor)
+      .map(e => ({
+        id: e.id,
+        nombreNorm: String(e.nombre || '').trim().toLowerCase()
+      }))
+      .filter(e => e.nombreNorm);
+
+    const setNombresObjetivo = new Set(ejerciciosObjetivo.map(e => e.nombreNorm));
+    const totalObjetivo = setNombresObjetivo.size;
+
+    const candidatos = [];
+
+    historial.forEach(log => {
+      if (!Array.isArray(log.sets) || !log.sets.length) return;
+
+      const isSameRutina = String(log.rutinaId || '') === String(rutinaActualId || '');
+      const diaLogNombre = String(log.diaNombre || '').trim().toLowerCase();
+      const diaActualNombre = String(diaActual.nombre || '').trim().toLowerCase();
+
+      const isSameDia = (log.diaId && diaActual.id && String(log.diaId) === String(diaActual.id))
+        || (log.diaNumero != null && diaActual.diaNumero != null && Number(log.diaNumero) === Number(diaActual.diaNumero))
+        || (diaLogNombre && diaActualNombre && diaLogNombre === diaActualNombre);
+
+      // Calcular coincidencia de ejercicios
+      const ejerciciosEnLog = new Set(
+        (log.sets || []).map(s => String(s.ejercicioNombre || s.ejercicio || '').trim().toLowerCase()).filter(Boolean)
+      );
+
+      let coincidencias = 0;
+      setNombresObjetivo.forEach(nom => {
+        if (ejerciciosEnLog.has(nom)) coincidencias++;
+      });
+
+      // Solo califica si es el mismo día O si tiene al menos 1 ejercicio coincidente
+      if (!isSameDia && coincidencias === 0) return;
+
+      // Puntuación por prioridades estrictas:
+      // Prioridad 1: Misma rutina + Mismo día (10000 pts)
+      // Prioridad 2: Misma rutina + Otro día con coincidencias (5000 pts)
+      // Prioridad 3: Otra rutina + Mismo día (2000 pts)
+      // Prioridad 4: Otra rutina + Coincidencias (1000 pts)
+      let tier = 4;
+      let basePuntos = 1000;
+      if (isSameRutina && isSameDia) {
+        tier = 1;
+        basePuntos = 10000;
+      } else if (isSameRutina && coincidencias > 0) {
+        tier = 2;
+        basePuntos = 5000;
+      } else if (!isSameRutina && isSameDia) {
+        tier = 3;
+        basePuntos = 2000;
+      }
+
+      // Tie-breaker: más coincidencias primero, luego fecha más reciente
+      const timeMs = new Date(log.fecha).getTime() || 0;
+      const score = basePuntos + (coincidencias * 100) + (timeMs / 1e12);
+
+      candidatos.push({
+        log,
+        tier,
+        isSameRutina,
+        isSameDia,
+        coincidencias,
+        totalObjetivo,
+        score,
+        fecha: log.fecha,
+        diaNombre: log.diaNombre || diaActual.nombre
+      });
+    });
+
+    // Ordenar por score descendente
+    candidatos.sort((a, b) => b.score - a.score);
+
+    if (!candidatos.length) return { principal: null, todos: [] };
+
+    // Formatear etiquetas de origen para cada candidato
+    const resultado = candidatos.map((c, index) => {
+      const fechaCorta = new Date(c.fecha).toLocaleDateString('es-AR', {
+        day: 'numeric',
+        month: 'short'
+      });
+      const diaSemana = new Date(c.fecha).toLocaleDateString('es-AR', { weekday: 'short' });
+
+      let tag = 'Referencia anterior';
+      let subtitulo = `Entrenamiento del ${fechaCorta}`;
+      let label = `${diaSemana} ${fechaCorta}`;
+
+      if (c.tier === 1) {
+        if (index === 0) {
+          tag = 'Último entrenamiento de este día';
+          subtitulo = `Basado en tu último ${diaActual.nombre}`;
+          label = `${c.diaNombre} ${fechaCorta} · último`;
+        } else {
+          tag = 'Entrenamiento anterior';
+          subtitulo = `${c.diaNombre} · ${fechaCorta}`;
+          label = `${c.diaNombre} ${fechaCorta} · anterior`;
+        }
+      } else if (c.tier === 2) {
+        const esMismos = c.totalObjetivo > 0 && c.coincidencias >= c.totalObjetivo;
+        tag = esMismos ? 'Mismos ejercicios' : `${c.coincidencias} ej. coincidentes`;
+        subtitulo = `Basado en un entrenamiento similar (${c.diaNombre} · misma rutina)`;
+        label = `${c.diaNombre} ${fechaCorta} · ${esMismos ? 'mismos ejercicios' : c.coincidencias + ' coincidencias'}`;
+      } else {
+        tag = 'Entrenamiento similar';
+        subtitulo = `Basado en un entrenamiento similar (${c.diaNombre})`;
+        label = `${c.diaNombre} ${fechaCorta}`;
+      }
+
+      return {
+        ...c,
+        tag,
+        subtitulo,
+        label
+      };
+    });
+
+    return {
+      principal: resultado[0],
+      todos: resultado
+    };
   }
 
   // --- Busca los últimos pesos reales utilizados por el alumno para un ejercicio ---
@@ -1577,8 +1923,8 @@ document.addEventListener('DOMContentLoaded', () => {
             // Usar el último peso real utilizado por el alumno
             pesoInicial = historico.peso;
           } else {
-            // Sin historial válido: usar pesoSugerido o S/D
-            pesoInicial = ej.pesoSugerido || 'S/D';
+            // Sin historial válido: usar pesoSugerido si existe o dejar vacío
+            pesoInicial = (ej.pesoSugerido && ej.pesoSugerido !== 'S/D') ? ej.pesoSugerido : '';
           }
           return {
             setNumero: setNum,
@@ -1651,7 +1997,7 @@ document.addEventListener('DOMContentLoaded', () => {
           <div class="exercise-title" style="font-size:1.15rem; font-weight:900; color:#fff">🔥 ${ej.nombre} <span class="warmup-badge">Entrada en calor</span></div>
           <div class="target-box">
             <div class="target-title">🔥 ACTIVACIÓN / ENTRADA EN CALOR</div>
-            <div class="target-stats">${ej.seriesTarget || '—'} series · ${ej.repeticionesTarget || '—'} reps · ${ej.pesoSugerido || 'S/D'}</div>
+            <div class="target-stats">${ej.seriesTarget || '—'} series · ${ej.repeticionesTarget || '—'} reps · ${(ej.pesoSugerido && ej.pesoSugerido !== 'S/D') ? ej.pesoSugerido : '—'}</div>
             ${ej.notaProfesor ? `<div style="font-size:0.85rem; color:#fca5a5; margin-top:4px">👨‍🏫 ${ej.notaProfesor}</div>` : ''}
           </div>
           ${typeof renderExerciseMediaHtml === 'function' ? renderExerciseMediaHtml(ej) : (ej.videoUrl ? `<a href="${ej.videoUrl}" target="_blank" rel="noopener noreferrer" class="btn-video-demo">🎬 Ver ejercicio</a>` : '')}
@@ -1664,7 +2010,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
           <div class="target-box">
             <div class="target-title">🎯 OBJETIVO DEL PROFESOR</div>
-            <div class="target-stats">${ej.seriesTarget} series · ${ej.repeticionesTarget} reps · ${ej.pesoSugerido}</div>
+            <div class="target-stats">${ej.seriesTarget || '—'} series · ${ej.repeticionesTarget || '—'} reps · ${(ej.pesoSugerido && ej.pesoSugerido !== 'S/D') ? ej.pesoSugerido : '—'}</div>
             ${ej.notaProfesor ? `<div style="font-size:0.85rem; color:#fca5a5; margin-top:4px">👨‍🏫 ${ej.notaProfesor}</div>` : ''}
           </div>
           ${typeof renderExerciseMediaHtml === 'function' ? renderExerciseMediaHtml(ej) : (ej.videoUrl ? `<a href="${ej.videoUrl}" target="_blank" rel="noopener noreferrer" class="btn-video-demo">🎬 Ver ejercicio</a>` : '')}
@@ -1717,12 +2063,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
     return `
       <div class="workout-session-container">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px">
           <div>
             <span class="badge badge-warning">▶ EN PROGRESO</span>
             <h2 style="font-size:1.3rem; font-weight:900; margin-top:4px; color:#fff">DÍA ${dia.diaNumero || 1} : ${dia.nombre}</h2>
           </div>
           <button class="btn btn-secondary btn-sm workout-cancel-btn" id="btnCancelWorkout">Cancelar ✖</button>
+        </div>
+
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; gap:8px">
+          <button type="button" class="btn btn-secondary btn-sm btn-ver-ultimo-entrenamiento" data-dia-id="${dia.id}" style="padding:6px 12px; font-size:0.8rem; font-weight:800; border-color:rgba(255,138,0,0.5); color:#ff9d2e; display:flex; align-items:center; gap:6px">
+            📊 Ver anterior / referencia
+          </button>
         </div>
 
         <div class="workout-ejercicio-progress">
@@ -2661,6 +3013,132 @@ document.addEventListener('DOMContentLoaded', () => {
     `;
   }
 
+  function renderModalUltimoEntrenamiento() {
+    if (!appState.mostrarModalUltimoEntrenamiento) return '';
+    const candidatos = appState.candidatosUltimoEntrenamiento || [];
+    if (!candidatos.length) return '';
+
+    const idx = Math.min(Math.max(appState.indiceReferenciaSeleccionada || 0, 0), candidatos.length - 1);
+    const cand = candidatos[idx];
+    const log = cand.log;
+    const enSesion = !!appState.diaActivoEntrenamiento;
+
+    // Agrupar sets por ejercicio manteniendo el orden
+    const gruposEjercicios = [];
+    const mapaEjercicios = new Map();
+    (log.sets || []).forEach(s => {
+      const nombre = s.ejercicioNombre || s.ejercicio || s.nombre || 'Ejercicio';
+      if (!mapaEjercicios.has(nombre)) {
+        const item = { nombre, sets: [] };
+        mapaEjercicios.set(nombre, item);
+        gruposEjercicios.push(item);
+      }
+      mapaEjercicios.get(nombre).sets.push(s);
+    });
+
+    const fechaFormateada = new Date(log.fecha).toLocaleDateString('es-AR', {
+      weekday: 'long',
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric'
+    });
+    const horaFormateada = new Date(log.fecha).toLocaleTimeString('es-AR', {
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+
+    return `
+      <div class="modal-overlay" id="ultimoEntrenamientoOverlay" style="z-index:9998; backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px)">
+        <div class="modal-content ef-ref-modal" onclick="event.stopPropagation()" style="max-width:520px; max-height:88vh; display:flex; flex-direction:column; padding:0; overflow:hidden">
+          
+          <!-- Encabezado de la referencia -->
+          <div class="ef-ref-header">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start">
+              <div>
+                <span class="badge" style="background:rgba(255,138,0,0.18); color:#ff9d2e; border:1px solid rgba(255,138,0,0.4); font-size:0.75rem; font-weight:800; margin-bottom:6px">
+                  ${cand.tag}
+                </span>
+                <h3 style="font-size:1.2rem; font-weight:900; color:#fff; margin:0">
+                  ${cand.subtitulo}
+                </h3>
+                <div style="font-size:0.8rem; color:var(--text-gray); margin-top:4px">
+                  📅 ${fechaFormateada} · 🕒 ${horaFormateada}
+                </div>
+              </div>
+              <button class="close-btn" id="btnCloseModalUltimoEntrenamiento" style="margin-top:-4px">&times;</button>
+            </div>
+
+            <!-- Selector de otros candidatos si existen -->
+            ${candidatos.length > 1 ? `
+              <div class="ef-ref-selector-wrap" style="margin-top:12px; border-top:1px solid rgba(255,255,255,0.08); padding-top:10px">
+                <div style="font-size:0.72rem; font-weight:800; color:var(--text-muted); text-transform:uppercase; margin-bottom:6px; letter-spacing:0.5px">
+                  También podés consultar:
+                </div>
+                <div class="ef-ref-pills">
+                  ${candidatos.map((c, i) => `
+                    <button type="button" class="ef-ref-pill ${i === idx ? 'active' : ''} btn-switch-referencia" data-cand-idx="${i}">
+                      ${c.label}
+                    </button>
+                  `).join('')}
+                </div>
+              </div>
+            ` : ''}
+          </div>
+
+          <!-- Lista de ejercicios y series del entrenamiento anterior -->
+          <div class="ef-ref-body" style="flex:1; overflow-y:auto; padding:16px 18px; display:flex; flex-direction:column; gap:12px">
+            ${log.comentarioGeneral ? `
+              <div style="background:rgba(255,138,0,0.08); border-left:3px solid #ff9d2e; padding:10px 14px; border-radius:0 8px 8px 0; font-size:0.84rem; color:#e0e0e0">
+                💬 <strong>Comentario de la sesión:</strong> "${log.comentarioGeneral}"
+              </div>
+            ` : ''}
+
+            <div style="display:flex; flex-direction:column; gap:10px">
+              ${gruposEjercicios.map(g => `
+                <div class="ef-ref-exercise-card">
+                  <div class="ef-ref-exercise-title">
+                    🏋️ ${g.nombre}
+                  </div>
+                  <div class="ef-ref-sets-list">
+                    ${g.sets.map(s => {
+                      const repsVal = s.repsRealizadas != null ? s.repsRealizadas : (s.reps || '—');
+                      const pesoVal = (s.pesoUtilizado && s.pesoUtilizado !== 'S/D') ? `${s.pesoUtilizado} kg` : ((s.peso && s.peso !== 'S/D') ? `${s.peso} kg` : '—');
+                      return `
+                        <div class="ef-ref-set-row">
+                          <span class="ef-ref-set-num">Serie ${s.setNumero || 1}</span>
+                          <span class="ef-ref-set-reps">${repsVal} reps</span>
+                          <span class="ef-ref-set-weight">${pesoVal}</span>
+                          ${s.comentarioAlumno ? `<span class="ef-ref-set-comment" title="${s.comentarioAlumno}">💬 ${s.comentarioAlumno}</span>` : ''}
+                        </div>
+                      `;
+                    }).join('')}
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+
+          <!-- Acciones inferiores: transferir valores o cerrar -->
+          <div class="ef-ref-footer" style="padding:14px 18px; background:rgba(12,12,18,0.95); border-top:1px solid var(--border-color); display:flex; flex-direction:column; gap:8px">
+            ${enSesion ? `
+              <button type="button" class="btn btn-primary" id="btnAplicarReferenciaActual" style="width:100%; padding:13px; font-weight:900; font-size:0.95rem; background:linear-gradient(135deg, #ff8a00 0%, #e65100 100%); border:none">
+                📥 CARGAR ESTOS PESOS Y REPS EN MI SESIÓN ACTUAL
+              </button>
+            ` : `
+              <button type="button" class="btn btn-primary" id="btnIniciarConReferencia" style="width:100%; padding:13px; font-weight:900; font-size:0.95rem; background:linear-gradient(135deg, #ff2e2e 0%, #b30000 100%); border:none">
+                ▶ EMPEZAR CARGANDO ESTOS VALORES
+              </button>
+            `}
+            <button type="button" class="btn btn-secondary" id="btnCerrarReferencia" style="width:100%; padding:10px; font-size:0.85rem">
+              Cerrar (solo consultar)
+            </button>
+          </div>
+
+        </div>
+      </div>
+    `;
+  }
+
   function renderPresetsSection() {
     return `
       <div class="ef-presets-section">
@@ -2769,7 +3247,7 @@ document.addEventListener('DOMContentLoaded', () => {
           nombre: e.nombre,
           seriesTarget: Number(e.seriesTarget) || 3,
           repeticionesTarget: String(e.repeticionesTarget || '12'),
-          pesoSugerido: e.pesoSugerido || 'S/D',
+          pesoSugerido: (e.pesoSugerido && e.pesoSugerido !== 'S/D') ? e.pesoSugerido : '',
           notaProfesor: e.notaProfesor || '',
           esEntradaEnCalor: !!e.esEntradaEnCalor
         }))
@@ -3450,170 +3928,358 @@ document.addEventListener('DOMContentLoaded', () => {
   // exclusiva del alumno dueño del registro, dentro de la ventana de 2hs.
   function renderHistorialAgrupado(logs, rutinas, permitirEdicion = false) {
     if (!logs || logs.length === 0) {
-      return `<div style="text-align:center; color:var(--text-gray); padding:40px 20px">
-        <div style="font-size:2.5rem; margin-bottom:10px">📜</div>
-        <div style="font-size:1rem; font-weight:700">Aún no hay entrenamientos registrados.</div>
-        <div style="font-size:0.85rem; margin-top:6px">Completa una sesión para ver tu historial aquí.</div>
-      </div>`;
+      return `
+        <div style="text-align:center; color:var(--text-gray); padding:50px 20px">
+          <div style="font-size:3rem; margin-bottom:12px">📜</div>
+          <div style="font-size:1.1rem; font-weight:800; color:#fff">Aún no hay entrenamientos registrados</div>
+          <div style="font-size:0.85rem; margin-top:6px; color:var(--text-gray)">Completá una sesión para ver tu historial aquí.</div>
+        </div>
+      `;
     }
 
-    // Agrupar: rutinaId → semana → día
-    const grouped = {};
+    // Inicializar estado de navegación jerárquica si no existe
+    if (!appState.historialNav) {
+      appState.historialNav = { rutinaId: null, diaKey: null, logId: null };
+    }
+
+    const { rutinaId, diaKey, logId } = appState.historialNav;
+
+    // Organizar datos en mapa jerárquico: Rutinas -> Días -> Sesiones
+    const rutinasMap = new Map();
+
     logs.forEach(log => {
-      const rId = log.rutinaId || 'sin-rutina';
-      if (!grouped[rId]) {
-        const rutina = rutinas ? rutinas.find(r => r.id === rId) : null;
-        grouped[rId] = {
-          titulo: log.rutinaT || (rutina ? rutina.titulo : 'Rutina'),
-          fechaInicio: rutina ? rutina.fechaInicio : null,
-          duracionDias: rutina ? (rutina.duracionDias || 30) : 30,
-          semanas: {}
+      const rId = String(log.rutinaId || 'general');
+      let rObj = rutinasMap.get(rId);
+      if (!rObj) {
+        const rutina = (rutinas || []).find(r => String(r.id) === rId);
+        rObj = {
+          id: rId,
+          titulo: log.rutinaT || (rutina ? rutina.titulo : (rId === 'general' ? 'Entrenamientos Generales' : 'Rutina Personalizada')),
+          logs: [],
+          diasMap: new Map()
         };
+        rutinasMap.set(rId, rObj);
       }
-      const g = grouped[rId];
+      rObj.logs.push(log);
 
-      // Calcular semana relativa a la fecha de inicio de la rutina
-      let semana = log.semana || 1;
-      if (!log.semana && g.fechaInicio && log.fecha) {
-        const diffDays = Math.floor(
-          (new Date(log.fecha) - new Date(g.fechaInicio)) / 86400000
-        );
-        semana = Math.max(1, Math.ceil((diffDays + 1) / 7));
+      // Agrupar por día dentro de la rutina (usando diaNombre o diaNumero)
+      const dKey = String(log.diaNombre || log.diaNumero || 'Sesión').trim();
+      let dObj = rObj.diasMap.get(dKey);
+      if (!dObj) {
+        dObj = {
+          key: dKey,
+          nombre: log.diaNombre || `Día ${log.diaNumero || 1}`,
+          logs: []
+        };
+        rObj.diasMap.set(dKey, dObj);
       }
-
-      if (!g.semanas[semana]) g.semanas[semana] = {};
-      const diaKey = String(log.diaNumero || log.diaNombre || 1);
-      if (!g.semanas[semana][diaKey]) g.semanas[semana][diaKey] = [];
-      g.semanas[semana][diaKey].push(log);
+      dObj.logs.push(log);
     });
 
-    return `<div style="max-width:800px; margin:0 auto">
-      ${Object.entries(grouped).map(([rId, g]) => {
-        const totalSemanas = Math.max(1, Math.ceil(g.duracionDias / 7));
-        const semanasOrdenadas = Object.keys(g.semanas).map(Number).sort((a, b) => a - b);
-        // Usar el máximo entre la duración teórica y la semana más alta con datos reales
-        const semanasConDatos = semanasOrdenadas.length;
-        const semanaMaxReal = semanasOrdenadas.length > 0 ? semanasOrdenadas[semanasOrdenadas.length - 1] : 0;
+    // Ordenar logs de cada día (más reciente primero)
+    rutinasMap.forEach(r => {
+      r.logs.sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+      r.diasMap.forEach(d => {
+        d.logs.sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+      });
+    });
 
-        return `
-        <div style="margin-bottom:28px">
-          <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px; padding:12px 16px;
-                      background:rgba(255,46,46,0.08); border-radius:10px; border-left:4px solid var(--red-primary)">
-            <div style="font-size:1.3rem">💪</div>
-            <div>
-              <div style="font-size:1.1rem; font-weight:900; color:#fff">${g.titulo}</div>
-              <div style="font-size:0.78rem; color:var(--text-gray)">${semanasConDatos} ${semanasConDatos === 1 ? 'semana' : 'semanas'} con registros · ${g.duracionDias} días
-                ${g.fechaInicio ? ' · Inicio: ' + new Date(g.fechaInicio).toLocaleDateString('es-AR') : ''}
+    const listaRutinas = Array.from(rutinasMap.values()).sort((a, b) => {
+      const dateA = a.logs[0] ? new Date(a.logs[0].fecha).getTime() : 0;
+      const dateB = b.logs[0] ? new Date(b.logs[0].fecha).getTime() : 0;
+      return dateB - dateA;
+    });
+
+    // Helpers de formateo
+    const formatFechaCorta = (iso) => {
+      if (!iso) return '—';
+      return new Date(iso).toLocaleDateString('es-AR', { weekday: 'short', day: 'numeric', month: 'short' });
+    };
+    const formatFechaLarga = (iso) => {
+      if (!iso) return '—';
+      return new Date(iso).toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    };
+    const formatHora = (iso) => {
+      if (!iso) return '';
+      return new Date(iso).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+    };
+
+    // ==========================================
+    // NIVEL 4: DETALLE DEL ENTRENAMIENTO
+    // ==========================================
+    if (logId) {
+      const logActual = logs.find(l => String(l.id) === String(logId));
+      if (!logActual) {
+        appState.historialNav.logId = null;
+        return renderHistorialAgrupado(logs, rutinas, permitirEdicion);
+      }
+
+      const rutinaActual = rutinasMap.get(rutinaId) || { titulo: logActual.rutinaT || 'Rutina' };
+      const setsArr = Array.isArray(logActual.sets) ? logActual.sets : [];
+
+      // Agrupar sets por ejercicio manteniendo orden original
+      const ejerciciosMap = new Map();
+      setsArr.forEach(s => {
+        const nom = s.ejercicioNombre || s.ejercicio || s.nombre || 'Ejercicio';
+        if (!ejerciciosMap.has(nom)) {
+          ejerciciosMap.set(nom, { nombre: nom, sets: [] });
+        }
+        ejerciciosMap.get(nom).sets.push(s);
+      });
+
+      // Búsqueda de comparación con entrenamiento anterior para los mismos ejercicios
+      const logFecha = new Date(logActual.fecha).getTime();
+      const logsAnteriores = logs
+        .filter(l => String(l.id) !== String(logActual.id) && new Date(l.fecha).getTime() < logFecha && Array.isArray(l.sets) && l.sets.length > 0)
+        .sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+
+      return `
+        <div class="ef-hist-view">
+          <button class="nav-breadcrumb-btn btn-hist-back-to-sessions" type="button" style="margin-bottom:14px">
+            ⬅️ Volver a Sesiones (${logActual.diaNombre || 'Día'})
+          </button>
+
+          <div class="ef-session-detail-card">
+            <div class="ef-session-detail-header">
+              <div>
+                <div class="ef-session-breadcrumb-title">
+                  ${rutinaActual.titulo} · ${logActual.diaNombre || 'Entrenamiento'}
+                </div>
+                <h2 class="ef-session-title">
+                  ${formatFechaLarga(logActual.fecha)}
+                </h2>
+                <div class="ef-session-subtitle">
+                  🕒 ${formatHora(logActual.fecha)}
+                  ${logActual.puntos ? ` · ⭐ +${Math.round(logActual.puntos)} pts` : ''}
+                  ${logActual.bonusRacha ? ` (🔥 +${logActual.bonusRacha} racha)` : ''}
+                </div>
+              </div>
+
+              <div class="ef-session-actions-top">
+                <span class="badge badge-active" style="font-size:0.75rem">✓ COMPLETADO</span>
+                ${permitirEdicion ? `
+                  <div style="display:flex; gap:6px; margin-top:6px; justify-content:flex-end">
+                    ${store.puedeEditarseEntrenamiento(logActual) ? `
+                      <button class="btn btn-secondary btn-sm btn-editar-entrenamiento-click" data-log-id="${logActual.id}" style="border-color:var(--yellow-warning); color:var(--yellow-warning); padding:4px 8px; font-size:0.75rem">✏️ Editar</button>
+                    ` : ''}
+                    <button class="btn btn-secondary btn-sm btn-borrar-entrenamiento-click" data-log-id="${logActual.id}" style="border-color:var(--red-primary); color:var(--red-primary); padding:4px 8px; font-size:0.75rem">🗑️ Borrar</button>
+                  </div>
+                ` : ''}
               </div>
             </div>
-          </div>
 
-          ${semanasOrdenadas.map(numSemana => {
-            const diasEsaSemana = g.semanas[numSemana];
-            const tieneRegistros = diasEsaSemana && Object.keys(diasEsaSemana).length > 0;
-
-            // logsEsaSemana = TODOS los workout_logs de la semana, sin importar bajo qué diaNumero quedaron agrupados
-            const logsEsaSemana = tieneRegistros ? Object.values(diasEsaSemana).flat() : [];
-
-            // "día" = fecha calendario única (zona horaria local), NO diaNumero de rutina
-            const fechasUnicas = new Set(logsEsaSemana.map(l => getFechaCalendarioLocal(l.fecha)));
-            const totalDiasCalendario = fechasUnicas.size;
-
-            // "entrenamiento" = un workout_log, sin agrupar
-            const totalEntrenamientos = logsEsaSemana.length;
-
-            const resumenSemana = totalDiasCalendario === totalEntrenamientos
-              ? `${totalDiasCalendario} ${totalDiasCalendario === 1 ? 'día' : 'días'}`
-              : `${totalDiasCalendario} ${totalDiasCalendario === 1 ? 'día' : 'días'} · ${totalEntrenamientos} entrenamientos`;
-
-            return `
-            <div style="margin-bottom:12px">
-              <div class="history-accordion-header" data-acc-id="acc-s${numSemana}-${rId.slice(0,8)}"
-                   style="display:flex; justify-content:space-between; align-items:center;
-                          background:rgba(255,255,255,0.04); border:1px solid var(--border-color);
-                          padding:10px 14px; border-radius:8px; cursor:pointer; user-select:none">
-                <span style="font-weight:800; font-size:0.95rem">📅 Semana ${numSemana}</span>
-                <span style="color:var(--text-gray); font-size:0.8rem">
-                  ${tieneRegistros ? resumenSemana : 'Sin registros'} ▼
-                </span>
+            ${logActual.comentarioGeneral ? `
+              <div class="ef-session-comment">
+                💬 <strong>Comentario de la sesión:</strong> "${logActual.comentarioGeneral}"
               </div>
+            ` : ''}
 
-              <div class="history-accordion-body" id="acc-s${numSemana}-${rId.slice(0,8)}"
-                   style="display:${tieneRegistros ? 'block' : 'none'}; padding:10px 0 0">
-                ${!tieneRegistros
-                  ? `<div style="text-align:center; color:var(--text-gray); font-size:0.82rem; padding:12px">
-                       Sin entrenamientos registrados esta semana.
-                     </div>`
-                  : Object.entries(diasEsaSemana).map(([diaKey, diaLogs]) => {
-                      return diaLogs.map(log => `
-                      <div class="history-item-card" style="margin-bottom:10px; border-left:3px solid var(--border-highlight)">
-                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
-                          <div>
-                            <strong style="color:var(--green-active); font-size:1rem">✓ ${log.diaNombre}</strong>
-                            <div style="font-size:0.75rem; color:var(--text-gray)">
-                              ${new Date(log.fecha).toLocaleString('es-AR', { weekday:'short', day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' })}
-                            </div>
-                          </div>
-                          <div style="display:flex; align-items:center; gap:8px">
-                            <span class="badge badge-active">Completado</span>
-                            ${permitirEdicion ? `
-                              <div style="display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end">
-                                ${store.puedeEditarseEntrenamiento(log) ? `
-                                  <button class="btn btn-secondary btn-sm btn-editar-entrenamiento-click" data-log-id="${log.id}" style="border-color:var(--yellow-warning); color:var(--yellow-warning); padding:4px 10px; font-size:0.75rem">✏️ Editar</button>
-                                ` : ''}
-                                <button class="btn btn-secondary btn-sm btn-borrar-entrenamiento-click" data-log-id="${log.id}" style="border-color:var(--red-primary); color:var(--red-primary); padding:4px 10px; font-size:0.75rem">🗑️ Borrar</button>
-                              </div>
+            <div class="ef-session-exercises-list">
+              ${ejerciciosMap.size === 0 ? `
+                <div style="text-align:center; color:var(--text-muted); padding:20px; font-size:0.85rem">
+                  Sin detalle de series registrado para esta sesión.
+                </div>
+              ` : Array.from(ejerciciosMap.values()).map(g => {
+                // Buscar cómo se hizo este ejercicio en el último entrenamiento previo disponible
+                let compAnterior = null;
+                const nomNorm = g.nombre.trim().toLowerCase();
+                for (const prevLog of logsAnteriores) {
+                  const matchingSets = (prevLog.sets || []).filter(s => {
+                    const sn = String(s.ejercicioNombre || s.ejercicio || s.nombre || '').trim().toLowerCase();
+                    return sn === nomNorm;
+                  });
+                  if (matchingSets.length > 0) {
+                    compAnterior = {
+                      fecha: formatFechaCorta(prevLog.fecha),
+                      sets: matchingSets
+                    };
+                    break;
+                  }
+                }
+
+                return `
+                  <div class="ef-session-exercise-block">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px">
+                      <div class="ef-session-exercise-name">
+                        🏋️ ${g.nombre}
+                      </div>
+                      ${compAnterior ? `
+                        <span class="badge" style="background:rgba(255,138,0,0.12); color:#ff9d2e; border:1px solid rgba(255,138,0,0.3); font-size:0.68rem; padding:2px 8px">
+                          Anterior: ${compAnterior.fecha}
+                        </span>
+                      ` : ''}
+                    </div>
+
+                    <div class="ef-session-sets-table">
+                      ${g.sets.map((s, sIdx) => {
+                        const prevS = compAnterior && compAnterior.sets ? (compAnterior.sets.find(ps => ps.setNumero === s.setNumero) || compAnterior.sets[sIdx]) : null;
+                        const repsVal = s.repsRealizadas != null ? s.repsRealizadas : (s.reps || '—');
+                        const pesoVal = (s.pesoUtilizado && s.pesoUtilizado !== 'S/D') ? `${s.pesoUtilizado} kg` : ((s.peso && s.peso !== 'S/D') ? `${s.peso} kg` : '—');
+                        const prevPeso = prevS ? (prevS.pesoUtilizado || prevS.peso) : null;
+                        const prevReps = prevS ? (prevS.repsRealizadas != null ? prevS.repsRealizadas : prevS.reps) : null;
+                        return `
+                          <div class="ef-session-set-row">
+                            <span class="ef-session-set-idx">Serie ${s.setNumero || (sIdx + 1)}</span>
+                            <span class="ef-session-set-reps">${repsVal} reps</span>
+                            <span class="ef-session-set-weight">${pesoVal}</span>
+                            ${prevPeso && prevPeso !== 'S/D' ? `
+                              <span class="ef-session-comp-badge" title="En sesión anterior">
+                                Ant: ${prevPeso}kg (${prevReps || '—'}r)
+                              </span>
+                            ` : ''}
+                            ${s.comentarioAlumno ? `
+                              <span class="ef-session-set-comment" title="${s.comentarioAlumno}">💬 ${s.comentarioAlumno}</span>
                             ` : ''}
                           </div>
-                        </div>
+                        `;
+                      }).join('')}
+                    </div>
+                  </div>
+                `;
+              }).join('')}
+            </div>
+          </div>
+        </div>
+      `;
+    }
 
-                        ${log.comentarioGeneral ? `
-                          <div style="background:rgba(255,46,46,0.08); border-left:3px solid var(--red-primary);
-                                      padding:7px 12px; border-radius:0 6px 6px 0; margin-bottom:8px; font-size:0.82rem">
-                            💬 <strong>Comentario general:</strong> "${log.comentarioGeneral}"
-                          </div>` : ''}
+    // ==========================================
+    // NIVEL 3: ENTRENAMIENTOS DE ESE DÍA
+    // ==========================================
+    if (diaKey) {
+      const rutinaActual = rutinasMap.get(rutinaId) || { titulo: 'Rutina', diasMap: new Map() };
+      const diaActual = rutinaActual.diasMap.get(diaKey);
 
-                        <div style="border-top:1px solid var(--border-color); padding-top:8px">
-                          ${(() => {
-                            const setsArr = log.sets || [];
-                            if (!setsArr.length) {
-                              return `<div style="font-size:0.82rem; color:var(--text-gray); padding:8px 0">
-                                Sin detalle de series (entrenamientos viejos pueden no tenerlo; los nuevos sí se guardan).
-                                (Los nuevos entrenamientos sí guardan series, reps y pesos.)
-                              </div>`;
-                            }
-                            const ejMap = {};
-                            setsArr.forEach(s => {
-                              const key = s.ejercicioNombre || s.ejercicio || s.nombre || 'Ejercicio';
-                              if (!ejMap[key]) ejMap[key] = [];
-                              ejMap[key].push(s);
-                            });
-                            return Object.entries(ejMap).map(([ejNombre, sets]) => `
-                              <div style="margin-bottom:8px">
-                                <div style="font-size:0.88rem; font-weight:800; color:#fff; margin-bottom:4px">
-                                  🏋️ ${ejNombre}
-                                </div>
-                                ${sets.map(s => `
-                                  <div style="font-size:0.82rem; background:rgba(0,0,0,0.3);
-                                              padding:5px 10px; border-radius:6px; margin-bottom:3px">
-                                    Serie ${s.setNumero != null ? s.setNumero : ''}: <strong>${s.repsRealizadas != null ? s.repsRealizadas : (s.reps || '—')} reps</strong>
-                                    con <strong>${s.pesoUtilizado != null ? s.pesoUtilizado : (s.peso || '—')}</strong>
-                                    ${s.comentarioAlumno ? `<span style="color:var(--yellow-warning)">
-                                      · 💬 "${s.comentarioAlumno}"</span>` : ''}
-                                  </div>`).join('')}
-                              </div>`).join('');
-                          })()}
-                        </div>
-                      </div>
-                      `).join('');
-                    }).join('')
-                }
+      if (!diaActual) {
+        appState.historialNav.diaKey = null;
+        return renderHistorialAgrupado(logs, rutinas, permitirEdicion);
+      }
+
+      return `
+        <div class="ef-hist-view">
+          <button class="nav-breadcrumb-btn btn-hist-back-to-dias" type="button" style="margin-bottom:14px">
+            ⬅️ Volver a Días (${rutinaActual.titulo})
+          </button>
+
+          <div class="ef-hist-header">
+            <span class="badge badge-warning" style="margin-bottom:6px">${rutinaActual.titulo}</span>
+            <h2 class="ef-hist-title">${diaActual.nombre}</h2>
+            <p class="ef-hist-subtitle">
+              ${diaActual.logs.length} ${diaActual.logs.length === 1 ? 'sesión completada' : 'sesiones completadas'}
+            </p>
+          </div>
+
+          <div class="ef-hist-cards-list">
+            ${diaActual.logs.map(log => {
+              const cantEjercicios = new Set((log.sets || []).map(s => s.ejercicioNombre || s.ejercicio || s.nombre)).size;
+              const cantSeries = (log.sets || []).length;
+              return `
+                <div class="ef-hist-card btn-hist-session" data-log-id="${log.id}">
+                  <div class="ef-hist-card-left">
+                    <div class="ef-hist-card-title">
+                      📅 ${formatFechaLarga(log.fecha)}
+                    </div>
+                    <div class="ef-hist-card-meta">
+                      <span>🕒 ${formatHora(log.fecha)}</span>
+                      <span>·</span>
+                      <span>${cantEjercicios} ${cantEjercicios === 1 ? 'ejercicio' : 'ejercicios'}</span>
+                      <span>·</span>
+                      <span>${cantSeries} ${cantSeries === 1 ? 'serie' : 'series'}</span>
+                    </div>
+                  </div>
+                  <div class="ef-hist-card-arrow">›</div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    // ==========================================
+    // NIVEL 2: DÍAS DE ESA RUTINA
+    // ==========================================
+    if (rutinaId) {
+      const rutinaActual = rutinasMap.get(rutinaId);
+      if (!rutinaActual) {
+        appState.historialNav.rutinaId = null;
+        return renderHistorialAgrupado(logs, rutinas, permitirEdicion);
+      }
+
+      const diasConLogs = Array.from(rutinaActual.diasMap.values()).sort((a, b) => {
+        const dateA = a.logs[0] ? new Date(a.logs[0].fecha).getTime() : 0;
+        const dateB = b.logs[0] ? new Date(b.logs[0].fecha).getTime() : 0;
+        return dateB - dateA;
+      });
+
+      return `
+        <div class="ef-hist-view">
+          <button class="nav-breadcrumb-btn btn-hist-back-to-rutinas" type="button" style="margin-bottom:14px">
+            ⬅️ Volver a Rutinas
+          </button>
+
+          <div class="ef-hist-header">
+            <span class="badge badge-active" style="margin-bottom:6px">RUTINA</span>
+            <h2 class="ef-hist-title">${rutinaActual.titulo}</h2>
+            <p class="ef-hist-subtitle">
+              ${diasConLogs.length} ${diasConLogs.length === 1 ? 'día con registros' : 'días con registros'} · ${rutinaActual.logs.length} entrenamientos en total
+            </p>
+          </div>
+
+          <div class="ef-hist-cards-list">
+            ${diasConLogs.map(d => {
+              const ultimoFecha = d.logs[0] ? formatFechaCorta(d.logs[0].fecha) : '—';
+              return `
+                <div class="ef-hist-card btn-hist-dia" data-dia-key="${d.key}">
+                  <div class="ef-hist-card-left">
+                    <div class="ef-hist-card-title">📅 ${d.nombre}</div>
+                    <div class="ef-hist-card-meta">
+                      <span>🏋️ ${d.logs.length} ${d.logs.length === 1 ? 'entrenamiento' : 'entrenamientos'}</span>
+                      <span>·</span>
+                      <span>🕒 Último: ${ultimoFecha}</span>
+                    </div>
+                  </div>
+                  <div class="ef-hist-card-arrow">›</div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    // ==========================================
+    // NIVEL 1: RUTINAS
+    // ==========================================
+    return `
+      <div class="ef-hist-view">
+        <div class="ef-hist-header">
+          <h2 class="ef-hist-title">Historial de Entrenamientos</h2>
+          <p class="ef-hist-subtitle">
+            ${logs.length} ${logs.length === 1 ? 'entrenamiento registrado' : 'entrenamientos registrados'} · Seleccioná una rutina para ver tu progreso
+          </p>
+        </div>
+
+        <div class="ef-hist-cards-list">
+          ${listaRutinas.map(r => {
+            const ultimoFecha = r.logs[0] ? formatFechaCorta(r.logs[0].fecha) : '—';
+            return `
+              <div class="ef-hist-card btn-hist-rutina" data-rutina-id="${r.id}">
+                <div class="ef-hist-card-left">
+                  <div class="ef-hist-card-title">💪 ${r.titulo}</div>
+                  <div class="ef-hist-card-meta">
+                    <span>🏋️ ${r.logs.length} ${r.logs.length === 1 ? 'entrenamiento' : 'entrenamientos'}</span>
+                    <span>·</span>
+                    <span>📅 Último: ${ultimoFecha}</span>
+                  </div>
+                </div>
+                <div class="ef-hist-card-arrow">›</div>
               </div>
-            </div>`;
+            `;
           }).join('')}
-        </div>`;
-      }).join('')}
-    </div>`;
+        </div>
+      </div>
+    `;
   }
 
   // --- DASHBOARD PROFESOR ---
@@ -4456,12 +5122,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
   function initFormBuilderForNew() {
-    // Vacío-neutral: NO precargar rutina de ningún alumno ni "Mis rutinas"
+    // Vacío-neutral: NO precargar valores por defecto en peso/reps/ejercicio
     currentFormDays = [
       {
         nombre: "Día 1",
         ejercicios: [
-          { nombre: "Nuevo Ejercicio", series: 3, repeticiones: "12", peso: "10 kg", notaProfesor: "", videoUrl: "", esEntradaEnCalor: false }
+          { nombre: "", series: 3, repeticiones: "", peso: "", notaProfesor: "", videoUrl: "", esEntradaEnCalor: false }
         ]
       }
     ];
@@ -4473,10 +5139,10 @@ document.addEventListener('DOMContentLoaded', () => {
       currentFormDays = rutina.dias.map(d => ({
         nombre: d.nombre,
         ejercicios: (d.ejercicios || []).map(e => ({
-          nombre: e.nombre,
-          series: e.seriesTarget || 3,
-          repeticiones: e.repeticionesTarget || "12",
-          peso: e.pesoSugerido || "S/D",
+          nombre: e.nombre || "",
+          series: e.seriesTarget != null ? e.seriesTarget : 3,
+          repeticiones: e.repeticionesTarget || "",
+          peso: (e.pesoSugerido && e.pesoSugerido !== 'S/D') ? e.pesoSugerido : "",
           notaProfesor: e.notaProfesor || "",
           videoUrl: e.videoUrl || "",
           esEntradaEnCalor: !!e.esEntradaEnCalor
@@ -4496,10 +5162,10 @@ document.addEventListener('DOMContentLoaded', () => {
     currentFormDays = rutina.dias.map(d => ({
       nombre: d.nombre || 'Día',
       ejercicios: (d.ejercicios || []).map(e => ({
-        nombre: e.nombre || 'Ejercicio',
+        nombre: e.nombre || '',
         series: e.seriesTarget != null ? e.seriesTarget : (e.series || 3),
-        repeticiones: e.repeticionesTarget || e.repeticiones || '12',
-        peso: e.pesoSugerido || e.peso || 'S/D',
+        repeticiones: e.repeticionesTarget || e.repeticiones || '',
+        peso: (e.pesoSugerido && e.pesoSugerido !== 'S/D') ? e.pesoSugerido : ((e.peso && e.peso !== 'S/D') ? e.peso : ''),
         notaProfesor: e.notaProfesor || '',
         videoUrl: e.videoUrl || '',
         esEntradaEnCalor: !!e.esEntradaEnCalor
@@ -4513,7 +5179,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('btnAddDay')?.addEventListener('click', () => {
       currentFormDays.push({
         nombre: `Día ${currentFormDays.length + 1}: General`,
-        ejercicios: [{ nombre: "Nuevo Ejercicio", series: 3, repeticiones: "12", peso: "10 kg", notaProfesor: "", videoUrl: "", esEntradaEnCalor: false }]
+        ejercicios: [{ nombre: "", series: 3, repeticiones: "", peso: "", notaProfesor: "", videoUrl: "", esEntradaEnCalor: false }]
       });
       renderFormDays();
     });
@@ -4563,15 +5229,15 @@ document.addEventListener('DOMContentLoaded', () => {
             <div class="rf-metrics">
               <div class="rf-field">
                 <label class="rf-label">Series</label>
-                <input type="number" class="form-input" value="${ej.series}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'series', this.value)">
+                <input type="number" class="form-input" placeholder="3" value="${ej.series != null ? ej.series : ''}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'series', this.value)">
               </div>
               <div class="rf-field">
                 <label class="rf-label">Reps</label>
-                <input type="text" class="form-input" value="${ej.repeticiones}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'repeticiones', this.value)">
+                <input type="text" class="form-input" placeholder="Ej: 10-12" value="${ej.repeticiones || ''}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'repeticiones', this.value)">
               </div>
               <div class="rf-field">
                 <label class="rf-label">Peso</label>
-                <input type="text" class="form-input" value="${ej.peso}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'peso', this.value)">
+                <input type="text" inputmode="decimal" class="form-input" placeholder="Ej: 15" value="${ej.peso && ej.peso !== 'S/D' ? ej.peso : ''}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'peso', this.value)">
               </div>
             </div>
 
@@ -4616,7 +5282,7 @@ document.addEventListener('DOMContentLoaded', () => {
         active.blur();
       }
     } catch (_) {}
-    currentFormDays[diaIdx].ejercicios.push({ nombre: "Nuevo Ejercicio", series: 3, repeticiones: "12", peso: "10 kg", notaProfesor: "", videoUrl: "", esEntradaEnCalor: false });
+    currentFormDays[diaIdx].ejercicios.push({ nombre: "", series: 3, repeticiones: "", peso: "", notaProfesor: "", videoUrl: "", esEntradaEnCalor: false });
     renderFormDays();
     setTimeout(() => { window._ignoreNombreCommit = false; }, 100);
   };
@@ -4633,8 +5299,8 @@ document.addEventListener('DOMContentLoaded', () => {
     ejs.unshift({
       nombre: "Entrada en calor",
       series: 2,
-      repeticiones: "12",
-      peso: "S/D",
+      repeticiones: "",
+      peso: "",
       notaProfesor: "",
       videoUrl: "",
       esEntradaEnCalor: true
@@ -4736,8 +5402,8 @@ document.addEventListener('DOMContentLoaded', () => {
         id: crypto.randomUUID(),
         nombre: e.nombre,
         seriesTarget: Number(e.series) || 3,
-        repeticionesTarget: e.repeticiones || "12",
-        pesoSugerido: e.peso || "S/D",
+        repeticionesTarget: e.repeticiones || "",
+        pesoSugerido: (e.peso && e.peso !== 'S/D') ? e.peso : "",
         notaProfesor: e.notaProfesor || "",
         profesorNotaAutor: esModoAlumnoPropio ? `${usuarioActualData.nombre} (vos)` : usuarioActualData.nombre,
         videoUrl: e.videoUrl || "",
@@ -5772,7 +6438,7 @@ document.addEventListener('DOMContentLoaded', () => {
       {
         nombre: "Día 1",
         ejercicios: [
-          { nombre: "Nuevo Ejercicio", series: 3, repeticiones: "12", peso: "10 kg", notaProfesor: "", videoUrl: "", esEntradaEnCalor: false }
+          { nombre: "", series: 3, repeticiones: "", peso: "", notaProfesor: "", videoUrl: "", esEntradaEnCalor: false }
         ]
       }
     ];
@@ -5784,10 +6450,10 @@ document.addEventListener('DOMContentLoaded', () => {
       currentFormDays = rutina.dias.map(d => ({
         nombre: d.nombre,
         ejercicios: (d.ejercicios || []).map(e => ({
-          nombre: e.nombre,
-          series: e.seriesTarget || 3,
-          repeticiones: e.repeticionesTarget || "12",
-          peso: e.pesoSugerido || "S/D",
+          nombre: e.nombre || "",
+          series: e.seriesTarget != null ? e.seriesTarget : 3,
+          repeticiones: e.repeticionesTarget || "",
+          peso: (e.pesoSugerido && e.pesoSugerido !== 'S/D') ? e.pesoSugerido : "",
           notaProfesor: e.notaProfesor || "",
           videoUrl: e.videoUrl || "",
           esEntradaEnCalor: !!e.esEntradaEnCalor
@@ -5807,10 +6473,10 @@ document.addEventListener('DOMContentLoaded', () => {
     currentFormDays = rutina.dias.map(d => ({
       nombre: d.nombre || 'Día',
       ejercicios: (d.ejercicios || []).map(e => ({
-        nombre: e.nombre || 'Ejercicio',
+        nombre: e.nombre || '',
         series: e.seriesTarget != null ? e.seriesTarget : (e.series || 3),
-        repeticiones: e.repeticionesTarget || e.repeticiones || '12',
-        peso: e.pesoSugerido || e.peso || 'S/D',
+        repeticiones: e.repeticionesTarget || e.repeticiones || '',
+        peso: (e.pesoSugerido && e.pesoSugerido !== 'S/D') ? e.pesoSugerido : ((e.peso && e.peso !== 'S/D') ? e.peso : ''),
         notaProfesor: e.notaProfesor || '',
         videoUrl: e.videoUrl || '',
         esEntradaEnCalor: !!e.esEntradaEnCalor
@@ -5824,7 +6490,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('btnAddDay')?.addEventListener('click', () => {
       currentFormDays.push({
         nombre: `Día ${currentFormDays.length + 1}: General`,
-        ejercicios: [{ nombre: "Nuevo Ejercicio", series: 3, repeticiones: "12", peso: "10 kg", notaProfesor: "", videoUrl: "", esEntradaEnCalor: false }]
+        ejercicios: [{ nombre: "", series: 3, repeticiones: "", peso: "", notaProfesor: "", videoUrl: "", esEntradaEnCalor: false }]
       });
       renderFormDays();
     });
@@ -5874,15 +6540,15 @@ document.addEventListener('DOMContentLoaded', () => {
             <div class="rf-metrics">
               <div class="rf-field">
                 <label class="rf-label">Series</label>
-                <input type="number" class="form-input" value="${ej.series}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'series', this.value)">
+                <input type="number" class="form-input" placeholder="3" value="${ej.series != null ? ej.series : ''}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'series', this.value)">
               </div>
               <div class="rf-field">
                 <label class="rf-label">Reps</label>
-                <input type="text" class="form-input" value="${ej.repeticiones}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'repeticiones', this.value)">
+                <input type="text" class="form-input" placeholder="Ej: 10-12" value="${ej.repeticiones || ''}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'repeticiones', this.value)">
               </div>
               <div class="rf-field">
                 <label class="rf-label">Peso</label>
-                <input type="text" class="form-input" value="${ej.peso}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'peso', this.value)">
+                <input type="text" inputmode="decimal" class="form-input" placeholder="Ej: 15" value="${ej.peso && ej.peso !== 'S/D' ? ej.peso : ''}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'peso', this.value)">
               </div>
             </div>
 
@@ -5927,7 +6593,7 @@ document.addEventListener('DOMContentLoaded', () => {
         active.blur();
       }
     } catch (_) {}
-    currentFormDays[diaIdx].ejercicios.push({ nombre: "Nuevo Ejercicio", series: 3, repeticiones: "12", peso: "10 kg", notaProfesor: "", videoUrl: "", esEntradaEnCalor: false });
+    currentFormDays[diaIdx].ejercicios.push({ nombre: "", series: 3, repeticiones: "", peso: "", notaProfesor: "", videoUrl: "", esEntradaEnCalor: false });
     renderFormDays();
     setTimeout(() => { window._ignoreNombreCommit = false; }, 100);
   };
@@ -5944,8 +6610,8 @@ document.addEventListener('DOMContentLoaded', () => {
     ejs.unshift({
       nombre: "Entrada en calor",
       series: 2,
-      repeticiones: "12",
-      peso: "S/D",
+      repeticiones: "",
+      peso: "",
       notaProfesor: "",
       videoUrl: "",
       esEntradaEnCalor: true
@@ -6047,8 +6713,8 @@ document.addEventListener('DOMContentLoaded', () => {
         id: crypto.randomUUID(),
         nombre: e.nombre,
         seriesTarget: Number(e.series) || 3,
-        repeticionesTarget: e.repeticiones || "12",
-        pesoSugerido: e.peso || "S/D",
+        repeticionesTarget: e.repeticiones || "",
+        pesoSugerido: (e.peso && e.peso !== 'S/D') ? e.peso : "",
         notaProfesor: e.notaProfesor || "",
         profesorNotaAutor: esModoAlumnoPropio ? `${usuarioActualData.nombre} (vos)` : usuarioActualData.nombre,
         videoUrl: e.videoUrl || "",
