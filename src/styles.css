@@ -2238,3 +2238,76 @@ body {
   color: var(--yellow-warning);
 }
 
+/* === SMART MEDIA DETECTION IN FORM BUILDER === */
+.rf-media-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: rgba(255,255,255,0.05);
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.1);
+}
+.rf-media-badge {
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 6px;
+}
+.rf-media-gif {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+.rf-media-yt {
+  background: rgba(239, 68, 68, 0.15);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+.rf-media-change-btn {
+  background: none;
+  border: none;
+  color: var(--text-gray);
+  font-size: 0.75rem;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 2px 4px;
+  margin-left: auto;
+}
+.rf-media-change-btn:hover {
+  color: #fff;
+}
+
+/* === TWO-STEP REGISTRATION === */
+.register-step { transition: opacity 0.2s ease; }
+.register-confirm-card {
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 16px;
+}
+.register-confirm-card .confirm-field {
+  margin-bottom: 12px;
+}
+.register-confirm-card .confirm-label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  color: var(--text-gray);
+  letter-spacing: 0.5px;
+  margin-bottom: 2px;
+}
+.register-confirm-card .confirm-value {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #fff;
+}
+.register-error {
+  color: #f87171;
+  font-size: 0.8rem;
+  margin-top: 4px;
+  display: none;
+}
+.register-error.visible {
+  display: block;
+}

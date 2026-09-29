@@ -574,20 +574,44 @@ document.addEventListener('DOMContentLoaded', () => {
         <p class="login-subtitle">Ingresa tus datos para registrarte en el gimnasio</p>
 
         <form id="formRegisterAlumno">
-          <div class="form-group">
-            <label class="form-label">Tu DNI *</label>
-            <input type="text" id="regDni" class="form-input" placeholder="Ej: 55667788" required>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Nombre Completo *</label>
-            <input type="text" id="regNombre" class="form-input" placeholder="Ej: Mariano López" required>
-          </div>
-          <div class="form-group">
-            <label class="form-label">Teléfono (Opcional)</label>
-            <input type="text" id="regTel" class="form-input" placeholder="Ej: 1199887766">
+          <div id="registerStep1" class="register-step">
+            <div class="form-group">
+              <label class="form-label">Tu DNI *</label>
+              <input type="text" id="regDni" class="form-input" inputmode="numeric" pattern="[0-9]{8}" maxlength="8" placeholder="Ej: 55667788" required>
+              <div id="regDniError" class="register-error">El DNI debe contener exactamente 8 números.</div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Nombre Completo *</label>
+              <input type="text" id="regNombre" class="form-input" placeholder="Ej: Mariano López" required>
+              <div id="regNombreError" class="register-error">El nombre solo puede contener letras y espacios.</div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Teléfono (Opcional)</label>
+              <input type="text" id="regTel" class="form-input" placeholder="Ej: 1199887766">
+            </div>
+            <button type="button" id="btnRevisarDatos" class="btn btn-primary" style="width:100%">REVISAR DATOS</button>
           </div>
 
-          <button type="submit" class="btn btn-primary" style="width:100%">Crear mi Cuenta 📝</button>
+          <div id="registerStep2" class="register-step" style="display: none;">
+            <div class="register-confirm-card">
+              <div class="confirm-field">
+                <div class="confirm-label">DNI</div>
+                <div id="confirmDni" class="confirm-value"></div>
+              </div>
+              <div class="confirm-field">
+                <div class="confirm-label">Nombre Completo</div>
+                <div id="confirmNombre" class="confirm-value"></div>
+              </div>
+              <div class="confirm-field" id="confirmTelContainer">
+                <div class="confirm-label">Teléfono</div>
+                <div id="confirmTel" class="confirm-value"></div>
+              </div>
+            </div>
+            <div style="display: flex; gap: 8px;">
+              <button type="button" id="btnVolverEditar" class="btn btn-secondary" style="flex: 1;">VOLVER A EDITAR</button>
+              <button type="submit" id="btnCrearCuenta" class="btn btn-primary" style="flex: 1;">CREAR CUENTA</button>
+            </div>
+          </div>
         </form>
 
         <div style="margin-top:14px">
@@ -599,20 +623,68 @@ document.addEventListener('DOMContentLoaded', () => {
 
     document.getElementById('btnBackToLogin')?.addEventListener('click', () => renderLoginScreen());
 
+    const step1 = document.getElementById('registerStep1');
+    const step2 = document.getElementById('registerStep2');
+    const dniInput = document.getElementById('regDni');
+    const nombreInput = document.getElementById('regNombre');
+    const dniError = document.getElementById('regDniError');
+    const nombreError = document.getElementById('regNombreError');
+
+    document.getElementById('btnRevisarDatos')?.addEventListener('click', () => {
+      // Validate
+      const dniVal = dniInput.value.trim();
+      const nombreVal = nombreInput.value.trim();
+      let isValid = true;
+      
+      if (!/^[0-9]{8}$/.test(dniVal)) {
+        dniError.classList.add('visible');
+        isValid = false;
+      } else {
+        dniError.classList.remove('visible');
+      }
+
+      if (!/^[\p{L}\s]+$/u.test(nombreVal) || nombreVal.length === 0) {
+        nombreError.classList.add('visible');
+        isValid = false;
+      } else {
+        nombreError.classList.remove('visible');
+      }
+
+      if (isValid) {
+        document.getElementById('confirmDni').textContent = dniVal;
+        document.getElementById('confirmNombre').textContent = nombreVal;
+        const telVal = document.getElementById('regTel').value.trim();
+        if (telVal) {
+          document.getElementById('confirmTel').textContent = telVal;
+          document.getElementById('confirmTelContainer').style.display = 'block';
+        } else {
+          document.getElementById('confirmTelContainer').style.display = 'none';
+        }
+        
+        step1.style.display = 'none';
+        step2.style.display = 'block';
+      }
+    });
+
+    document.getElementById('btnVolverEditar')?.addEventListener('click', () => {
+      step2.style.display = 'none';
+      step1.style.display = 'block';
+    });
+
     document.getElementById('formRegisterAlumno')?.addEventListener('submit', async (e) => {
       e.preventDefault();
-      const submitBtn = e.target.querySelector('button[type="submit"]');
+      const submitBtn = document.getElementById('btnCrearCuenta');
       if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Registrando...'; }
       try {
-        const dni = document.getElementById('regDni').value;
+        const dni = document.getElementById('regDni').value.trim();
         // El usuario ya NO ingresa contraseña: se genera internamente, solo
         // para satisfacer el requisito de Supabase Auth signUp(). El login
         // real sigue siendo exclusivamente por DNI vía loginConDni() (OTP),
         // así que esta contraseña nunca se usa para autenticar y no hace
         // falta que el usuario la vea ni la recuerde.
         const pass = generarPasswordTemporalInterna();
-        const nombre = document.getElementById('regNombre').value;
-        const tel = document.getElementById('regTel').value;
+        const nombre = document.getElementById('regNombre').value.trim();
+        const tel = document.getElementById('regTel').value.trim();
 
         // registrarseAlumno es async en Etapa 1: intenta authSignUp después
         // del registro local. El await es necesario para que la UI no avance
@@ -624,7 +696,7 @@ document.addEventListener('DOMContentLoaded', () => {
       } catch (err) {
         alert("❌ Error: " + err.message);
       } finally {
-        if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Crear mi Cuenta 📝'; }
+        if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'CREAR CUENTA'; }
       }
     });
   }
@@ -1221,7 +1293,7 @@ document.addEventListener('DOMContentLoaded', () => {
               ${sets.map(s => `
                 <div class="set-row">
                   <div class="set-label">Serie ${s.setNumero}</div>
-                  <div><input type="number" class="set-input" value="${s.repsRealizadas}" onchange="window.updateEditSet(${s._idx}, 'repsRealizadas', this.value)"></div>
+                  <div><input type="text" inputmode="numeric" class="set-input" value="${s.repsRealizadas}" onchange="window.updateEditSet(${s._idx}, 'repsRealizadas', this.value)"></div>
                   <div><input type="text" class="set-input" value="${s.pesoUtilizado}" onchange="window.updateEditSet(${s._idx}, 'pesoUtilizado', this.value)"></div>
                   <div><input type="text" class="set-input set-comment-input" value="${s.comentarioAlumno || ''}" onchange="window.updateEditSet(${s._idx}, 'comentarioAlumno', this.value)"></div>
                 </div>
@@ -1245,7 +1317,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   window.updateEditSet = (idx, field, val) => {
     if (appState.editDraftSets && appState.editDraftSets[idx]) {
-      appState.editDraftSets[idx][field] = field === 'repsRealizadas' ? Number(val) : val;
+      appState.editDraftSets[idx][field] = val;
     }
   };
 
@@ -1928,7 +2000,7 @@ document.addEventListener('DOMContentLoaded', () => {
           }
           return {
             setNumero: setNum,
-            reps: repsStr.includes('-') ? Number(repsStr.split('-')[0]) : (Number(repsStr) || 10),
+            reps: repsStr,
             peso: pesoInicial,
             comentarioSet: ''
           };
@@ -2028,7 +2100,7 @@ document.addEventListener('DOMContentLoaded', () => {
             <div class="set-row">
               <div class="set-label">Serie ${set.setNumero}</div>
               <div>
-                <input type="number" class="set-input" value="${set.reps}" onchange="window.updateDraftSet('${ej.id}', ${setIdx}, 'reps', this.value)">
+                <input type="text" inputmode="numeric" class="set-input" value="${set.reps}" onchange="window.updateDraftSet('${ej.id}', ${setIdx}, 'reps', this.value)">
               </div>
               <div>
                 ${renderPesoInput(ej.id, setIdx, set.peso)}
@@ -3616,7 +3688,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const sets = log.sets || [];
       if (!sets.length) return false;
       return sets.some(s => {
-        const reps = Number(s.repsRealizadas != null ? s.repsRealizadas : (s.reps != null ? s.reps : s.reps_realizadas)) || 0;
+        const reps = parseInt(s.repsRealizadas != null ? s.repsRealizadas : (s.reps != null ? s.reps : s.reps_realizadas)) || 0;
         const peso = _statsParsePesoKg(s.pesoUtilizado != null ? s.pesoUtilizado : (s.peso != null ? s.peso : s.peso_utilizado));
         return reps > 0 && peso >= 0;
       });
@@ -5248,7 +5320,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
             <div class="rf-field">
               <label class="rf-label">Video</label>
-              <input type="url" class="form-input" data-video-input="${diaIdx}-${ejIdx}" placeholder="Se completa solo al elegir ejercicio" value="${ej.videoUrl || ''}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'videoUrl', this.value)">
+              ${(() => {
+                const _mediaUrl = typeof resolverUrlMediaEjercicio === 'function' ? resolverUrlMediaEjercicio(ej) : (ej.videoUrl || '');
+                const _hasGif = _mediaUrl && typeof isGifMediaUrl === 'function' && isGifMediaUrl(_mediaUrl);
+                const _hasYt = _mediaUrl && /youtube\.com|youtu\.be/i.test(_mediaUrl);
+                const _hasAny = _mediaUrl && _mediaUrl.trim();
+                if (_hasGif) {
+                  return `<div class="rf-media-indicator"><span class="rf-media-badge rf-media-gif">🎞 GIF disponible</span><button type="button" class="rf-media-change-btn" onclick="this.parentElement.nextElementSibling.style.display='block';this.parentElement.style.display='none'">Cambiar</button></div><div style="display:none"><input type="url" class="form-input" data-video-input="${diaIdx}-${ejIdx}" placeholder="URL de video o GIF" value="${ej.videoUrl || ''}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'videoUrl', this.value)"></div>`;
+                }
+                if (_hasYt) {
+                  return `<div class="rf-media-indicator"><span class="rf-media-badge rf-media-yt">▶ Video disponible</span><button type="button" class="rf-media-change-btn" onclick="this.parentElement.nextElementSibling.style.display='block';this.parentElement.style.display='none'">Cambiar</button></div><div style="display:none"><input type="url" class="form-input" data-video-input="${diaIdx}-${ejIdx}" placeholder="URL de video o GIF" value="${ej.videoUrl || ''}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'videoUrl', this.value)"></div>`;
+                }
+                if (_hasAny) {
+                  return `<div class="rf-media-indicator"><span class="rf-media-badge" style="background: rgba(255,255,255,0.15); color: #fff; border: 1px solid rgba(255,255,255,0.3);">🔗 Media disponible</span><button type="button" class="rf-media-change-btn" onclick="this.parentElement.nextElementSibling.style.display='block';this.parentElement.style.display='none'">Cambiar</button></div><div style="display:none"><input type="url" class="form-input" data-video-input="${diaIdx}-${ejIdx}" placeholder="URL de video o GIF" value="${ej.videoUrl || ''}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'videoUrl', this.value)"></div>`;
+                }
+                return `<input type="url" class="form-input" data-video-input="${diaIdx}-${ejIdx}" placeholder="Se completa solo al elegir ejercicio" value="${ej.videoUrl || ''}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'videoUrl', this.value)">`;
+              })()}
             </div>
           </div>
         `).join('')}
@@ -6559,7 +6646,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
             <div class="rf-field">
               <label class="rf-label">Video</label>
-              <input type="url" class="form-input" data-video-input="${diaIdx}-${ejIdx}" placeholder="Se completa solo al elegir ejercicio" value="${ej.videoUrl || ''}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'videoUrl', this.value)">
+              ${(() => {
+                const _mediaUrl = typeof resolverUrlMediaEjercicio === 'function' ? resolverUrlMediaEjercicio(ej) : (ej.videoUrl || '');
+                const _hasGif = _mediaUrl && typeof isGifMediaUrl === 'function' && isGifMediaUrl(_mediaUrl);
+                const _hasYt = _mediaUrl && /youtube\.com|youtu\.be/i.test(_mediaUrl);
+                const _hasAny = _mediaUrl && _mediaUrl.trim();
+                if (_hasGif) {
+                  return `<div class="rf-media-indicator"><span class="rf-media-badge rf-media-gif">🎞 GIF disponible</span><button type="button" class="rf-media-change-btn" onclick="this.parentElement.nextElementSibling.style.display='block';this.parentElement.style.display='none'">Cambiar</button></div><div style="display:none"><input type="url" class="form-input" data-video-input="${diaIdx}-${ejIdx}" placeholder="URL de video o GIF" value="${ej.videoUrl || ''}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'videoUrl', this.value)"></div>`;
+                }
+                if (_hasYt) {
+                  return `<div class="rf-media-indicator"><span class="rf-media-badge rf-media-yt">▶ Video disponible</span><button type="button" class="rf-media-change-btn" onclick="this.parentElement.nextElementSibling.style.display='block';this.parentElement.style.display='none'">Cambiar</button></div><div style="display:none"><input type="url" class="form-input" data-video-input="${diaIdx}-${ejIdx}" placeholder="URL de video o GIF" value="${ej.videoUrl || ''}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'videoUrl', this.value)"></div>`;
+                }
+                if (_hasAny) {
+                  return `<div class="rf-media-indicator"><span class="rf-media-badge" style="background: rgba(255,255,255,0.15); color: #fff; border: 1px solid rgba(255,255,255,0.3);">🔗 Media disponible</span><button type="button" class="rf-media-change-btn" onclick="this.parentElement.nextElementSibling.style.display='block';this.parentElement.style.display='none'">Cambiar</button></div><div style="display:none"><input type="url" class="form-input" data-video-input="${diaIdx}-${ejIdx}" placeholder="URL de video o GIF" value="${ej.videoUrl || ''}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'videoUrl', this.value)"></div>`;
+                }
+                return `<input type="url" class="form-input" data-video-input="${diaIdx}-${ejIdx}" placeholder="Se completa solo al elegir ejercicio" value="${ej.videoUrl || ''}" onchange="window.updateFormExercise(${diaIdx}, ${ejIdx}, 'videoUrl', this.value)">`;
+              })()}
             </div>
           </div>
         `).join('')}
