@@ -939,24 +939,70 @@ class GymStore {
       return null;
     }
 
-    // Repoblar this.data.alumnos/profesores ya con la sesión activa.
-    await this.syncWithSupabase();
-
+    // Inmediatamente asegurar que el perfil autenticado exista en la base local
+    // para evitar cuellos de botella o fallos si syncWithSupabase() demora.
+    const pData = authRes.data || {};
     if (authRes.rol === 'profesor') {
-      const profesor = this.data.profesores.find(p => p.dni === cleanDni);
+      let profesor = this.data.profesores.find(p => p.dni === cleanDni || (pData.id && p.id === pData.id));
       if (!profesor) {
-        console.warn('⚠️ loginConDni: autenticado pero no se encontró el profesor localmente tras sync.');
-        return null;
+        profesor = {
+          id: pData.id || `prof_${Date.now()}`,
+          dni: cleanDni,
+          nombre: pData.nombre || 'Profesor',
+          rol: 'profesor',
+          authUserId: authRes.authUserId
+        };
+        this.data.profesores.push(profesor);
+      } else {
+        profesor.authUserId = authRes.authUserId;
+        if (pData.nombre) profesor.nombre = pData.nombre;
       }
-      return { rol: 'profesor', data: profesor };
+      this.saveData();
+
+      // Sincronización rápida no bloqueante con timeout de 1.5s
+      try {
+        await Promise.race([this.syncWithSupabase(), new Promise(r => setTimeout(r, 1500))]);
+      } catch (_) {}
+
+      const profFinal = this.data.profesores.find(p => p.dni === cleanDni) || profesor;
+      return { rol: 'profesor', data: profFinal };
     }
 
-    const alumno = this.data.alumnos.find(a => a.dni === cleanDni);
+    let alumno = this.data.alumnos.find(a => a.dni === cleanDni || (pData.id && a.id === pData.id));
     if (!alumno) {
-      console.warn('⚠️ loginConDni: autenticado pero no se encontró el alumno localmente tras sync.');
-      return null;
+      alumno = {
+        id: pData.id || `alum_${Date.now()}`,
+        dni: cleanDni,
+        nombre: pData.nombre || 'Alumno',
+        nombreProfesor: pData.nombre_apodo_profesor || null,
+        telefono: pData.telefono || '',
+        estadoAutorizacion: pData.estado_autorizacion || 'autorizado',
+        fechaRegistro: new Date().toISOString().split('T')[0],
+        rutinaActivaId: null,
+        authUserId: authRes.authUserId,
+        puntosTotal: Number(pData.puntos_total) || 0,
+        rachaSemanal: {
+          semanas: pData.racha_semanas || 0,
+          ultimaSemana: pData.racha_ultima_semana || null
+        }
+      };
+      this.data.alumnos.push(alumno);
+    } else {
+      alumno.authUserId = authRes.authUserId;
+      if (pData.nombre) alumno.nombre = pData.nombre;
+      if (pData.telefono) alumno.telefono = pData.telefono;
+      if (pData.estado_autorizacion) alumno.estadoAutorizacion = pData.estado_autorizacion;
+      if (pData.puntos_total !== undefined) alumno.puntosTotal = Number(pData.puntos_total);
     }
-    return { rol: 'alumno', data: alumno };
+    this.saveData();
+
+    // Sincronización rápida no bloqueante con timeout de 1.5s
+    try {
+      await Promise.race([this.syncWithSupabase(), new Promise(r => setTimeout(r, 1500))]);
+    } catch (_) {}
+
+    const alumnoFinal = this.data.alumnos.find(a => a.dni === cleanDni) || alumno;
+    return { rol: 'alumno', data: alumnoFinal };
   }
 
   // Migración automática de usuario legacy a Supabase Auth.
@@ -1348,6 +1394,20 @@ class GymStore {
         const d = this.calcularDiasRestantes(rutina.fechaVencimiento);
         return d >= 0 && d <= 1;
       }
+      if (filtro === 'vencida') {
+        // Solo alumnos cuya rutina asignada está expirada o vencida (y no tienen activa vigente)
+        if (rutina) return false;
+        const rutinasProf = this.data.rutinas.filter(r => r.alumnoId === alumno.id && r.profesorId != null);
+        return rutinasProf.some(r => r.estado === 'expirada' || this.calcularDiasRestantes(r.fechaVencimiento) < 0);
+      }
+      if (filtro === 'sin_rutina') {
+        // Alumnos que realmente nunca tuvieron rutina o todas fueron borradas
+        if (rutina) return false;
+        const rutinasProf = this.data.rutinas.filter(r => r.alumnoId === alumno.id && r.profesorId != null);
+        const tieneVencida = rutinasProf.some(r => r.estado === 'expirada' || this.calcularDiasRestantes(r.fechaVencimiento) < 0);
+        return !tieneVencida;
+      }
+      // Legacy 'expirada' filter (kept for backwards compat)
       if (filtro === 'expirada') {
         if (!rutina) return true;
         const d = this.calcularDiasRestantes(rutina.fechaVencimiento);
@@ -1355,6 +1415,13 @@ class GymStore {
       }
       return true;
     });
+  }
+
+  // Obtener la rutina expirada más reciente de un alumno (para mostrar badge "Vencida")
+  getRutinaVencidaMasReciente(alumnoId) {
+    return this.data.rutinas
+      .filter(r => r.alumnoId === alumnoId && r.profesorId != null && (r.estado === 'expirada' || this.calcularDiasRestantes(r.fechaVencimiento) < 0))
+      .sort((a, b) => new Date(b.fechaVencimiento || 0) - new Date(a.fechaVencimiento || 0))[0] || null;
   }
 
   // --- CREAR NUEVA RUTINA (PERMITIENDO MÚLTIPLES RUTINAS POR ALUMNO) ---

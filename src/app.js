@@ -219,7 +219,8 @@ document.addEventListener('DOMContentLoaded', () => {
     candidatosUltimoEntrenamiento: [],
     indiceReferenciaSeleccionada: 0,
     diaParaReferencia: null,
-    historialNav: { rutinaId: null, diaKey: null, logId: null }
+    historialNav: { rutinaId: null, diaKey: null, logId: null },
+    mostrarAnuncioEmergente: false
   };
 
   // Escuchar cambios de Supabase Realtime / Local Store
@@ -493,6 +494,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
       if (res) {
         appState.usuarioActual = res;
+        if (res.data && res.data.id) {
+          verificarYActivarAnuncio(res.data.id);
+        }
 
         if (res.rol === 'alumno' && res.data && res.data.id) {
           // --- SESIÓN ALUMNO ---
@@ -754,6 +758,7 @@ document.addEventListener('DOMContentLoaded', () => {
       ${renderPresetDetailModal()}
       ${renderStreakInfoModal()}
       ${renderModalUltimoEntrenamiento()}
+      ${renderAnuncioModal()}
 
       ${renderBottomNav()}
     `;
@@ -765,6 +770,7 @@ document.addEventListener('DOMContentLoaded', () => {
     bindHistorialEvents(alumno);
     bindUltimoEntrenamientoEvents();
     bindPresetAndStreakEvents();
+    bindAnuncioEvents();
     if (appState.tabCliente === 'stats') bindStatsEvents(historialEntrenamientos);
     bindBorradorEntrenamientoEvents();
 
@@ -859,12 +865,23 @@ document.addEventListener('DOMContentLoaded', () => {
         const semanas = Math.max(1, Math.ceil((r.duracionDias || 30) / 7));
         const esActiva = r.estado === 'activa';
         const diasRestantes = store.calcularDiasRestantes(r.fechaVencimiento);
+        const esVencida = r.estado === 'expirada' || (r.fechaVencimiento && diasRestantes < 0);
+
+        let badgeStatusClass = 'badge-role';
+        let badgeStatusText = 'INACTIVA';
+        if (esActiva && diasRestantes >= 0) {
+          badgeStatusClass = diasRestantes <= 1 ? 'badge-warning' : 'badge-active';
+          badgeStatusText = diasRestantes <= 1 ? `ACTIVA (${diasRestantes}d restantes)` : 'ACTIVA';
+        } else if (esVencida) {
+          badgeStatusClass = 'badge-expired';
+          badgeStatusText = 'VENCIDA';
+        }
 
         return `
           <div class="routine-select-card" data-rutina-id="${r.id}">
             <div class="routine-card-header">
-              <span class="badge ${esActiva ? (diasRestantes <= 1 ? 'badge-warning' : 'badge-active') : 'badge-role'}">
-                ● ${esActiva ? (diasRestantes <= 1 ? `ACTIVA (${diasRestantes}d restantes)` : 'ACTIVA') : 'INACTIVA'}
+              <span class="badge ${badgeStatusClass}" style="${esVencida ? 'background:rgba(249,115,22,0.15); color:#f97316; border:1px solid rgba(249,115,22,0.3)' : ''}">
+                ● ${badgeStatusText}
               </span>
               <span class="badge badge-info">${semanas} ${semanas === 1 ? 'semana' : 'semanas'}</span>
             </div>
@@ -1573,14 +1590,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const semanas = Math.max(1, Math.ceil((rutina.duracionDias || 30) / 7));
     const esActiva = rutina.estado === 'activa';
+    const diasRestantes = store.calcularDiasRestantes(rutina.fechaVencimiento);
+    const esVencida = rutina.estado === 'expirada' || (rutina.fechaVencimiento && diasRestantes < 0);
+
+    let badgeText = esActiva && diasRestantes >= 0 ? 'RUTINA ACTIVA' : (esVencida ? 'RUTINA VENCIDA' : 'RUTINA HISTÓRICA');
+    let badgeClass = esActiva && diasRestantes >= 0 ? 'badge-active' : (esVencida ? 'badge-expired' : 'badge-role');
 
     return `
       <button class="nav-breadcrumb-btn" id="btnBackToRoutines">⬅️ Volver a ${rutina.esPropia ? 'Mis Rutinas' : 'Rutinas'}</button>
 
       <div class="routine-banner" style="margin-bottom:20px">
         <div>
-          <span class="badge ${esActiva ? 'badge-active' : 'badge-role'}">
-            ● ${esActiva ? 'RUTINA ACTIVA' : 'RUTINA HISTÓRICA'}
+          <span class="badge ${badgeClass}" style="${esVencida ? 'background:rgba(249,115,22,0.15); color:#f97316; border:1px solid rgba(249,115,22,0.3)' : ''}">
+            ● ${badgeText}
           </span>
           <h2 style="font-size:1.35rem; font-weight:900; margin-top:6px">${rutina.titulo}</h2>
           <p style="font-size:0.85rem; color:var(--text-gray); margin-top:4px">
@@ -3211,6 +3233,64 @@ document.addEventListener('DOMContentLoaded', () => {
     `;
   }
 
+  // === ANUNCIO EMERGENTE DE INICIO DE SESIÓN ===
+  function verificarYActivarAnuncio(usuarioId) {
+    if (!usuarioId) return;
+    try {
+      const yaMostrado = sessionStorage.getItem('ef_anuncio_mostrado_' + usuarioId);
+      if (yaMostrado !== 'true') {
+        appState.mostrarAnuncioEmergente = true;
+      }
+    } catch (_) {
+      appState.mostrarAnuncioEmergente = true;
+    }
+  }
+
+  function renderAnuncioModal() {
+    if (!appState.mostrarAnuncioEmergente) return '';
+    return `
+      <div class="anuncio-modal-overlay" id="modalAnuncioSesion" role="dialog" aria-modal="true" aria-label="Anuncio Estudio Fitness">
+        <div class="anuncio-modal-content">
+          <button type="button" class="anuncio-close-btn" id="btnCloseAnuncio" aria-label="Cerrar anuncio">✕</button>
+          <img src="./src/anuncio.jpg" onerror="this.onerror=null; this.src='./anuncio.jpg';" alt="Anuncio Estudio Fitness" class="anuncio-img">
+        </div>
+      </div>
+    `;
+  }
+
+  function bindAnuncioEvents() {
+    const btn = document.getElementById('btnCloseAnuncio');
+    const overlay = document.getElementById('modalAnuncioSesion');
+    if (!btn && !overlay) return;
+
+    const cerrarAnuncio = () => {
+      const uId = appState.usuarioActual?.data?.id;
+      if (uId) {
+        try { sessionStorage.setItem('ef_anuncio_mostrado_' + uId, 'true'); } catch (_) {}
+      }
+      appState.mostrarAnuncioEmergente = false;
+      if (overlay) {
+        overlay.classList.add('anuncio-closing');
+        setTimeout(() => {
+          overlay.remove();
+        }, 180);
+      }
+    };
+
+    btn?.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      cerrarAnuncio();
+    });
+
+    overlay?.addEventListener('click', (e) => {
+      if (e.target === overlay) {
+        e.preventDefault();
+        cerrarAnuncio();
+      }
+    });
+  }
+
   function renderPresetsSection() {
     return `
       <div class="ef-presets-section">
@@ -4364,7 +4444,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const totalAlumnos = store.data.alumnos.length;
     const conRutina = store.data.alumnos.filter(a => store.getRutinaActiva(a.id)).length;
     const porVencer = store.getAlumnosFiltrados({ filtro: 'por_vencer' }).length;
-    const sinRutina = totalAlumnos - conRutina;
+    const vencidas = store.getAlumnosFiltrados({ filtro: 'vencida' }).length;
+    const sinRutina = store.getAlumnosFiltrados({ filtro: 'sin_rutina' }).length;
 
     appContainer.innerHTML = `
       ${renderHeader()}
@@ -4374,6 +4455,7 @@ document.addEventListener('DOMContentLoaded', () => {
           <div class="stat-card"><div class="val">${totalAlumnos}</div><div class="label">Alumnos</div></div>
           <div class="stat-card"><div class="val" style="color:var(--green-active)">${conRutina}</div><div class="label">Rutinas Activas</div></div>
           <div class="stat-card"><div class="val" style="color:var(--yellow-warning)">${porVencer}</div><div class="label">Por Vencer 24h</div></div>
+          <div class="stat-card"><div class="val" style="color:#f97316">${vencidas}</div><div class="label">Vencidas</div></div>
           <div class="stat-card"><div class="val" style="color:var(--red-primary)">${sinRutina}</div><div class="label">Sin Rutina</div></div>
         </div>
 
@@ -4386,7 +4468,8 @@ document.addEventListener('DOMContentLoaded', () => {
             <button class="btn btn-secondary btn-sm ${appState.filtroProfesor === 'todos' ? 'active' : ''}" id="fTodos">Todos (${totalAlumnos})</button>
             <button class="btn btn-secondary btn-sm ${appState.filtroProfesor === 'activa' ? 'active' : ''}" id="fActiva">Activas (${conRutina})</button>
             <button class="btn btn-secondary btn-sm ${appState.filtroProfesor === 'por_vencer' ? 'active' : ''}" id="fVencer">Por Vencer ⏰ (${porVencer})</button>
-            <button class="btn btn-secondary btn-sm ${appState.filtroProfesor === 'expirada' ? 'active' : ''}" id="fSinRutina">Sin Rutina ⚠️ (${sinRutina})</button>
+            <button class="btn btn-secondary btn-sm ${appState.filtroProfesor === 'vencida' ? 'active' : ''}" id="fVencida">Vencidas 📅 (${vencidas})</button>
+            <button class="btn btn-secondary btn-sm ${appState.filtroProfesor === 'sin_rutina' ? 'active' : ''}" id="fSinRutina">Sin Rutina ⚠️ (${sinRutina})</button>
           </div>
 
           <button class="btn btn-primary" id="btnOpenNuevoAlumno">+ Registrar Nuevo Alumno 👤</button>
@@ -4402,6 +4485,12 @@ document.addEventListener('DOMContentLoaded', () => {
             if (rutinaActiva) {
               if (dRest <= 1 && dRest >= 0) badgeHtml = `<span class="badge badge-warning">⏰ Vence en ${dRest}d</span>`;
               else if (dRest > 1) badgeHtml = `<span class="badge badge-active">● Activa (${dRest}d)</span>`;
+            } else {
+              // Verificar si tiene rutina vencida (no es lo mismo que "sin rutina")
+              const rutinaVencida = store.getRutinaVencidaMasReciente(alumno.id);
+              if (rutinaVencida) {
+                badgeHtml = `<span class="badge" style="background:rgba(249,115,22,0.15); color:#f97316; border:1px solid rgba(249,115,22,0.3)">📅 Vencida</span>`;
+              }
             }
 
             return `
@@ -4426,10 +4515,11 @@ document.addEventListener('DOMContentLoaded', () => {
                 <div style="background:rgba(0,0,0,0.3); padding:10px; border-radius:8px; font-size:0.85rem; color:var(--text-gray); margin-bottom:12px">
                   ${rutinasAlumno.length > 0 ? rutinasAlumno.map(r => {
                     const estaDesactivada = r.estado === 'desactivada';
+                    const esVencida = r.estado === 'expirada' || (r.fechaVencimiento && store.calcularDiasRestantes(r.fechaVencimiento) < 0);
                     return `
                     <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.06); padding:6px 0; gap:8px; flex-wrap:wrap">
                       <div>
-                        <div style="color:#fff; font-weight:700">💪 ${r.titulo} ${estaDesactivada ? '<span class="badge badge-role" style="margin-left:4px">Desactivada</span>' : ''}</div>
+                        <div style="color:#fff; font-weight:700">💪 ${r.titulo} ${estaDesactivada ? '<span class="badge badge-role" style="margin-left:4px">Desactivada</span>' : (esVencida ? '<span class="badge" style="margin-left:4px; background:rgba(249,115,22,0.15); color:#f97316; border:1px solid rgba(249,115,22,0.3)">Vencida</span>' : '')}</div>
                         <div style="font-size:0.72rem; color:var(--text-muted)">Vence: ${r.fechaVencimiento} | ${r.dias ? r.dias.length : 0} días</div>
                       </div>
                       <div style="display:flex; gap:6px; flex-wrap:wrap">
@@ -4461,6 +4551,7 @@ document.addEventListener('DOMContentLoaded', () => {
       ${(appState.modalActivo === 'crear_rutina' || appState.modalActivo === 'editar_rutina') ? renderModalFormularioRutina(appState.modalActivo) : ''}
       ${appState.modalActivo === 'historial_alumno' ? renderModalHistorialAlumno() : ''}
       ${appState.modalActivo === 'confirmar_borrado_rutina' ? renderModalConfirmarBorradoRutina() : ''}
+      ${renderAnuncioModal()}
 
       ${renderBottomNav()}
     `;
@@ -4468,6 +4559,7 @@ document.addEventListener('DOMContentLoaded', () => {
     bindHeaderEvents();
     bindInstallBannerEvents();
     bindBottomNavEvents();
+    bindAnuncioEvents();
 
     const inputSearch = document.getElementById('inputSearchProf');
     inputSearch?.addEventListener('input', (e) => {
@@ -4484,7 +4576,8 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('fTodos')?.addEventListener('click', () => { appState.filtroProfesor = 'todos'; renderApp(); });
     document.getElementById('fActiva')?.addEventListener('click', () => { appState.filtroProfesor = 'activa'; renderApp(); });
     document.getElementById('fVencer')?.addEventListener('click', () => { appState.filtroProfesor = 'por_vencer'; renderApp(); });
-    document.getElementById('fSinRutina')?.addEventListener('click', () => { appState.filtroProfesor = 'expirada'; renderApp(); });
+    document.getElementById('fVencida')?.addEventListener('click', () => { appState.filtroProfesor = 'vencida'; renderApp(); });
+    document.getElementById('fSinRutina')?.addEventListener('click', () => { appState.filtroProfesor = 'sin_rutina'; renderApp(); });
 
     document.getElementById('btnOpenNuevoAlumno')?.addEventListener('click', () => {
       appState.modalActivo = 'nuevo_alumno';
@@ -5684,6 +5777,11 @@ document.addEventListener('DOMContentLoaded', () => {
       // alumno que se está desloguéando ahora mismo (nunca el de otro usuario).
       const borradorPropioAlCerrarSesion = getBorradorPropio();
       if (borradorPropioAlCerrarSesion) clearWorkoutDraft();
+      const uId = appState.usuarioActual?.data?.id;
+      if (uId) {
+        try { sessionStorage.removeItem('ef_anuncio_mostrado_' + uId); } catch (_) {}
+      }
+      appState.mostrarAnuncioEmergente = false;
       window._sessionAlumnoId  = null;
       window._sessionProfesorId = null;
       appState.usuarioActual = null;
@@ -5992,6 +6090,7 @@ document.addEventListener('DOMContentLoaded', () => {
             appState.usuarioActual = { rol: 'profesor', data: perfilProfesor };
             window._sessionProfesorId = perfilProfesor.id;
             window._sessionAlumnoId   = null;
+            verificarYActivarAnuncio(perfilProfesor.id);
             console.log('✅ Sesión restaurada como PROFESOR:', perfilProfesor.nombre);
             // Sincronizar rutinas del profesor en segundo plano
             setTimeout(() => gymStore.syncRutinasProfesor(), 400);
@@ -5999,6 +6098,7 @@ document.addEventListener('DOMContentLoaded', () => {
             appState.usuarioActual = { rol: 'alumno', data: perfilAlumno };
             window._sessionAlumnoId   = perfilAlumno.id;
             window._sessionProfesorId = null;
+            verificarYActivarAnuncio(perfilAlumno.id);
             console.log('✅ Sesión restaurada como ALUMNO:', perfilAlumno.nombre);
             // Detectar borrador de entrenamiento sin terminar de este alumno
             // (nunca el de otro usuario — getBorradorPropio verifica ownerId
@@ -7011,6 +7111,11 @@ alert("🚀 ¡Rutina propia creada! Ya podés empezar a entrenarla desde \"Mías
       // alumno que se está desloguéando ahora mismo (nunca el de otro usuario).
       const borradorPropioAlCerrarSesion = getBorradorPropio();
       if (borradorPropioAlCerrarSesion) clearWorkoutDraft();
+      const uId = appState.usuarioActual?.data?.id;
+      if (uId) {
+        try { sessionStorage.removeItem('ef_anuncio_mostrado_' + uId); } catch (_) {}
+      }
+      appState.mostrarAnuncioEmergente = false;
       window._sessionAlumnoId  = null;
       window._sessionProfesorId = null;
       appState.usuarioActual = null;
@@ -7319,6 +7424,7 @@ alert("🚀 ¡Rutina propia creada! Ya podés empezar a entrenarla desde \"Mías
             appState.usuarioActual = { rol: 'profesor', data: perfilProfesor };
             window._sessionProfesorId = perfilProfesor.id;
             window._sessionAlumnoId   = null;
+            verificarYActivarAnuncio(perfilProfesor.id);
             console.log('✅ Sesión restaurada como PROFESOR:', perfilProfesor.nombre);
             // Sincronizar rutinas del profesor en segundo plano
             setTimeout(() => gymStore.syncRutinasProfesor(), 400);
@@ -7326,6 +7432,7 @@ alert("🚀 ¡Rutina propia creada! Ya podés empezar a entrenarla desde \"Mías
             appState.usuarioActual = { rol: 'alumno', data: perfilAlumno };
             window._sessionAlumnoId   = perfilAlumno.id;
             window._sessionProfesorId = null;
+            verificarYActivarAnuncio(perfilAlumno.id);
             console.log('✅ Sesión restaurada como ALUMNO:', perfilAlumno.nombre);
             // Detectar borrador de entrenamiento sin terminar de este alumno
             // (nunca el de otro usuario — getBorradorPropio verifica ownerId

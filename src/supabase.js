@@ -1475,22 +1475,32 @@ const { data: rpcData, error: rpcErr } = await this.client.rpc(
     if (!this.client) return { ok: false, error: 'cliente_no_inicializado' };
 
     const cleanDni = String(dni).trim();
-    const endpoints = ['/.netlify/functions/login-dni', '/api/login-dni'];
+    let preferredEp = null;
+    try { preferredEp = localStorage.getItem('ef_fav_login_endpoint'); } catch (_) {}
+    const defaultEndpoints = ['/api/login-dni', '/.netlify/functions/login-dni'];
+    const endpoints = preferredEp 
+      ? [preferredEp, ...defaultEndpoints.filter(e => e !== preferredEp)]
+      : defaultEndpoints;
 
     let hashedToken = null;
     let lastError = null;
 
     for (const ep of endpoints) {
       try {
+        const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        const timeoutId = controller ? setTimeout(() => controller.abort(), 4000) : null;
         const res = await fetch(ep, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ dni: cleanDni })
+          body: JSON.stringify({ dni: cleanDni }),
+          signal: controller ? controller.signal : undefined
         });
+        if (timeoutId) clearTimeout(timeoutId);
 
         if (res.ok) {
           const data = await res.json();
           hashedToken = data.hashed_token;
+          try { localStorage.setItem('ef_fav_login_endpoint', ep); } catch (_) {}
           break;
         }
 
@@ -1498,7 +1508,7 @@ const { data: rpcData, error: rpcErr } = await this.client.rpc(
         lastError = errData.error || `Error ${res.status} en ${ep}`;
         if (errData.error === 'dni_no_encontrado') break; // no tiene sentido reintentar en el otro endpoint
       } catch (err) {
-        lastError = err.message;
+        lastError = err.name === 'AbortError' ? `Timeout en ${ep}` : err.message;
       }
     }
 
